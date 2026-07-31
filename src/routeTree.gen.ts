@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as ProjectsRouteImport } from './routes/projects'
+import { Route as ReportsRouteImport } from './routes/reports'
 import { Route as TeamsRouteImport } from './routes/teams'
 import { Route as TimesheetRouteImport } from './routes/timesheet'
 
@@ -30,6 +31,11 @@ const ProjectsRoute = ProjectsRouteImport.update({
   path: '/projects',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ReportsRoute = ReportsRouteImport.update({
+  id: '/reports',
+  path: '/reports',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const TeamsRoute = TeamsRouteImport.update({
   id: '/teams',
   path: '/teams',
@@ -45,6 +51,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
   '/projects': typeof ProjectsRoute
+  '/reports': typeof ReportsRoute
   '/teams': typeof TeamsRoute
   '/timesheet': typeof TimesheetRoute
 }
@@ -52,6 +59,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
   '/projects': typeof ProjectsRoute
+  '/reports': typeof ReportsRoute
   '/teams': typeof TeamsRoute
   '/timesheet': typeof TimesheetRoute
 }
@@ -60,21 +68,30 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
   '/projects': typeof ProjectsRoute
+  '/reports': typeof ReportsRoute
   '/teams': typeof TeamsRoute
   '/timesheet': typeof TimesheetRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/login' | '/projects' | '/teams' | '/timesheet'
+  fullPaths: '/' | '/login' | '/projects' | '/reports' | '/teams' | '/timesheet'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/login' | '/projects' | '/teams' | '/timesheet'
-  id: '__root__' | '/' | '/login' | '/projects' | '/teams' | '/timesheet'
+  to: '/' | '/login' | '/projects' | '/reports' | '/teams' | '/timesheet'
+  id:
+    | '__root__'
+    | '/'
+    | '/login'
+    | '/projects'
+    | '/reports'
+    | '/teams'
+    | '/timesheet'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   LoginRoute: typeof LoginRoute
   ProjectsRoute: typeof ProjectsRoute
+  ReportsRoute: typeof ReportsRoute
   TeamsRoute: typeof TeamsRoute
   TimesheetRoute: typeof TimesheetRoute
 }
@@ -102,6 +119,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ProjectsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/reports': {
+      id: '/reports'
+      path: '/reports'
+      fullPath: '/reports'
+      preLoaderRoute: typeof ReportsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/teams': {
       id: '/teams'
       path: '/teams'
@@ -123,6 +147,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   LoginRoute: LoginRoute,
   ProjectsRoute: ProjectsRoute,
+  ReportsRoute: ReportsRoute,
   TeamsRoute: TeamsRoute,
   TimesheetRoute: TimesheetRoute,
 }
