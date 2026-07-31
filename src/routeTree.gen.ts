@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as ProjectsRouteImport } from './routes/projects'
+import { Route as TeamsRouteImport } from './routes/teams'
 import { Route as TimesheetRouteImport } from './routes/timesheet'
 
 const IndexRoute = IndexRouteImport.update({
@@ -29,6 +30,11 @@ const ProjectsRoute = ProjectsRouteImport.update({
   path: '/projects',
   getParentRoute: () => rootRouteImport,
 } as any)
+const TeamsRoute = TeamsRouteImport.update({
+  id: '/teams',
+  path: '/teams',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const TimesheetRoute = TimesheetRouteImport.update({
   id: '/timesheet',
   path: '/timesheet',
@@ -39,12 +45,14 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
   '/projects': typeof ProjectsRoute
+  '/teams': typeof TeamsRoute
   '/timesheet': typeof TimesheetRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
   '/projects': typeof ProjectsRoute
+  '/teams': typeof TeamsRoute
   '/timesheet': typeof TimesheetRoute
 }
 export interface FileRoutesById {
@@ -52,20 +60,22 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
   '/projects': typeof ProjectsRoute
+  '/teams': typeof TeamsRoute
   '/timesheet': typeof TimesheetRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/login' | '/projects' | '/timesheet'
+  fullPaths: '/' | '/login' | '/projects' | '/teams' | '/timesheet'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/login' | '/projects' | '/timesheet'
-  id: '__root__' | '/' | '/login' | '/projects' | '/timesheet'
+  to: '/' | '/login' | '/projects' | '/teams' | '/timesheet'
+  id: '__root__' | '/' | '/login' | '/projects' | '/teams' | '/timesheet'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   LoginRoute: typeof LoginRoute
   ProjectsRoute: typeof ProjectsRoute
+  TeamsRoute: typeof TeamsRoute
   TimesheetRoute: typeof TimesheetRoute
 }
 
@@ -92,6 +102,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ProjectsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/teams': {
+      id: '/teams'
+      path: '/teams'
+      fullPath: '/teams'
+      preLoaderRoute: typeof TeamsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/timesheet': {
       id: '/timesheet'
       path: '/timesheet'
@@ -106,6 +123,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   LoginRoute: LoginRoute,
   ProjectsRoute: ProjectsRoute,
+  TeamsRoute: TeamsRoute,
   TimesheetRoute: TimesheetRoute,
 }
 export const routeTree = rootRouteImport
