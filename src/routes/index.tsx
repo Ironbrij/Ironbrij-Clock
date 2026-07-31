@@ -99,7 +99,11 @@ function Dashboard() {
                 className="h-20 w-20 rounded-full text-base shadow-elevated transition-transform active:scale-95"
                 variant={running ? "destructive" : "default"}
               >
-                {running ? <Pause className="h-7 w-7" /> : <Play className="h-7 w-7" />}
+                {running ? (
+                  <Pause className="h-7 w-7 fill-current" />
+                ) : (
+                  <Play className="h-7 w-7 fill-current" />
+                )}
               </Button>
             </div>
 
