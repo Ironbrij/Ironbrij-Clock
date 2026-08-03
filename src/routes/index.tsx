@@ -62,16 +62,16 @@ function Dashboard() {
             <CardTitle className="text-base">Hours by day</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="flex h-40 items-end gap-3">
+            <div className="flex h-44 items-stretch gap-3">
               {dayTotals.map((t, i) => (
-                <div key={i} className="flex flex-1 flex-col items-center gap-2">
-                  <div className="flex w-full flex-1 items-end">
+                <div key={i} className="flex h-full flex-1 flex-col items-center">
+                  <div className="flex h-full w-full items-end">
                     <div
                       className="w-full rounded-t-md bg-primary/85"
-                      style={{ height: `${maxDay ? (t / maxDay) * 100 : 0}%` }}
+                      style={{ height: `${maxDay ? Math.max((t / maxDay) * 100, t > 0 ? 4 : 0) : 0}%` }}
                     />
                   </div>
-                  <span className="text-xs text-muted-foreground">{weekdays[i]}</span>
+                  <span className="pt-2 text-xs text-muted-foreground">{weekdays[i]}</span>
                 </div>
               ))}
             </div>
