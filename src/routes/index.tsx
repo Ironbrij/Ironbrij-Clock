@@ -11,6 +11,7 @@ import {
   weekGrid,
   weekdays,
 } from "@/lib/mock-data";
+import { useWorkspace } from "@/lib/workspace-store";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -25,6 +26,8 @@ export const Route = createFileRoute("/")({
 });
 
 function Dashboard() {
+  const { settings } = useWorkspace();
+  const dailyGoal = settings.weeklyHours / 5;
   const todayMinutes = todayEntries.reduce((sum, e) => sum + e.minutes, 0);
   const dayTotals = weekdays.map((_, i) =>
     projects.reduce((sum, p) => sum + (weekGrid[p.id]?.[i] ?? 0), 0),
@@ -50,7 +53,11 @@ function Dashboard() {
       }
     >
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard label="Tracked today" value={formatMinutes(todayMinutes)} hint={`Goal 7h 30m · ${todayEntries.length} entries`} />
+        <StatCard
+          label="Tracked today"
+          value={formatMinutes(todayMinutes)}
+          hint={`Goal ${formatHours(dailyGoal)} · ${todayEntries.length} entries`}
+        />
         <StatCard label="This week" value={formatHours(weekTotal)} hint="Across 6 projects" />
         <StatCard label="Daily average" value={formatHours(weekTotal / 5)} hint="Mon – Fri" />
         <StatCard label="Billable share" value="82%" hint="Of hours logged this week" />
