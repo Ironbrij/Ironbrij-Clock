@@ -123,6 +123,52 @@ export const weekEntries: TimeEntry[] = [
 export const projectById = (id: string) => projects.find((p) => p.id === id)!;
 export const memberById = (id: string) => members.find((m) => m.id === id)!;
 
+export type Tag = { id: string; name: string; color: string; entryCount: number };
+
+export const tags: Tag[] = [
+  { id: "billable", name: "Billable", color: "oklch(0.62 0.15 256)", entryCount: 148 },
+  { id: "internal", name: "Internal", color: "oklch(0.58 0.12 230)", entryCount: 63 },
+  { id: "urgent", name: "Urgent", color: "oklch(0.6 0.17 25)", entryCount: 21 },
+  { id: "meeting", name: "Meeting", color: "oklch(0.65 0.16 320)", entryCount: 39 },
+  { id: "overtime", name: "Overtime", color: "oklch(0.7 0.16 60)", entryCount: 12 },
+  { id: "training", name: "Training", color: "oklch(0.68 0.15 145)", entryCount: 8 },
+];
+
+export const clients = Array.from(new Set(projects.map((p) => p.client))).map((name) => {
+  const linked = projects.filter((p) => p.client === name);
+  return {
+    name,
+    projects: linked,
+    hours: linked.reduce((sum, p) => sum + p.hours, 0),
+    internal: name.startsWith("Internal"),
+  };
+});
+
+export type TimeOffBalance = { id: string; label: string; used: number; total: number };
+
+export const timeOffBalances: TimeOffBalance[] = [
+  { id: "vacation", label: "Vacation", used: 9, total: 20 },
+  { id: "sick", label: "Sick leave", used: 2, total: 10 },
+  { id: "personal", label: "Personal days", used: 1, total: 5 },
+];
+
+export type TimeOffRequest = {
+  id: string;
+  type: string;
+  range: string;
+  days: number;
+  status: "Approved" | "Pending" | "Declined";
+  note: string;
+};
+
+export const timeOffHistory: TimeOffRequest[] = [
+  { id: "r1", type: "Vacation", range: "4 – 8 August 2026", days: 5, status: "Pending", note: "Family trip up the coast" },
+  { id: "r2", type: "Sick leave", range: "12 June 2026", days: 1, status: "Approved", note: "Migraine" },
+  { id: "r3", type: "Personal", range: "22 May 2026", days: 1, status: "Approved", note: "House move" },
+  { id: "r4", type: "Vacation", range: "7 – 11 April 2026", days: 5, status: "Approved", note: "Easter break" },
+  { id: "r5", type: "Vacation", range: "3 March 2026", days: 1, status: "Declined", note: "Clashed with client launch" },
+];
+
 export function formatHours(hours: number) {
   const h = Math.floor(hours);
   const m = Math.round((hours - h) * 60);
