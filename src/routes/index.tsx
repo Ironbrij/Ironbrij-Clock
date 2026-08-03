@@ -1,227 +1,127 @@
-import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useRef, useState } from "react";
-import { Check, Pause, Pencil, Play } from "lucide-react";
+import { createFileRoute, Link } from "@tanstack/react-router";
+import { ArrowRight } from "lucide-react";
 import { AppShell, ProjectDot } from "@/components/app-shell";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import {
+  formatHours,
   formatMinutes,
-  projectById,
   projects,
-  tasks,
   todayEntries,
-  type TimeEntry,
+  weekGrid,
+  weekdays,
 } from "@/lib/mock-data";
 
 export const Route = createFileRoute("/")({
   head: () => ({
     meta: [
       { title: "Dashboard — Ironbrij Time" },
-      { name: "description", content: "Track your day: start the timer, log entries, and see today's total tracked time across Ironbrij projects." },
+      { name: "description", content: "Your Ironbrij overview: hours tracked today and this week, daily breakdown and top projects." },
       { property: "og:title", content: "Dashboard — Ironbrij Time" },
-      { property: "og:description", content: "Start the timer and log time against Ironbrij projects." },
+      { property: "og:description", content: "Hours tracked today and this week across Ironbrij projects." },
     ],
   }),
   component: Dashboard,
 });
 
-function pad(n: number) {
-  return n.toString().padStart(2, "0");
-}
-
 function Dashboard() {
-  const [running, setRunning] = useState(false);
-  const [seconds, setSeconds] = useState(0);
-  const [project, setProject] = useState("p1");
-  const [task, setTask] = useState(tasks[0]);
-  const [description, setDescription] = useState("");
-  const [entries, setEntries] = useState<TimeEntry[]>(todayEntries);
-  const [editing, setEditing] = useState<string | null>(null);
-  const interval = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  useEffect(() => {
-    if (running) {
-      interval.current = setInterval(() => setSeconds((s) => s + 1), 1000);
-    }
-    return () => {
-      if (interval.current) clearInterval(interval.current);
-    };
-  }, [running]);
-
-  const stop = () => {
-    if (seconds > 0) {
-      setEntries((prev) => [
-        {
-          id: `local-${Date.now()}`,
-          projectId: project,
-          task,
-          description: description || "Untitled entry",
-          minutes: Math.max(1, Math.round(seconds / 60)),
-          start: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-          dayIndex: 3,
-        },
-        ...prev,
-      ]);
-    }
-    setSeconds(0);
-    setDescription("");
-    setRunning(false);
-  };
-
-  const totalMinutes = entries.reduce((sum, e) => sum + e.minutes, 0) + Math.floor(seconds / 60);
-  const h = Math.floor(seconds / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  const s = seconds % 60;
+  const todayMinutes = todayEntries.reduce((sum, e) => sum + e.minutes, 0);
+  const dayTotals = weekdays.map((_, i) =>
+    projects.reduce((sum, p) => sum + (weekGrid[p.id]?.[i] ?? 0), 0),
+  );
+  const weekTotal = dayTotals.reduce((a, b) => a + b, 0);
+  const maxDay = Math.max(...dayTotals);
+  const topProjects = [...projects]
+    .map((p) => ({ ...p, weekHours: (weekGrid[p.id] ?? []).reduce((a, b) => a + b, 0) }))
+    .sort((a, b) => b.weekHours - a.weekHours)
+    .slice(0, 5);
+  const maxProject = topProjects[0]?.weekHours ?? 1;
 
   return (
-    <AppShell title="Good morning, Maya" subtitle="Thursday, 12 June — let's make it count.">
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
-        <Card className="shadow-card">
-          <CardContent className="flex flex-col gap-6 p-6">
-            <div className="flex flex-col items-center gap-5 sm:flex-row sm:items-center sm:justify-between">
-              <div
-                className="font-mono text-5xl font-semibold tabular-nums tracking-tight sm:text-6xl"
-                style={{ color: running ? "var(--brand)" : undefined }}
-              >
-                {pad(h)}:{pad(m)}:{pad(s)}
-              </div>
-              <Button
-                size="lg"
-                onClick={() => (running ? stop() : setRunning(true))}
-                className="h-20 w-20 rounded-full text-base shadow-elevated transition-transform active:scale-95"
-                variant={running ? "destructive" : "default"}
-              >
-                {running ? (
-                  <Pause className="h-7 w-7 fill-current" />
-                ) : (
-                  <Play className="h-7 w-7 fill-current" />
-                )}
-              </Button>
-            </div>
+    <AppShell
+      title="Good morning, Maya"
+      subtitle="Thursday, 12 June — here's how the week is shaping up."
+      actions={
+        <Button asChild className="gap-2">
+          <Link to="/time">
+            Go to Time <ArrowRight className="h-4 w-4" />
+          </Link>
+        </Button>
+      }
+    >
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <StatCard label="Tracked today" value={formatMinutes(todayMinutes)} hint={`Goal 7h 30m · ${todayEntries.length} entries`} />
+        <StatCard label="This week" value={formatHours(weekTotal)} hint="Across 6 projects" />
+        <StatCard label="Daily average" value={formatHours(weekTotal / 5)} hint="Mon – Fri" />
+        <StatCard label="Billable share" value="82%" hint="Of hours logged this week" />
+      </div>
 
-            <div className="grid gap-3 sm:grid-cols-2">
-              <Select value={project} onValueChange={setProject}>
-                <SelectTrigger><SelectValue placeholder="Project" /></SelectTrigger>
-                <SelectContent>
-                  {projects.map((p) => (
-                    <SelectItem key={p.id} value={p.id}>
-                      <span className="flex items-center gap-2">
-                        <ProjectDot color={p.color} />
-                        {p.name}
-                      </span>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <Select value={task} onValueChange={setTask}>
-                <SelectTrigger><SelectValue placeholder="Task" /></SelectTrigger>
-                <SelectContent>
-                  {tasks.map((t) => (
-                    <SelectItem key={t} value={t}>{t}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+      <div className="mt-6 grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+        <Card className="shadow-card">
+          <CardHeader>
+            <CardTitle className="text-base">Hours by day</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="flex h-44 items-stretch gap-3">
+              {dayTotals.map((t, i) => (
+                <div key={i} className="flex h-full flex-1 flex-col items-center">
+                  <div className="flex h-full w-full items-end">
+                    <div
+                      className="w-full rounded-t-md bg-primary/85"
+                      style={{ height: `${maxDay ? Math.max((t / maxDay) * 100, t > 0 ? 4 : 0) : 0}%` }}
+                    />
+                  </div>
+                  <span className="pt-2 text-xs text-muted-foreground">{weekdays[i]}</span>
+                </div>
+              ))}
             </div>
-            <Input
-              placeholder="What are you working on?"
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-            />
           </CardContent>
         </Card>
 
-        <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-1">
-          <Card className="shadow-card">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">Tracked today</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-3xl font-semibold tabular-nums">{formatMinutes(totalMinutes)}</p>
-              <p className="mt-1 text-sm text-muted-foreground">Goal 7h 30m · {entries.length} entries</p>
-            </CardContent>
-          </Card>
-          <Card className="shadow-card">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">This week</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-3xl font-semibold tabular-nums">28h 45m</p>
-              <p className="mt-1 text-sm text-muted-foreground">Across 5 projects</p>
-            </CardContent>
-          </Card>
-        </div>
+        <Card className="shadow-card">
+          <CardHeader>
+            <CardTitle className="text-base">Top projects this week</CardTitle>
+          </CardHeader>
+          <CardContent className="grid gap-4">
+            {topProjects.map((p) => (
+              <div key={p.id} className="grid gap-1.5">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="flex min-w-0 items-center gap-2">
+                    <ProjectDot color={p.color} />
+                    <span className="truncate text-sm font-medium">{p.name}</span>
+                  </span>
+                  <span className="shrink-0 text-sm tabular-nums text-muted-foreground">
+                    {formatHours(p.weekHours)}
+                  </span>
+                </div>
+                <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
+                  <div
+                    className="h-full rounded-full"
+                    style={{
+                      width: `${maxProject ? (p.weekHours / maxProject) * 100 : 0}%`,
+                      backgroundColor: p.color,
+                    }}
+                  />
+                </div>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
       </div>
-
-      <Card className="mt-6 shadow-card">
-        <CardHeader>
-          <CardTitle className="text-base">Today's entries</CardTitle>
-        </CardHeader>
-        <CardContent className="p-0">
-          {entries.length === 0 ? (
-            <p className="px-6 pb-6 text-sm text-muted-foreground">
-              Nothing logged yet today — hit the big button above and we'll start counting.
-            </p>
-          ) : (
-            <ul className="divide-y divide-border">
-              {entries.map((entry) => {
-                const p = projectById(entry.projectId);
-                const isEditing = editing === entry.id;
-                return (
-                  <li
-                    key={entry.id}
-                    className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 px-6 py-3.5 transition-colors hover:bg-muted/50"
-                  >
-                    <div className="flex min-w-0 items-center gap-3">
-                      <ProjectDot color={p.color} />
-                      <div className="min-w-0 flex-1">
-                        {isEditing ? (
-                          <Input
-                            autoFocus
-                            value={entry.description}
-                            onChange={(e) =>
-                              setEntries((prev) =>
-                                prev.map((x) =>
-                                  x.id === entry.id ? { ...x, description: e.target.value } : x,
-                                ),
-                              )
-                            }
-                            onBlur={() => setEditing(null)}
-                            className="h-8"
-                          />
-                        ) : (
-                          <p className="truncate text-sm font-medium">{entry.description}</p>
-                        )}
-                        <p className="truncate text-xs text-muted-foreground">
-                          {p.name} · {entry.task} · from {entry.start}
-                        </p>
-                      </div>
-                    </div>
-                    <div className="flex shrink-0 items-center gap-1">
-                      <span className="tabular-nums text-sm font-medium">{formatMinutes(entry.minutes)}</span>
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        aria-label="Edit entry"
-                        onClick={() => setEditing(isEditing ? null : entry.id)}
-                      >
-                        {isEditing ? <Check className="h-4 w-4" /> : <Pencil className="h-4 w-4" />}
-                      </Button>
-                    </div>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-        </CardContent>
-      </Card>
     </AppShell>
+  );
+}
+
+function StatCard({ label, value, hint }: { label: string; value: string; hint: string }) {
+  return (
+    <Card className="shadow-card">
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm font-medium text-muted-foreground">{label}</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <p className="text-3xl font-semibold tabular-nums">{value}</p>
+        <p className="mt-1 text-sm text-muted-foreground">{hint}</p>
+      </CardContent>
+    </Card>
   );
 }

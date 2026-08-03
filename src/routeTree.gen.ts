@@ -11,10 +11,13 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as LoginRouteImport } from './routes/login'
+import { Route as ManageRouteImport } from './routes/manage'
 import { Route as ProjectsRouteImport } from './routes/projects'
 import { Route as ReportsRouteImport } from './routes/reports'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as TeamsRouteImport } from './routes/teams'
+import { Route as TimeRouteImport } from './routes/time'
+import { Route as TimeOffRouteImport } from './routes/time-off'
 import { Route as TimesheetRouteImport } from './routes/timesheet'
 
 const IndexRoute = IndexRouteImport.update({
@@ -25,6 +28,11 @@ const IndexRoute = IndexRouteImport.update({
 const LoginRoute = LoginRouteImport.update({
   id: '/login',
   path: '/login',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ManageRoute = ManageRouteImport.update({
+  id: '/manage',
+  path: '/manage',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ProjectsRoute = ProjectsRouteImport.update({
@@ -47,6 +55,16 @@ const TeamsRoute = TeamsRouteImport.update({
   path: '/teams',
   getParentRoute: () => rootRouteImport,
 } as any)
+const TimeRoute = TimeRouteImport.update({
+  id: '/time',
+  path: '/time',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const TimeOffRoute = TimeOffRouteImport.update({
+  id: '/time-off',
+  path: '/time-off',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const TimesheetRoute = TimesheetRouteImport.update({
   id: '/timesheet',
   path: '/timesheet',
@@ -56,29 +74,38 @@ const TimesheetRoute = TimesheetRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
+  '/manage': typeof ManageRoute
   '/projects': typeof ProjectsRoute
   '/reports': typeof ReportsRoute
   '/settings': typeof SettingsRoute
   '/teams': typeof TeamsRoute
+  '/time': typeof TimeRoute
+  '/time-off': typeof TimeOffRoute
   '/timesheet': typeof TimesheetRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
+  '/manage': typeof ManageRoute
   '/projects': typeof ProjectsRoute
   '/reports': typeof ReportsRoute
   '/settings': typeof SettingsRoute
   '/teams': typeof TeamsRoute
+  '/time': typeof TimeRoute
+  '/time-off': typeof TimeOffRoute
   '/timesheet': typeof TimesheetRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
+  '/manage': typeof ManageRoute
   '/projects': typeof ProjectsRoute
   '/reports': typeof ReportsRoute
   '/settings': typeof SettingsRoute
   '/teams': typeof TeamsRoute
+  '/time': typeof TimeRoute
+  '/time-off': typeof TimeOffRoute
   '/timesheet': typeof TimesheetRoute
 }
 export interface FileRouteTypes {
@@ -86,38 +113,50 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/login'
+    | '/manage'
     | '/projects'
     | '/reports'
     | '/settings'
     | '/teams'
+    | '/time'
+    | '/time-off'
     | '/timesheet'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
     | '/login'
+    | '/manage'
     | '/projects'
     | '/reports'
     | '/settings'
     | '/teams'
+    | '/time'
+    | '/time-off'
     | '/timesheet'
   id:
     | '__root__'
     | '/'
     | '/login'
+    | '/manage'
     | '/projects'
     | '/reports'
     | '/settings'
     | '/teams'
+    | '/time'
+    | '/time-off'
     | '/timesheet'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   LoginRoute: typeof LoginRoute
+  ManageRoute: typeof ManageRoute
   ProjectsRoute: typeof ProjectsRoute
   ReportsRoute: typeof ReportsRoute
   SettingsRoute: typeof SettingsRoute
   TeamsRoute: typeof TeamsRoute
+  TimeRoute: typeof TimeRoute
+  TimeOffRoute: typeof TimeOffRoute
   TimesheetRoute: typeof TimesheetRoute
 }
 
@@ -135,6 +174,13 @@ declare module '@tanstack/react-router' {
       path: '/login'
       fullPath: '/login'
       preLoaderRoute: typeof LoginRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/manage': {
+      id: '/manage'
+      path: '/manage'
+      fullPath: '/manage'
+      preLoaderRoute: typeof ManageRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/projects': {
@@ -165,6 +211,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof TeamsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/time': {
+      id: '/time'
+      path: '/time'
+      fullPath: '/time'
+      preLoaderRoute: typeof TimeRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/time-off': {
+      id: '/time-off'
+      path: '/time-off'
+      fullPath: '/time-off'
+      preLoaderRoute: typeof TimeOffRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/timesheet': {
       id: '/timesheet'
       path: '/timesheet'
@@ -178,10 +238,13 @@ declare module '@tanstack/react-router' {
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   LoginRoute: LoginRoute,
+  ManageRoute: ManageRoute,
   ProjectsRoute: ProjectsRoute,
   ReportsRoute: ReportsRoute,
   SettingsRoute: SettingsRoute,
   TeamsRoute: TeamsRoute,
+  TimeRoute: TimeRoute,
+  TimeOffRoute: TimeOffRoute,
   TimesheetRoute: TimesheetRoute,
 }
 export const routeTree = rootRouteImport
