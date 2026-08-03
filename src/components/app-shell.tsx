@@ -2,10 +2,12 @@ import type { ReactNode } from "react";
 import { Link, useRouterState } from "@tanstack/react-router";
 import {
   BarChart3,
-  CalendarRange,
+  Clock,
   FolderKanban,
   LayoutDashboard,
+  Plane,
   Settings,
+  SlidersHorizontal,
   Users,
 } from "lucide-react";
 import wordmark from "@/assets/ironbrij-wordmark.png.asset.json";
@@ -14,11 +16,13 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { cn } from "@/lib/utils";
 
 const nav = [
+  { to: "/time", label: "Time", icon: Clock },
   { to: "/", label: "Dashboard", icon: LayoutDashboard },
-  { to: "/timesheet", label: "Timesheet", icon: CalendarRange },
-  { to: "/projects", label: "Projects", icon: FolderKanban },
-  { to: "/teams", label: "Teams", icon: Users },
   { to: "/reports", label: "Reports", icon: BarChart3 },
+  { to: "/projects", label: "Projects", icon: FolderKanban },
+  { to: "/teams", label: "Team", icon: Users },
+  { to: "/time-off", label: "Time off", icon: Plane },
+  { to: "/manage", label: "Manage", icon: SlidersHorizontal },
   { to: "/settings", label: "Settings", icon: Settings },
 ] as const;
 
@@ -44,7 +48,7 @@ export function AppShell({
         </Link>
         <nav className="flex flex-1 flex-col gap-1">
           {nav.map((item) => {
-            const active = item.to === "/" ? pathname === "/" : pathname.startsWith(item.to);
+            const active = pathname === item.to;
             return (
               <Link
                 key={item.to}
@@ -92,7 +96,7 @@ export function AppShell({
               to={item.to}
               className="flex flex-col items-center gap-1 rounded-md px-2 py-1 text-[10px] text-muted-foreground [&.active]:text-primary"
               activeProps={{ className: "active" }}
-              activeOptions={{ exact: item.to === "/" }}
+              activeOptions={{ exact: true }}
             >
               <item.icon className="h-4 w-4" />
               {item.label}
