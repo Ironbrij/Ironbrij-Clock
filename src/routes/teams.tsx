@@ -175,7 +175,7 @@ function TeamsPage() {
                               <Pencil className="h-4 w-4" /> Edit team
                             </DropdownMenuItem>
                             <DropdownMenuSeparator />
-                            <DropdownMenuItem variant="destructive" onSelect={() => setDeletingTeamId(t.id)}>
+                            <DropdownMenuItem className="text-destructive focus:text-destructive" onSelect={() => setDeletingTeamId(t.id)}>
                               Delete team
                             </DropdownMenuItem>
                           </DropdownMenuContent>
