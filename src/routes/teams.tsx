@@ -268,7 +268,7 @@ function TeamsPage() {
                             </DropdownMenuSub>
                             <DropdownMenuSeparator />
                             <DropdownMenuItem
-                              variant="destructive"
+                              className="text-destructive focus:text-destructive"
                               onSelect={() => {
                                 removeMember(m.id);
                                 toast.success(`${m.name} removed from ${team?.name ?? "team"}`);
