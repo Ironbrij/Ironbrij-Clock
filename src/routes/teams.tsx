@@ -82,6 +82,7 @@ function TeamsPage() {
     isAdmin,
     invitePeople,
     updateMemberRole,
+    approveMember,
     moveMember,
     removeMember,
     createTeam,
@@ -220,6 +221,22 @@ function TeamsPage() {
                             <Badge variant="outline" className="text-[10px] font-medium">
                               Pending
                             </Badge>
+                          )}
+                          {m.pending && isAdmin && (
+                            <Button
+                              size="sm"
+                              variant="secondary"
+                              className="h-6 px-2 text-[11px]"
+                              onClick={() =>
+                                run(approveMember(m.id), () =>
+                                  toast.success(`${m.name} approved`, {
+                                    description: "They now have full dashboard access.",
+                                  }),
+                                )
+                              }
+                            >
+                              Approve
+                            </Button>
                           )}
                         </p>
                         <p className="truncate text-xs text-muted-foreground">{m.email ?? m.title}</p>
