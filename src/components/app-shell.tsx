@@ -42,7 +42,7 @@ export function AppShell({
 }) {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const navigate = useNavigate();
-  const { session, authLoading, currentUser, isAdmin, signOut } = useWorkspace();
+  const { session, authLoading, currentUser, isAdmin, members, signOut } = useWorkspace();
 
   useEffect(() => {
     if (!authLoading && !session) navigate({ to: "/login", replace: true });
@@ -77,6 +77,10 @@ export function AppShell({
     );
   }
 
+  const pendingCount = isAdmin
+    ? members.filter((m) => m.pending).length
+    : 0;
+
   return (
     <div className="flex min-h-screen w-full bg-background">
       <aside className="sticky top-0 hidden h-screen w-64 shrink-0 flex-col border-r border-sidebar-border bg-sidebar px-4 py-6 lg:flex">
@@ -87,6 +91,7 @@ export function AppShell({
         <nav className="flex flex-1 flex-col gap-1">
           {nav.map((item) => {
             const active = pathname === item.to;
+            const showBadge = item.to === "/settings" && pendingCount > 0;
             return (
               <Link
                 key={item.to}
@@ -98,6 +103,11 @@ export function AppShell({
               >
                 <item.icon className="h-4 w-4 shrink-0" />
                 {item.label}
+                {showBadge && (
+                  <span className="ml-auto inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-destructive px-1.5 text-[11px] font-bold text-destructive-foreground">
+                    {pendingCount}
+                  </span>
+                )}
               </Link>
             );
           })}
