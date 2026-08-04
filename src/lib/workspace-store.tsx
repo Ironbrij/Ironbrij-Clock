@@ -7,7 +7,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { Session } from "@supabase/supabase-js";
 import { supabase } from "@/integrations/supabase/client";
 import { dayIndexOf, startOfWeek, toDateKey } from "@/lib/time-utils";
@@ -522,7 +522,14 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
 
       invitePeople: async ({ emails, teamId, role }) => {
         const { inviteMembers } = await import("@/lib/admin.functions");
-        const result = await inviteMembers({ data: { emails, teamId, role: toDbRole(role) } });
+        const result = await inviteMembers({
+          data: {
+            emails,
+            teamId,
+            role: toDbRole(role),
+            redirectTo: typeof window === "undefined" ? undefined : window.location.origin,
+          },
+        });
         invalidate("profiles", "team_members");
         return result.invited;
       },
@@ -726,5 +733,3 @@ export function useWeekGrid(weekStart: Date) {
 export function useThisWeekStart() {
   return useMemo(() => startOfWeek(new Date()), []);
 }
-
-export { useMutation };
