@@ -12,7 +12,6 @@ import {
   SlidersHorizontal,
   Users,
 } from "lucide-react";
-import wordmark from "@/assets/ironbrij-wordmark.png.asset.json";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -61,7 +60,7 @@ export function AppShell({
     <div className="flex min-h-screen w-full bg-background">
       <aside className="sticky top-0 hidden h-screen w-64 shrink-0 flex-col border-r border-sidebar-border bg-sidebar px-4 py-6 lg:flex">
         <Link to="/" className="mb-8 block px-2">
-          <img src={wordmark.url} alt="Ironbrij" className="h-8 w-auto dark:brightness-0 dark:invert" />
+          <img src="/ironbrij-wordmark.png" alt="Ironbrij" className="h-8 w-auto dark:brightness-0 dark:invert" />
           <span className="mt-1 block text-xs font-medium text-muted-foreground">Time tracking</span>
         </Link>
         <nav className="flex flex-1 flex-col gap-1">
