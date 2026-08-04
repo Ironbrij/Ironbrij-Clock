@@ -3,15 +3,9 @@ import { ArrowRight } from "lucide-react";
 import { AppShell, ProjectDot } from "@/components/app-shell";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-  formatHours,
-  formatMinutes,
-  projects,
-  todayEntries,
-  weekGrid,
-  weekdays,
-} from "@/lib/mock-data";
-import { useWorkspace } from "@/lib/workspace-store";
+import { formatHours, formatMinutes } from "@/lib/mock-data";
+import { addDays, formatDayLong, toDateKey, weekdayNames } from "@/lib/time-utils";
+import { useThisWeekStart, useWorkspace } from "@/lib/workspace-store";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -25,25 +19,51 @@ export const Route = createFileRoute("/")({
   component: Dashboard,
 });
 
+function greeting() {
+  const hour = new Date().getHours();
+  if (hour < 12) return "Good morning";
+  if (hour < 18) return "Good afternoon";
+  return "Good evening";
+}
+
 function Dashboard() {
-  const { settings } = useWorkspace();
+  const { settings, currentUser, entries, projects } = useWorkspace();
+  const weekStart = useThisWeekStart();
   const dailyGoal = settings.weeklyHours / 5;
+
+  const todayKey = toDateKey(new Date());
+  const todayEntries = entries.filter((e) => e.date === todayKey);
   const todayMinutes = todayEntries.reduce((sum, e) => sum + e.minutes, 0);
-  const dayTotals = weekdays.map((_, i) =>
-    projects.reduce((sum, p) => sum + (weekGrid[p.id]?.[i] ?? 0), 0),
+
+  const dayKeys = weekdayNames.map((_, i) => toDateKey(addDays(weekStart, i)));
+  const weekEntries = entries.filter((e) => dayKeys.includes(e.date));
+  const dayTotals = dayKeys.map(
+    (key) => weekEntries.filter((e) => e.date === key).reduce((sum, e) => sum + e.minutes, 0) / 60,
   );
   const weekTotal = dayTotals.reduce((a, b) => a + b, 0);
-  const maxDay = Math.max(...dayTotals);
-  const topProjects = [...projects]
-    .map((p) => ({ ...p, weekHours: (weekGrid[p.id] ?? []).reduce((a, b) => a + b, 0) }))
-    .sort((a, b) => b.weekHours - a.weekHours)
+  const maxDay = Math.max(...dayTotals, 0);
+  const weekMinutes = weekEntries.reduce((s, e) => s + e.minutes, 0);
+  const billableMinutes = weekEntries
+    .filter((e) => projects.find((p) => p.id === e.projectId)?.billable)
+    .reduce((s, e) => s + e.minutes, 0);
+  const billableShare = weekMinutes ? Math.round((billableMinutes / weekMinutes) * 100) : 0;
+
+  const topProjects = projects
+    .map((p) => ({
+      ...p,
+      myWeekHours:
+        weekEntries.filter((e) => e.projectId === p.id).reduce((s, e) => s + e.minutes, 0) / 60,
+    }))
+    .filter((p) => p.myWeekHours > 0)
+    .sort((a, b) => b.myWeekHours - a.myWeekHours)
     .slice(0, 5);
-  const maxProject = topProjects[0]?.weekHours ?? 1;
+  const maxProject = topProjects[0]?.myWeekHours ?? 1;
+  const activeProjects = projects.filter((p) => !p.archived).length;
 
   return (
     <AppShell
-      title="Good morning, Maya"
-      subtitle="Thursday, 12 June — here's how the week is shaping up."
+      title={`${greeting()}${currentUser.name ? `, ${currentUser.name.split(" ")[0]}` : ""}`}
+      subtitle={`${formatDayLong(new Date())} — here's how the week is shaping up.`}
       actions={
         <Button asChild className="gap-2">
           <Link to="/time">
@@ -58,9 +78,9 @@ function Dashboard() {
           value={formatMinutes(todayMinutes)}
           hint={`Goal ${formatHours(dailyGoal)} · ${todayEntries.length} entries`}
         />
-        <StatCard label="This week" value={formatHours(weekTotal)} hint="Across 6 projects" />
+        <StatCard label="This week" value={formatHours(weekTotal)} hint={`Across ${activeProjects} projects`} />
         <StatCard label="Daily average" value={formatHours(weekTotal / 5)} hint="Mon – Fri" />
-        <StatCard label="Billable share" value="82%" hint="Of hours logged this week" />
+        <StatCard label="Billable share" value={`${billableShare}%`} hint="Of hours logged this week" />
       </div>
 
       <div className="mt-6 grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
@@ -78,7 +98,7 @@ function Dashboard() {
                       style={{ height: `${maxDay ? Math.max((t / maxDay) * 100, t > 0 ? 4 : 0) : 0}%` }}
                     />
                   </div>
-                  <span className="pt-2 text-xs text-muted-foreground">{weekdays[i]}</span>
+                  <span className="pt-2 text-xs text-muted-foreground">{weekdayNames[i]}</span>
                 </div>
               ))}
             </div>
@@ -90,6 +110,11 @@ function Dashboard() {
             <CardTitle className="text-base">Top projects this week</CardTitle>
           </CardHeader>
           <CardContent className="grid gap-4">
+            {topProjects.length === 0 && (
+              <p className="text-sm text-muted-foreground">
+                Nothing logged yet this week — start the timer on the Time page and this fills in.
+              </p>
+            )}
             {topProjects.map((p) => (
               <div key={p.id} className="grid gap-1.5">
                 <div className="flex items-center justify-between gap-3">
@@ -98,14 +123,14 @@ function Dashboard() {
                     <span className="truncate text-sm font-medium">{p.name}</span>
                   </span>
                   <span className="shrink-0 text-sm tabular-nums text-muted-foreground">
-                    {formatHours(p.weekHours)}
+                    {formatHours(p.myWeekHours)}
                   </span>
                 </div>
                 <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
                   <div
                     className="h-full rounded-full"
                     style={{
-                      width: `${maxProject ? (p.weekHours / maxProject) * 100 : 0}%`,
+                      width: `${maxProject ? (p.myWeekHours / maxProject) * 100 : 0}%`,
                       backgroundColor: p.color,
                     }}
                   />
