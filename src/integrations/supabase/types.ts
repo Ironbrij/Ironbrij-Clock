@@ -320,6 +320,57 @@ export type Database = {
           },
         ]
       }
+      timesheets: {
+        Row: {
+          created_at: string
+          id: string
+          review_note: string | null
+          reviewed_at: string | null
+          reviewed_by: string | null
+          status: Database["public"]["Enums"]["timesheet_status"]
+          submitted_at: string | null
+          user_id: string
+          week_start: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          review_note?: string | null
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          status?: Database["public"]["Enums"]["timesheet_status"]
+          submitted_at?: string | null
+          user_id: string
+          week_start: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          review_note?: string | null
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          status?: Database["public"]["Enums"]["timesheet_status"]
+          submitted_at?: string | null
+          user_id?: string
+          week_start?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "timesheets_reviewed_by_fkey"
+            columns: ["reviewed_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "timesheets_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       workspace_settings: {
         Row: {
           company_name: string
@@ -355,6 +406,7 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      approve_member: { Args: { _user_id: string }; Returns: undefined }
       can_manage: { Args: { _user_id: string }; Returns: boolean }
       has_role: {
         Args: {
@@ -371,6 +423,24 @@ export type Database = {
           week_minutes: number
         }[]
       }
+      review_timesheet: {
+        Args: {
+          _note?: string | null
+          _status: Database["public"]["Enums"]["timesheet_status"]
+          _timesheet_id: string
+        }
+        Returns: {
+          created_at: string
+          id: string
+          review_note: string | null
+          reviewed_at: string | null
+          reviewed_by: string | null
+          status: Database["public"]["Enums"]["timesheet_status"]
+          submitted_at: string | null
+          user_id: string
+          week_start: string
+        }
+      }
       set_member_role: {
         Args: {
           _role: Database["public"]["Enums"]["app_role"]
@@ -379,6 +449,20 @@ export type Database = {
         Returns: undefined
       }
       shares_team: { Args: { _a: string; _b: string }; Returns: boolean }
+      submit_timesheet: {
+        Args: { _week_start: string }
+        Returns: {
+          created_at: string
+          id: string
+          review_note: string | null
+          reviewed_at: string | null
+          reviewed_by: string | null
+          status: Database["public"]["Enums"]["timesheet_status"]
+          submitted_at: string | null
+          user_id: string
+          week_start: string
+        }
+      }
       tag_usage: {
         Args: never
         Returns: {
@@ -386,9 +470,14 @@ export type Database = {
           tag_id: string
         }[]
       }
+      week_is_locked: {
+        Args: { _entry_date: string; _user_id: string }
+        Returns: boolean
+      }
     }
     Enums: {
       app_role: "admin" | "manager" | "member"
+      timesheet_status: "draft" | "submitted" | "approved" | "rejected"
     }
     CompositeTypes: {
       [_ in never]: never
