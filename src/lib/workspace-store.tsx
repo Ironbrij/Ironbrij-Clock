@@ -195,6 +195,12 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const { data: sub } = supabase.auth.onAuthStateChange((_event, next) => {
+      if (next && !isAllowedEmail(next.user.email)) {
+        supabase.auth.signOut();
+        setSession(null);
+        setAuthLoading(false);
+        return;
+      }
       setSession(next);
       setAuthLoading(false);
       qc.invalidateQueries();
