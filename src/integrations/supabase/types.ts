@@ -89,13 +89,6 @@ export type Database = {
             foreignKeyName: "project_members_project_id_fkey"
             columns: ["project_id"]
             isOneToOne: false
-            referencedRelation: "project_hours"
-            referencedColumns: ["project_id"]
-          },
-          {
-            foreignKeyName: "project_members_project_id_fkey"
-            columns: ["project_id"]
-            isOneToOne: false
             referencedRelation: "projects"
             referencedColumns: ["id"]
           },
@@ -129,22 +122,8 @@ export type Database = {
             foreignKeyName: "project_tags_project_id_fkey"
             columns: ["project_id"]
             isOneToOne: false
-            referencedRelation: "project_hours"
-            referencedColumns: ["project_id"]
-          },
-          {
-            foreignKeyName: "project_tags_project_id_fkey"
-            columns: ["project_id"]
-            isOneToOne: false
             referencedRelation: "projects"
             referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "project_tags_tag_id_fkey"
-            columns: ["tag_id"]
-            isOneToOne: false
-            referencedRelation: "tag_usage"
-            referencedColumns: ["tag_id"]
           },
           {
             foreignKeyName: "project_tags_tag_id_fkey"
@@ -329,13 +308,6 @@ export type Database = {
             foreignKeyName: "time_entries_project_id_fkey"
             columns: ["project_id"]
             isOneToOne: false
-            referencedRelation: "project_hours"
-            referencedColumns: ["project_id"]
-          },
-          {
-            foreignKeyName: "time_entries_project_id_fkey"
-            columns: ["project_id"]
-            isOneToOne: false
             referencedRelation: "projects"
             referencedColumns: ["id"]
           },
@@ -380,21 +352,7 @@ export type Database = {
       }
     }
     Views: {
-      project_hours: {
-        Row: {
-          project_id: string | null
-          total_minutes: number | null
-          week_minutes: number | null
-        }
-        Relationships: []
-      }
-      tag_usage: {
-        Row: {
-          entry_count: number | null
-          tag_id: string | null
-        }
-        Relationships: []
-      }
+      [_ in never]: never
     }
     Functions: {
       can_manage: { Args: { _user_id: string }; Returns: boolean }
@@ -405,6 +363,14 @@ export type Database = {
         }
         Returns: boolean
       }
+      project_hours: {
+        Args: never
+        Returns: {
+          project_id: string
+          total_minutes: number
+          week_minutes: number
+        }[]
+      }
       set_member_role: {
         Args: {
           _role: Database["public"]["Enums"]["app_role"]
@@ -413,6 +379,13 @@ export type Database = {
         Returns: undefined
       }
       shares_team: { Args: { _a: string; _b: string }; Returns: boolean }
+      tag_usage: {
+        Args: never
+        Returns: {
+          entry_count: number
+          tag_id: string
+        }[]
+      }
     }
     Enums: {
       app_role: "admin" | "manager" | "member"
