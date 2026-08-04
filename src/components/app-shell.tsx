@@ -3,6 +3,7 @@ import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
 import {
   BarChart3,
   Clock,
+  ClipboardList,
   FolderKanban,
   LayoutDashboard,
   Loader2,
@@ -20,6 +21,7 @@ import { useWorkspace } from "@/lib/workspace-store";
 
 const nav = [
   { to: "/time", label: "Time", icon: Clock },
+  { to: "/timesheet", label: "Timesheet", icon: ClipboardList },
   { to: "/", label: "Dashboard", icon: LayoutDashboard },
   { to: "/reports", label: "Reports", icon: BarChart3 },
   { to: "/projects", label: "Projects", icon: FolderKanban },
@@ -66,8 +68,8 @@ export function AppShell({
         <div className="w-full max-w-sm rounded-xl border bg-card p-8 text-center shadow-sm">
           <h1 className="text-lg font-semibold">Awaiting approval</h1>
           <p className="mt-2 text-sm text-muted-foreground">
-            You're signed in, but an admin hasn't approved your account yet. You'll get
-            access as soon as they do — no need to sign in again.
+            You're signed in, but an admin hasn't approved your account yet. You'll get access as
+            soon as they do — no need to sign in again.
           </p>
           <Button variant="outline" className="mt-6 w-full" onClick={() => void signOut()}>
             Sign out
@@ -77,16 +79,20 @@ export function AppShell({
     );
   }
 
-  const pendingCount = isAdmin
-    ? members.filter((m) => m.pending).length
-    : 0;
+  const pendingCount = isAdmin ? members.filter((m) => m.pending).length : 0;
 
   return (
     <div className="flex min-h-screen w-full bg-background">
       <aside className="sticky top-0 hidden h-screen w-64 shrink-0 flex-col border-r border-sidebar-border bg-sidebar px-4 py-6 lg:flex">
         <Link to="/" className="mb-8 block px-2">
-          <img src="/ironbrij-wordmark.png" alt="Ironbrij" className="h-8 w-auto dark:brightness-0 dark:invert" />
-          <span className="mt-1 block text-xs font-medium text-muted-foreground">Time tracking</span>
+          <img
+            src="/ironbrij-wordmark.png"
+            alt="Ironbrij"
+            className="h-8 w-auto dark:brightness-0 dark:invert"
+          />
+          <span className="mt-1 block text-xs font-medium text-muted-foreground">
+            Time tracking
+          </span>
         </Link>
         <nav className="flex flex-1 flex-col gap-1">
           {nav.map((item) => {
@@ -120,7 +126,9 @@ export function AppShell({
           </Avatar>
           <div className="min-w-0 flex-1">
             <p className="truncate text-sm font-medium">{currentUser.name}</p>
-            <p className="truncate text-xs text-muted-foreground">{currentUser.title || currentUser.role}</p>
+            <p className="truncate text-xs text-muted-foreground">
+              {currentUser.title || currentUser.role}
+            </p>
           </div>
           <Button
             variant="ghost"
