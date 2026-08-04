@@ -8,7 +8,6 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { supabase } from "@/integrations/supabase/client";
-import { lovable } from "@/integrations/lovable/index";
 import { allowedEmailDomains, isAllowedEmail, useWorkspace } from "@/lib/workspace-store";
 
 export const Route = createFileRoute("/login")({
@@ -53,24 +52,18 @@ function Login() {
 
   const signInWithGoogle = async () => {
     setBusy("google");
-    const result = await lovable.auth.signInWithOAuth("google", {
-      redirect_uri: window.location.origin,
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: "google",
+      options: { redirectTo: window.location.origin },
     });
-    if (result.error) {
+    if (error) {
       setBusy(null);
       toast.error("Google sign-in failed", { description: "Please try again in a moment." });
-      return;
     }
-    if (result.redirected) return;
-    const { data } = await supabase.auth.getUser();
-    if (!isAllowedEmail(data.user?.email)) {
-      await supabase.auth.signOut();
-      setBusy(null);
-      toast.error("Ironbrij accounts only", { description: `Sign in with your ${domainHint} Google account.` });
-      return;
-    }
-    setBusy(null);
-    navigate({ to: "/", replace: true });
+    // Nothing else runs here on success — the browser leaves for Google and
+    // comes back through Supabase's own callback, remounting this component
+    // with a session already set. Domain restriction is enforced globally in
+    // workspace-store.tsx's onAuthStateChange, so it applies here too.
   };
 
   return (
