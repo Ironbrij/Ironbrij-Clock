@@ -95,7 +95,7 @@ export const timezones = [
 
 export const currencies = ["AUD", "USD", "PHP", "NZD", "GBP", "EUR"];
 
-export const allowedEmailDomains = ["ironbrij.com", "ironbrij.com.au"];
+export const allowedEmailDomains = ["ironbrij.com", "ironbrij.com.au", "gmail.com"];
 
 export function isAllowedEmail(email: string | undefined | null) {
   if (!email) return false;
@@ -156,6 +156,7 @@ type WorkspaceContextValue = {
 
   invitePeople: (input: { emails: string[]; teamId: string; role: Role }) => Promise<number>;
   updateMemberRole: (memberId: string, role: Role) => Promise<void>;
+  approveMember: (memberId: string) => Promise<void>;
   moveMember: (memberId: string, teamId: string) => Promise<void>;
   removeMember: (memberId: string) => Promise<void>;
 
@@ -544,6 +545,11 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
           _user_id: memberId,
           _role: toDbRole(role),
         });
+        throwIf(error);
+        invalidate("profiles");
+      },
+      approveMember: async (memberId) => {
+        const { error } = await supabase.rpc("approve_member", { _user_id: memberId });
         throwIf(error);
         invalidate("profiles");
       },
