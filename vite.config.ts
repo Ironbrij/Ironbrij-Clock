@@ -11,13 +11,4 @@ export default defineConfig({
     // nitro/vite builds from this
     server: { entry: "server" },
   },
-  nitro: {
-    cloudflare: {
-      // nodejs_compat is now a Cloudflare default (as of 2026-08-04) — explicitly
-      // requesting it makes the wrangler deploy step fail validation. This stops
-      // Nitro from adding the now-redundant flag; Cloudflare still provides Node
-      // compatibility natively either way.
-      nodeCompat: false,
-    },
-  },
 });
