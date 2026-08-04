@@ -1,10 +1,12 @@
-import type { ReactNode } from "react";
-import { Link, useRouterState } from "@tanstack/react-router";
+import { useEffect, type ReactNode } from "react";
+import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
 import {
   BarChart3,
   Clock,
   FolderKanban,
   LayoutDashboard,
+  Loader2,
+  LogOut,
   Plane,
   Settings,
   SlidersHorizontal,
@@ -13,7 +15,9 @@ import {
 import wordmark from "@/assets/ironbrij-wordmark.png.asset.json";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { useWorkspace } from "@/lib/workspace-store";
 
 const nav = [
   { to: "/time", label: "Time", icon: Clock },
@@ -38,6 +42,20 @@ export function AppShell({
   children: ReactNode;
 }) {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
+  const navigate = useNavigate();
+  const { session, authLoading, currentUser, signOut } = useWorkspace();
+
+  useEffect(() => {
+    if (!authLoading && !session) navigate({ to: "/login", replace: true });
+  }, [authLoading, session, navigate]);
+
+  if (authLoading || !session) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-background">
+        <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
 
   return (
     <div className="flex min-h-screen w-full bg-background">
@@ -66,12 +84,25 @@ export function AppShell({
         </nav>
         <div className="mt-6 flex items-center gap-3 rounded-xl border border-sidebar-border bg-card p-3">
           <Avatar className="h-9 w-9 shrink-0">
-            <AvatarFallback className="bg-primary text-xs text-primary-foreground">MA</AvatarFallback>
+            <AvatarFallback className="bg-primary text-xs text-primary-foreground">
+              {currentUser.initials}
+            </AvatarFallback>
           </Avatar>
-          <div className="min-w-0">
-            <p className="truncate text-sm font-medium">Maya Alvarez</p>
-            <p className="truncate text-xs text-muted-foreground">Head of Delivery</p>
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-sm font-medium">{currentUser.name}</p>
+            <p className="truncate text-xs text-muted-foreground">{currentUser.title || currentUser.role}</p>
           </div>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 shrink-0"
+            aria-label="Sign out"
+            onClick={() => {
+              void signOut().then(() => navigate({ to: "/login", replace: true }));
+            }}
+          >
+            <LogOut className="h-4 w-4" />
+          </Button>
         </div>
       </aside>
 
