@@ -67,6 +67,12 @@ export const Route = createFileRoute("/teams")({
 
 const roles: Role[] = ["Admin", "Manager", "Member"];
 
+function run(promise: Promise<unknown>, success: () => void) {
+  promise.then(success).catch((error: Error) =>
+    toast.error("That didn't save", { description: error.message }),
+  );
+}
+
 function TeamsPage() {
   const {
     teams,
@@ -233,8 +239,9 @@ function TeamsPage() {
                             <DropdownMenuRadioGroup
                               value={m.role}
                               onValueChange={(v) => {
-                                updateMemberRole(m.id, v as Role);
-                                toast.success(`${m.name} is now ${v === "Admin" ? "an" : "a"} ${v}`);
+                                run(updateMemberRole(m.id, v as Role), () =>
+                                  toast.success(`${m.name} is now ${v === "Admin" ? "an" : "a"} ${v}`),
+                                );
                               }}
                             >
                               {roles.map((r) => (
@@ -253,8 +260,9 @@ function TeamsPage() {
                                     <DropdownMenuItem
                                       key={t.id}
                                       onSelect={() => {
-                                        moveMember(m.id, t.id);
-                                        toast.success(`${m.name} moved to ${t.name}`);
+                                        run(moveMember(m.id, t.id), () =>
+                                          toast.success(`${m.name} moved to ${t.name}`),
+                                        );
                                       }}
                                     >
                                       <span
@@ -270,8 +278,9 @@ function TeamsPage() {
                             <DropdownMenuItem
                               className="text-destructive focus:text-destructive"
                               onSelect={() => {
-                                removeMember(m.id);
-                                toast.success(`${m.name} removed from ${team?.name ?? "team"}`);
+                                run(removeMember(m.id), () =>
+                                  toast.success(`${m.name} removed from ${team?.name ?? "team"}`),
+                                );
                               }}
                             >
                               Remove from team
@@ -293,10 +302,15 @@ function TeamsPage() {
         onOpenChange={setInviteOpen}
         defaultTeamId={selected}
         onInvite={(payload) => {
-          const count = invitePeople(payload);
-          toast.success("Invite sent", {
-            description: `${count} ${count === 1 ? "person" : "people"} invited as ${payload.role}.`,
-          });
+          invitePeople(payload)
+            .then((count) =>
+              toast.success("Invite sent", {
+                description: `${count} ${count === 1 ? "person" : "people"} invited as ${payload.role}.`,
+              }),
+            )
+            .catch((error: Error) =>
+              toast.error("Invite failed", { description: error.message }),
+            );
         }}
       />
 
@@ -308,11 +322,13 @@ function TeamsPage() {
         people={members}
         onSubmit={({ name, color, memberIds }) => {
           if (editingTeam) {
-            updateTeam(editingTeam.id, { name, color });
-            toast.success("Team updated", { description: `${name} saved.` });
+            run(updateTeam(editingTeam.id, { name, color }), () =>
+              toast.success("Team updated", { description: `${name} saved.` }),
+            );
           } else {
-            createTeam({ name, color, memberIds });
-            toast.success("Team created", { description: `${name} is ready to go.` });
+            run(createTeam({ name, color, memberIds }), () =>
+              toast.success("Team created", { description: `${name} is ready to go.` }),
+            );
           }
         }}
       />
@@ -331,8 +347,9 @@ function TeamsPage() {
             <AlertDialogAction
               onClick={() => {
                 if (deletingTeam) {
-                  deleteTeam(deletingTeam.id);
-                  toast.success("Team deleted", { description: `${deletingTeam.name} is gone.` });
+                  run(deleteTeam(deletingTeam.id), () =>
+                    toast.success("Team deleted", { description: `${deletingTeam.name} is gone.` }),
+                  );
                 }
                 setDeletingTeamId(null);
               }}
