@@ -155,6 +155,7 @@ type WorkspaceContextValue = {
   projectById: (id: string | null) => WorkspaceProject | undefined;
 
   invitePeople: (input: { emails: string[]; teamId: string; role: Role }) => Promise<number>;
+  resendInvite: (email: string) => Promise<void>;
   updateMemberRole: (memberId: string, role: Role) => Promise<void>;
   approveMember: (memberId: string) => Promise<void>;
   moveMember: (memberId: string, teamId: string) => Promise<void>;
@@ -539,6 +540,10 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         });
         invalidate("profiles", "team_members");
         return result.invited;
+      },
+      resendInvite: async (email) => {
+        const { resendInvite } = await import("@/lib/admin.functions");
+        await resendInvite({ data: { email } });
       },
       updateMemberRole: async (memberId, role) => {
         const { error } = await supabase.rpc("set_member_role", {
