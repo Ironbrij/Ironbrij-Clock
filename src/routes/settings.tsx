@@ -50,47 +50,7 @@ function SettingsPage() {
         </TabsList>
 
         <TabsContent value="profile" className="mt-6">
-          <Card className="max-w-2xl shadow-card">
-            <CardContent className="flex flex-col gap-6 p-6">
-              <div className="flex items-center gap-4">
-                <Avatar className="h-16 w-16">
-                  <AvatarFallback className="bg-primary text-lg text-primary-foreground">MA</AvatarFallback>
-                </Avatar>
-                <div>
-                  <Button variant="outline" size="sm">Change avatar</Button>
-                  <p className="mt-2 text-xs text-muted-foreground">PNG or JPG, up to 2 MB.</p>
-                </div>
-              </div>
-              <div className="grid gap-4 sm:grid-cols-2">
-                <div className="grid gap-2">
-                  <Label htmlFor="name">Full name</Label>
-                  <Input id="name" defaultValue="Maya Alvarez" />
-                </div>
-                <div className="grid gap-2">
-                  <Label htmlFor="title">Job title</Label>
-                  <Input id="title" defaultValue="Head of Delivery" />
-                </div>
-              </div>
-              <div className="grid gap-2">
-                <Label htmlFor="work-email">Work email</Label>
-                <Input id="work-email" type="email" defaultValue="maya@ironbrij.com" />
-              </div>
-              <div className="grid gap-2">
-                <Label htmlFor="tz">Timezone</Label>
-                <Select defaultValue="syd">
-                  <SelectTrigger id="tz"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="syd">Australia/Sydney (AEST)</SelectItem>
-                    <SelectItem value="mnl">Asia/Manila (PHT)</SelectItem>
-                    <SelectItem value="per">Australia/Perth (AWST)</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <Button>Save changes</Button>
-              </div>
-            </CardContent>
-          </Card>
+          <ProfileTab />
         </TabsContent>
 
         <TabsContent value="notifications" className="mt-6">
@@ -126,6 +86,76 @@ function SettingsPage() {
 
       </Tabs>
     </AppShell>
+  );
+}
+
+function ProfileTab() {
+  const { currentUser, updateProfile } = useWorkspace();
+  const [fullName, setFullName] = useState(currentUser.name);
+  const [jobTitle, setJobTitle] = useState(currentUser.title);
+  const [timezone, setTimezone] = useState(timezones[0]);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    setFullName(currentUser.name);
+    setJobTitle(currentUser.title);
+  }, [currentUser]);
+
+  return (
+    <Card className="max-w-2xl shadow-card">
+      <CardContent className="flex flex-col gap-6 p-6">
+        <div className="flex items-center gap-4">
+          <Avatar className="h-16 w-16">
+            <AvatarFallback className="bg-primary text-lg text-primary-foreground">
+              {currentUser.initials}
+            </AvatarFallback>
+          </Avatar>
+          <div>
+            <Button variant="outline" size="sm">Change avatar</Button>
+            <p className="mt-2 text-xs text-muted-foreground">PNG or JPG, up to 2 MB.</p>
+          </div>
+        </div>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div className="grid gap-2">
+            <Label htmlFor="name">Full name</Label>
+            <Input id="name" value={fullName} onChange={(e) => setFullName(e.target.value)} />
+          </div>
+          <div className="grid gap-2">
+            <Label htmlFor="title">Job title</Label>
+            <Input id="title" value={jobTitle} onChange={(e) => setJobTitle(e.target.value)} />
+          </div>
+        </div>
+        <div className="grid gap-2">
+          <Label htmlFor="work-email">Work email</Label>
+          <Input id="work-email" type="email" value={currentUser.email ?? ""} disabled />
+        </div>
+        <div className="grid gap-2">
+          <Label htmlFor="tz">Timezone</Label>
+          <Select value={timezone} onValueChange={setTimezone}>
+            <SelectTrigger id="tz"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              {timezones.map((tz) => (
+                <SelectItem key={tz} value={tz}>{tz}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div>
+          <Button
+            disabled={saving}
+            onClick={() => {
+              setSaving(true);
+              updateProfile({ full_name: fullName.trim(), job_title: jobTitle.trim(), timezone })
+                .then(() => toast.success("Profile saved", { description: "Your details are up to date." }))
+                .catch((error: Error) => toast.error("Couldn't save", { description: error.message }))
+                .finally(() => setSaving(false));
+            }}
+          >
+            Save changes
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 function AdminTab() {
@@ -260,16 +290,21 @@ function AdminTab() {
           <div>
             <Button
               onClick={() => {
-                updateSettings({
+                void updateSettings({
                   companyName: companyName.trim() || settings.companyName,
                   timezone,
                   weeklyHours: Number(weeklyHours) || settings.weeklyHours,
                   currency,
                   logoDataUrl: logo,
-                });
-                toast.success("Workspace settings saved", {
-                  description: "Your changes are live across the workspace.",
-                });
+                })
+                  .then(() =>
+                    toast.success("Workspace settings saved", {
+                      description: "Your changes are live across the workspace.",
+                    }),
+                  )
+                  .catch((error: Error) =>
+                    toast.error("Couldn't save settings", { description: error.message }),
+                  );
               }}
             >
               Save workspace settings
