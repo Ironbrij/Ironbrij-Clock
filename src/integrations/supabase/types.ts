@@ -12,6 +12,31 @@ export type Database = {
   __InternalSupabase: {
     PostgrestVersion: "14.15"
   }
+  graphql_public: {
+    Tables: {
+      [_ in never]: never
+    }
+    Views: {
+      [_ in never]: never
+    }
+    Functions: {
+      graphql: {
+        Args: {
+          extensions?: Json
+          operationName?: string
+          query?: string
+          variables?: Json
+        }
+        Returns: Json
+      }
+    }
+    Enums: {
+      [_ in never]: never
+    }
+    CompositeTypes: {
+      [_ in never]: never
+    }
+  }
   public: {
     Tables: {
       clients: {
@@ -425,7 +450,7 @@ export type Database = {
       }
       review_timesheet: {
         Args: {
-          _note?: string | null
+          _note?: string
           _status: Database["public"]["Enums"]["timesheet_status"]
           _timesheet_id: string
         }
@@ -439,6 +464,12 @@ export type Database = {
           submitted_at: string | null
           user_id: string
           week_start: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "timesheets"
+          isOneToOne: true
+          isSetofReturn: false
         }
       }
       set_member_role: {
@@ -461,6 +492,12 @@ export type Database = {
           submitted_at: string | null
           user_id: string
           week_start: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "timesheets"
+          isOneToOne: true
+          isSetofReturn: false
         }
       }
       tag_usage: {
@@ -603,9 +640,13 @@ export type CompositeTypes<
     : never
 
 export const Constants = {
+  graphql_public: {
+    Enums: {},
+  },
   public: {
     Enums: {
       app_role: ["admin", "manager", "member"],
+      timesheet_status: ["draft", "submitted", "approved", "rejected"],
     },
   },
 } as const
