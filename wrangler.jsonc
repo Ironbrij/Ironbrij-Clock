@@ -1,4 +1,6 @@
 {
+  "keep_vars": true,
+  "compatibility_date": "2026-08-03",
   "observability": {
     "enabled": false,
     "head_sampling_rate": 1,
@@ -15,8 +17,3 @@
     }
   }
 }
-
-{
-  "keep_vars": true
-}
-
