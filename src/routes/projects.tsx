@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Archive, Plus } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell, ProjectDot } from "@/components/app-shell";
@@ -38,12 +38,15 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { formatHours, tags } from "@/lib/mock-data";
+import { formatHours } from "@/lib/mock-data";
 import {
   dotColors,
+  NO_CLIENT,
   useWorkspace,
   useWorkspaceClients,
+  useWorkspaceTags,
   type ProjectInput,
+  type WorkspaceTag,
   type WorkspaceProject,
 } from "@/lib/workspace-store";
 
@@ -64,6 +67,11 @@ function ProjectsPage() {
   const { projects, teams, members, memberById, isAdmin, createProject, updateProject, archiveProject } =
     useWorkspace();
   const clients = useWorkspaceClients();
+  const tags = useWorkspaceTags();
+  const clientNames = useMemo(() => {
+    const names = clients.map((c) => c.name).filter((n) => n !== NO_CLIENT);
+    return [NO_CLIENT, ...names];
+  }, [clients]);
 
   const [formOpen, setFormOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -99,7 +107,7 @@ function ProjectsPage() {
       </Tabs>
 
       {tab === "clients" && <ClientsTab clients={clients} />}
-      {tab === "tags" && <TagsTab />}
+      {tab === "tags" && <TagsTab tags={tags} />}
       {tab === "projects" && (
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
         {projects.map((p) => {
@@ -170,16 +178,21 @@ function ProjectsPage() {
         open={formOpen}
         onOpenChange={setFormOpen}
         project={editing}
-        clientNames={clients.map((c) => c.name)}
+        clientNames={clientNames}
         teams={teams}
         people={members}
+        tags={tags}
         onSubmit={(input) => {
           if (editing) {
-            updateProject(editing.id, input);
-            toast.success("Project updated", { description: `${input.name} saved.` });
+            updateProject(editing.id, input)
+              .then(() => toast.success("Project updated", { description: `${input.name} saved.` }))
+              .catch((error: Error) => toast.error("Couldn't save", { description: error.message }));
           } else {
-            createProject(input);
-            toast.success("Project created", { description: `${input.name} is ready for time entries.` });
+            createProject(input)
+              .then(() =>
+                toast.success("Project created", { description: `${input.name} is ready for time entries.` }),
+              )
+              .catch((error: Error) => toast.error("Couldn't create", { description: error.message }));
           }
         }}
         onArchive={() => {
@@ -202,8 +215,11 @@ function ProjectsPage() {
             <AlertDialogAction
               onClick={() => {
                 if (archiving) {
-                  archiveProject(archiving.id);
-                  toast.success("Project archived", { description: `${archiving.name} is now archived.` });
+                  archiveProject(archiving.id)
+                    .then(() =>
+                      toast.success("Project archived", { description: `${archiving.name} is now archived.` }),
+                    )
+                    .catch((error: Error) => toast.error("Couldn't archive", { description: error.message }));
                 }
                 setArchivingId(null);
               }}
@@ -224,6 +240,7 @@ function ProjectFormDialog({
   clientNames,
   teams,
   people,
+  tags,
   onSubmit,
   onArchive,
 }: {
@@ -233,6 +250,7 @@ function ProjectFormDialog({
   clientNames: string[];
   teams: { id: string; name: string; color: string }[];
   people: { id: string; name: string; title: string }[];
+  tags: WorkspaceTag[];
   onSubmit: (input: ProjectInput) => void;
   onArchive: () => void;
 }) {
@@ -403,7 +421,7 @@ function ClientsTab({
   );
 }
 
-function TagsTab() {
+function TagsTab({ tags }: { tags: WorkspaceTag[] }) {
   return (
     <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
       {tags.map((t) => (

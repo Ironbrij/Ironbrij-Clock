@@ -1,10 +1,15 @@
 import { ProjectDot } from "@/components/app-shell";
 import { Card, CardContent } from "@/components/ui/card";
-import { formatHours, projects, weekGrid, weekdays } from "@/lib/mock-data";
+import { formatHours } from "@/lib/mock-data";
+import { weekdayNames } from "@/lib/time-utils";
+import { useWeekGrid, useWorkspace } from "@/lib/workspace-store";
 
-export function TimesheetGrid() {
-  const dayTotals = weekdays.map((_, i) =>
-    projects.reduce((sum, p) => sum + (weekGrid[p.id]?.[i] ?? 0), 0),
+export function TimesheetGrid({ weekStart }: { weekStart: Date }) {
+  const { projects } = useWorkspace();
+  const grid = useWeekGrid(weekStart);
+  const rows = projects.filter((p) => (grid[p.id] ?? []).some((h) => h > 0) || !p.archived);
+  const dayTotals = weekdayNames.map((_, i) =>
+    rows.reduce((sum, p) => sum + (grid[p.id]?.[i] ?? 0), 0),
   );
   const weekTotal = dayTotals.reduce((a, b) => a + b, 0);
 
@@ -15,15 +20,15 @@ export function TimesheetGrid() {
           <thead>
             <tr className="border-b border-border text-xs uppercase tracking-wide text-muted-foreground">
               <th className="px-5 py-3 text-left font-medium">Project</th>
-              {weekdays.map((d) => (
+              {weekdayNames.map((d) => (
                 <th key={d} className="px-3 py-3 text-center font-medium">{d}</th>
               ))}
               <th className="px-5 py-3 text-right font-medium">Total</th>
             </tr>
           </thead>
           <tbody>
-            {projects.map((p) => {
-              const row = weekGrid[p.id] ?? [];
+            {rows.map((p) => {
+              const row = grid[p.id] ?? [0, 0, 0, 0, 0, 0, 0];
               const total = row.reduce((a, b) => a + b, 0);
               return (
                 <tr key={p.id} className="border-b border-border last:border-0 hover:bg-muted/40">
