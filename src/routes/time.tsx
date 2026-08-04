@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Check, ChevronLeft, ChevronRight, Pause, Pencil, Play } from "lucide-react";
+import { toast } from "sonner";
 import { AppShell, ProjectDot } from "@/components/app-shell";
 import { TimesheetGrid } from "@/components/timesheet-grid";
 import { Button } from "@/components/ui/button";
@@ -14,17 +15,17 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { formatHours, formatMinutes, tasks } from "@/lib/mock-data";
 import {
-  formatHours,
-  formatMinutes,
-  projectById,
-  projects,
-  tasks,
-  todayEntries,
-  weekEntries,
-  weekdays,
-  type TimeEntry,
-} from "@/lib/mock-data";
+  addDays,
+  formatClock,
+  formatDayLong,
+  formatWeekRange,
+  startOfWeek,
+  toDateKey,
+  weekdayNames,
+} from "@/lib/time-utils";
+import { useThisWeekStart, useWorkspace, type WorkspaceEntry } from "@/lib/workspace-store";
 
 export const Route = createFileRoute("/time")({
   head: () => ({
@@ -43,7 +44,6 @@ export const Route = createFileRoute("/time")({
 });
 
 const pad = (n: number) => n.toString().padStart(2, "0");
-const weekLabels = ["2 – 8 June", "9 – 15 June", "16 – 22 June"];
 
 function TimePage() {
   const [view, setView] = useState("list");
@@ -68,25 +68,59 @@ function TimePage() {
 }
 
 function TimerBar() {
-  const [running, setRunning] = useState(false);
-  const [seconds, setSeconds] = useState(0);
-  const [project, setProject] = useState("p1");
+  const { projects, runningEntry, startTimer, stopTimer } = useWorkspace();
+  const active = projects.filter((p) => !p.archived);
+  const [project, setProject] = useState("");
   const [task, setTask] = useState(tasks[0]);
   const [description, setDescription] = useState("");
-  const interval = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [seconds, setSeconds] = useState(0);
+  const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    if (running) {
-      interval.current = setInterval(() => setSeconds((s) => s + 1), 1000);
-    }
-    return () => {
-      if (interval.current) clearInterval(interval.current);
-    };
-  }, [running]);
+    if (!project && active[0]) setProject(active[0].id);
+  }, [active, project]);
 
+  useEffect(() => {
+    if (!runningEntry) {
+      setSeconds(0);
+      return;
+    }
+    setProject(runningEntry.projectId ?? "");
+    setTask(runningEntry.task || tasks[0]);
+    setDescription(runningEntry.description);
+    const tick = () =>
+      setSeconds(Math.max(0, Math.floor((Date.now() - new Date(runningEntry.startTime).getTime()) / 1000)));
+    tick();
+    const interval = setInterval(tick, 1000);
+    return () => clearInterval(interval);
+  }, [runningEntry]);
+
+  const running = !!runningEntry;
   const h = Math.floor(seconds / 3600);
   const m = Math.floor((seconds % 3600) / 60);
   const s = seconds % 60;
+
+  const toggle = async () => {
+    setBusy(true);
+    try {
+      if (runningEntry) {
+        await stopTimer(runningEntry.id);
+        toast.success("Timer stopped", { description: "Entry saved to your timesheet." });
+        setDescription("");
+      } else {
+        if (!project) {
+          toast.error("Pick a project first");
+          return;
+        }
+        await startTimer({ projectId: project, task, description });
+        toast.success("Timer running", { description: "We'll keep counting until you stop." });
+      }
+    } catch (error) {
+      toast.error("Timer failed", { description: (error as Error).message });
+    } finally {
+      setBusy(false);
+    }
+  };
 
   return (
     <Card className="sticky top-20 z-10 shadow-card">
@@ -98,10 +132,10 @@ function TimerBar() {
           className="lg:flex-1"
         />
         <div className="grid gap-3 sm:grid-cols-2 lg:w-[380px]">
-          <Select value={project} onValueChange={setProject}>
+          <Select value={project} onValueChange={setProject} disabled={running}>
             <SelectTrigger><SelectValue placeholder="Project" /></SelectTrigger>
             <SelectContent>
-              {projects.map((p) => (
+              {active.map((p) => (
                 <SelectItem key={p.id} value={p.id}>
                   <span className="flex items-center gap-2">
                     <ProjectDot color={p.color} />
@@ -111,7 +145,7 @@ function TimerBar() {
               ))}
             </SelectContent>
           </Select>
-          <Select value={task} onValueChange={setTask}>
+          <Select value={task} onValueChange={setTask} disabled={running}>
             <SelectTrigger><SelectValue placeholder="Task" /></SelectTrigger>
             <SelectContent>
               {tasks.map((t) => (
@@ -131,13 +165,8 @@ function TimerBar() {
             size="icon"
             variant={running ? "destructive" : "default"}
             aria-label={running ? "Stop timer" : "Start timer"}
-            onClick={() => {
-              if (running) {
-                setSeconds(0);
-                setDescription("");
-              }
-              setRunning((r) => !r);
-            }}
+            disabled={busy}
+            onClick={() => void toggle()}
             className="h-12 w-12 rounded-full shadow-elevated transition-transform active:scale-95"
           >
             {running ? <Pause className="h-5 w-5 fill-current" /> : <Play className="h-5 w-5 fill-current" />}
@@ -148,13 +177,18 @@ function TimerBar() {
   );
 }
 
-function EntryList({ entries }: { entries: TimeEntry[] }) {
-  const [rows, setRows] = useState(entries);
+function EntryList({ entries }: { entries: WorkspaceEntry[] }) {
+  const { projectById, updateEntry } = useWorkspace();
   const [editing, setEditing] = useState<string | null>(null);
+  const [draft, setDraft] = useState("");
+
+  if (entries.length === 0) {
+    return <p className="px-6 py-6 text-sm text-muted-foreground">No time logged on this day.</p>;
+  }
 
   return (
     <ul className="divide-y divide-border">
-      {rows.map((entry) => {
+      {entries.map((entry) => {
         const p = projectById(entry.projectId);
         const isEditing = editing === entry.id;
         return (
@@ -163,35 +197,48 @@ function EntryList({ entries }: { entries: TimeEntry[] }) {
             className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 px-6 py-3.5 transition-colors hover:bg-muted/50"
           >
             <div className="flex min-w-0 items-center gap-3">
-              <ProjectDot color={p.color} />
+              <ProjectDot color={p?.color ?? "var(--muted-foreground)"} />
               <div className="min-w-0 flex-1">
                 {isEditing ? (
                   <Input
                     autoFocus
-                    value={entry.description}
-                    onChange={(e) =>
-                      setRows((prev) =>
-                        prev.map((x) => (x.id === entry.id ? { ...x, description: e.target.value } : x)),
-                      )
-                    }
-                    onBlur={() => setEditing(null)}
+                    value={draft}
+                    onChange={(e) => setDraft(e.target.value)}
+                    onBlur={() => {
+                      setEditing(null);
+                      if (draft !== entry.description) {
+                        updateEntry(entry.id, { description: draft }).catch((error: Error) =>
+                          toast.error("Couldn't save that", { description: error.message }),
+                        );
+                      }
+                    }}
                     className="h-8"
                   />
                 ) : (
-                  <p className="truncate text-sm font-medium">{entry.description}</p>
+                  <p className="truncate text-sm font-medium">
+                    {entry.description || "No description"}
+                  </p>
                 )}
                 <p className="truncate text-xs text-muted-foreground">
-                  {p.name} · {entry.task} · from {entry.start}
+                  {p?.name ?? "No project"} · {entry.task || "—"} · from {formatClock(entry.startTime)}
                 </p>
               </div>
             </div>
             <div className="flex shrink-0 items-center gap-1">
-              <span className="tabular-nums text-sm font-medium">{formatMinutes(entry.minutes)}</span>
+              <span className="tabular-nums text-sm font-medium">
+                {entry.running ? "running" : formatMinutes(entry.minutes)}
+              </span>
               <Button
                 size="icon"
                 variant="ghost"
                 aria-label="Edit entry"
-                onClick={() => setEditing(isEditing ? null : entry.id)}
+                onClick={() => {
+                  if (isEditing) setEditing(null);
+                  else {
+                    setDraft(entry.description);
+                    setEditing(entry.id);
+                  }
+                }}
               >
                 {isEditing ? <Check className="h-4 w-4" /> : <Pencil className="h-4 w-4" />}
               </Button>
@@ -204,77 +251,83 @@ function EntryList({ entries }: { entries: TimeEntry[] }) {
 }
 
 function ListView() {
-  const previousDays = [2, 1, 0].map((dayIndex) => ({
-    dayIndex,
-    entries: weekEntries.filter((e) => e.dayIndex === dayIndex),
-  }));
-  const dayNames = ["Monday 9 June", "Tuesday 10 June", "Wednesday 11 June"];
+  const { entries } = useWorkspace();
+  const days = useMemo(() => Array.from({ length: 4 }, (_, i) => addDays(new Date(), -i)), []);
 
   return (
     <div className="grid gap-6">
-      <Card className="shadow-card">
-        <CardHeader className="flex-row items-center justify-between">
-          <CardTitle className="text-base">Today · Thursday 12 June</CardTitle>
-          <span className="text-sm text-muted-foreground tabular-nums">
-            {formatMinutes(todayEntries.reduce((s, e) => s + e.minutes, 0))}
-          </span>
-        </CardHeader>
-        <CardContent className="p-0">
-          <EntryList entries={todayEntries} />
-        </CardContent>
-      </Card>
-
-      {previousDays.map(({ dayIndex, entries }) => (
-        <Card key={dayIndex} className="shadow-card">
-          <CardHeader className="flex-row items-center justify-between">
-            <CardTitle className="text-base">{dayNames[dayIndex]}</CardTitle>
-            <span className="text-sm text-muted-foreground tabular-nums">
-              {formatMinutes(entries.reduce((s, e) => s + e.minutes, 0))}
-            </span>
-          </CardHeader>
-          <CardContent className="p-0">
-            <EntryList entries={entries} />
-          </CardContent>
-        </Card>
-      ))}
+      {days.map((day, index) => {
+        const key = toDateKey(day);
+        const dayEntries = entries.filter((e) => e.date === key);
+        if (index > 0 && dayEntries.length === 0) return null;
+        return (
+          <Card key={key} className="shadow-card">
+            <CardHeader className="flex-row items-center justify-between">
+              <CardTitle className="text-base">
+                {index === 0 ? `Today · ${formatDayLong(day)}` : formatDayLong(day)}
+              </CardTitle>
+              <span className="text-sm text-muted-foreground tabular-nums">
+                {formatMinutes(dayEntries.reduce((s, e) => s + e.minutes, 0))}
+              </span>
+            </CardHeader>
+            <CardContent className="p-0">
+              <EntryList entries={dayEntries} />
+            </CardContent>
+          </Card>
+        );
+      })}
     </div>
   );
 }
 
 function GridView() {
-  const [week, setWeek] = useState(1);
+  const thisWeek = useThisWeekStart();
+  const [offset, setOffset] = useState(0);
+  const weekStart = useMemo(() => addDays(thisWeek, offset * 7), [thisWeek, offset]);
+
   return (
     <div className="grid gap-4">
       <div className="flex items-center gap-2">
-        <Button variant="outline" size="icon" onClick={() => setWeek((w) => Math.max(0, w - 1))}>
+        <Button variant="outline" size="icon" onClick={() => setOffset((w) => w - 1)}>
           <ChevronLeft className="h-4 w-4" />
         </Button>
-        <span className="truncate text-sm font-medium">{weekLabels[week]}</span>
-        <Button variant="outline" size="icon" onClick={() => setWeek((w) => Math.min(2, w + 1))}>
+        <span className="truncate text-sm font-medium">{formatWeekRange(weekStart)}</span>
+        <Button variant="outline" size="icon" onClick={() => setOffset((w) => Math.min(0, w + 1))}>
           <ChevronRight className="h-4 w-4" />
         </Button>
       </div>
-      <TimesheetGrid />
+      <TimesheetGrid weekStart={weekStart} />
     </div>
   );
 }
 
 function CalendarView() {
+  const { entries, projectById } = useWorkspace();
   const [mode, setMode] = useState("month");
+  const today = useMemo(() => new Date(), []);
+  const weekStart = useMemo(() => startOfWeek(today), [today]);
 
-  // June 2026 starts on a Monday, 30 days.
-  const days = Array.from({ length: 30 }, (_, i) => i + 1);
-  const entriesForDay = (day: number) => {
-    const weekdayIndex = (day - 1) % 7;
-    return weekEntries.filter((e) => e.dayIndex === weekdayIndex);
-  };
+  const monthDays = useMemo(() => {
+    const first = new Date(today.getFullYear(), today.getMonth(), 1);
+    const lead = (first.getDay() + 6) % 7;
+    const daysInMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate();
+    return [
+      ...Array.from({ length: lead }, () => null),
+      ...Array.from({ length: daysInMonth }, (_, i) => new Date(today.getFullYear(), today.getMonth(), i + 1)),
+    ];
+  }, [today]);
 
-  const weekDays = [9, 10, 11, 12, 13, 14, 15];
+  const weekDays = useMemo(() => weekdayNames.map((_, i) => addDays(weekStart, i)), [weekStart]);
+  const cells = mode === "month" ? monthDays : weekDays;
 
   return (
     <div className="grid gap-4">
       <div className="flex items-center justify-between gap-4">
-        <span className="text-sm font-medium">{mode === "month" ? "June 2026" : "9 – 15 June 2026"}</span>
+        <span className="text-sm font-medium">
+          {mode === "month"
+            ? today.toLocaleDateString("en-AU", { month: "long", year: "numeric" })
+            : `${formatWeekRange(weekStart)} ${weekStart.getFullYear()}`}
+        </span>
         <Tabs value={mode} onValueChange={setMode}>
           <TabsList>
             <TabsTrigger value="month">Month</TabsTrigger>
@@ -287,24 +340,26 @@ function CalendarView() {
         <CardContent className="overflow-x-auto p-4">
           <div className="min-w-[720px]">
             <div className="grid grid-cols-7 gap-2 pb-2 text-xs uppercase tracking-wide text-muted-foreground">
-              {weekdays.map((d) => (
+              {weekdayNames.map((d) => (
                 <span key={d} className="px-1">{d}</span>
               ))}
             </div>
             <div className="grid grid-cols-7 gap-2">
-              {(mode === "month" ? days : weekDays).map((day) => {
-                const dayEntries = entriesForDay(day);
+              {cells.map((date, i) => {
+                if (!date) return <div key={`blank-${i}`} className="min-h-24" />;
+                const key = toDateKey(date);
+                const dayEntries = entries.filter((e) => e.date === key);
                 const totalHours = dayEntries.reduce((s, e) => s + e.minutes, 0) / 60;
                 return (
                   <div
-                    key={day}
+                    key={key}
                     className={
                       "flex flex-col gap-1 rounded-lg border border-border bg-card p-2 " +
                       (mode === "month" ? "min-h-24" : "min-h-64")
                     }
                   >
                     <div className="flex items-center justify-between">
-                      <span className="text-xs font-medium tabular-nums">{day}</span>
+                      <span className="text-xs font-medium tabular-nums">{date.getDate()}</span>
                       {totalHours > 0 && (
                         <span className="text-[10px] text-muted-foreground tabular-nums">
                           {formatHours(totalHours)}
@@ -313,19 +368,22 @@ function CalendarView() {
                     </div>
                     {dayEntries.map((e) => {
                       const p = projectById(e.projectId);
+                      const color = p?.color ?? "var(--muted-foreground)";
                       return (
                         <div
-                          key={`${day}-${e.id}`}
+                          key={e.id}
                           className="flex items-center gap-1.5 rounded-md px-1.5 py-1 text-[10px] font-medium"
                           style={{
-                            backgroundColor: `color-mix(in oklab, ${p.color} 14%, transparent)`,
-                            color: p.color,
+                            backgroundColor: `color-mix(in oklab, ${color} 14%, transparent)`,
+                            color,
                           }}
-                          title={`${p.name} · ${e.description}`}
+                          title={`${p?.name ?? "No project"} · ${e.description}`}
                         >
-                          <ProjectDot color={p.color} />
+                          <ProjectDot color={color} />
                           <span className="truncate">
-                            {mode === "month" ? p.name : `${e.description} · ${formatMinutes(e.minutes)}`}
+                            {mode === "month"
+                              ? (p?.name ?? "No project")
+                              : `${e.description || p?.name} · ${formatMinutes(e.minutes)}`}
                           </span>
                         </div>
                       );
