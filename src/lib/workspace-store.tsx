@@ -863,7 +863,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         const { error } = await supabase.rpc("review_timesheet", {
           _timesheet_id: timesheetId,
           _status: toDbReviewStatus(status),
-          _note: note ?? null,
+          _note: note,
         });
         throwIf(error);
         invalidate("timesheets", "time_entries", "review_entries");
