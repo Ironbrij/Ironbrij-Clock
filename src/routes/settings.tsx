@@ -46,6 +46,7 @@ function SettingsPage() {
         <TabsList>
           <TabsTrigger value="profile">Profile</TabsTrigger>
           <TabsTrigger value="notifications">Notifications</TabsTrigger>
+          {isAdmin && <TabsTrigger value="users">Users</TabsTrigger>}
           <TabsTrigger value="admin">Admin</TabsTrigger>
         </TabsList>
 
@@ -70,6 +71,12 @@ function SettingsPage() {
             </CardContent>
           </Card>
         </TabsContent>
+
+        {isAdmin && (
+          <TabsContent value="users" className="mt-6">
+            <UsersTab />
+          </TabsContent>
+        )}
 
         <TabsContent value="admin" className="mt-6">
           {isAdmin ? <AdminTab /> : (
@@ -158,6 +165,134 @@ function ProfileTab() {
     </Card>
   );
 }
+function UsersTab() {
+  const { members, approveMember, removeMember, teams } = useWorkspace();
+
+  const pendingMembers = members.filter((m) => m.pending);
+  const approvedMembers = members.filter((m) => !m.pending);
+
+  const teamName = (teamId: string) => teams.find((t) => t.id === teamId)?.name ?? "No team";
+
+  return (
+    <div className="grid max-w-4xl gap-6">
+      <Card className="shadow-card">
+        <CardContent className="p-6">
+          <div className="mb-4">
+            <h2 className="text-base font-semibold">Pending approval</h2>
+            <p className="text-sm text-muted-foreground">
+              People who've signed in but haven't been approved yet. They can see a waiting screen until you approve them.
+            </p>
+          </div>
+          {pendingMembers.length === 0 ? (
+            <p className="py-8 text-center text-sm text-muted-foreground">
+              No one waiting — all signed-in users have been approved.
+            </p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm text-left">
+                <thead className="border-b text-xs uppercase text-muted-foreground">
+                  <tr>
+                    <th className="px-3 py-2">Name</th>
+                    <th className="px-3 py-2">Email</th>
+                    <th className="px-3 py-2">Role</th>
+                    <th className="px-3 py-2">Team</th>
+                    <th className="px-3 py-2 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
+                  {pendingMembers.map((m) => (
+                    <tr key={m.id} className="hover:bg-accent/40 transition-colors">
+                      <td className="px-3 py-2.5 font-medium flex items-center gap-2">
+                        <Avatar className="h-7 w-7 shrink-0">
+                          <AvatarFallback className="bg-secondary text-xs">{m.initials}</AvatarFallback>
+                        </Avatar>
+                        {m.name}
+                      </td>
+                      <td className="px-3 py-2.5 text-muted-foreground">{m.email ?? "—"}</td>
+                      <td className="px-3 py-2.5">{m.role}</td>
+                      <td className="px-3 py-2.5 text-muted-foreground">{m.teamId ? teamName(m.teamId) : "Unassigned"}</td>
+                      <td className="px-3 py-2.5 text-right">
+                        <div className="flex items-center justify-end gap-2">
+                          <Button
+                            size="sm"
+                            onClick={() => {
+                              void approveMember(m.id)
+                                .then(() => toast.success(`${m.name} approved`))
+                                .catch((e: Error) => toast.error("Approval failed", { description: e.message }));
+                            }}
+                          >
+                            Approve
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="text-destructive"
+                            onClick={() => {
+                              void removeMember(m.id)
+                                .then(() => toast.success(`${m.name} removed`))
+                                .catch((e: Error) => toast.error("Remove failed", { description: e.message }));
+                            }}
+                          >
+                            Reject
+                          </Button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card className="shadow-card">
+        <CardContent className="p-6">
+          <div className="mb-4">
+            <h2 className="text-base font-semibold">Approved members</h2>
+            <p className="text-sm text-muted-foreground">
+              Everyone with active access to the workspace.
+            </p>
+          </div>
+          {approvedMembers.length === 0 ? (
+            <p className="py-8 text-center text-sm text-muted-foreground">
+              No approved members yet.
+            </p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm text-left">
+                <thead className="border-b text-xs uppercase text-muted-foreground">
+                  <tr>
+                    <th className="px-3 py-2">Name</th>
+                    <th className="px-3 py-2">Email</th>
+                    <th className="px-3 py-2">Role</th>
+                    <th className="px-3 py-2">Team</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
+                  {approvedMembers.map((m) => (
+                    <tr key={m.id} className="hover:bg-accent/40 transition-colors">
+                      <td className="px-3 py-2.5 font-medium flex items-center gap-2">
+                        <Avatar className="h-7 w-7 shrink-0">
+                          <AvatarFallback className="bg-secondary text-xs">{m.initials}</AvatarFallback>
+                        </Avatar>
+                        {m.name}
+                      </td>
+                      <td className="px-3 py-2.5 text-muted-foreground">{m.email ?? "—"}</td>
+                      <td className="px-3 py-2.5">{m.role}</td>
+                      <td className="px-3 py-2.5 text-muted-foreground">{m.teamId ? teamName(m.teamId) : "Unassigned"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
 function AdminTab() {
   const { settings, updateSettings } = useWorkspace();
   const [companyName, setCompanyName] = useState(settings.companyName);
