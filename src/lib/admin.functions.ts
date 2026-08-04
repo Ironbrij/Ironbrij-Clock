@@ -61,3 +61,41 @@ export const inviteMembers = createServerFn({ method: "POST" })
     if (invited === 0) throw new Error("No invites could be sent — those addresses may already exist.");
     return { invited, failures };
   });
+
+const resendSchema = z.object({
+  email: z.string().email(),
+});
+
+export const resendInvite = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) => resendSchema.parse(input))
+  .handler(async ({ data, context }) => {
+    const { data: isAdmin, error: roleError } = await context.supabase.rpc("has_role", {
+      _user_id: context.userId,
+      _role: "admin",
+    });
+    if (roleError) throw new Error(roleError.message);
+    if (!isAdmin) throw new Error("Only admins can resend invites");
+
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+
+    // Look up the existing user by email first
+    const { data: users, error: listError } = await supabaseAdmin.auth.admin.listUsers();
+    if (listError) throw new Error(listError.message);
+
+    const existing = users.users.find(
+      (u) => u.email?.toLowerCase() === data.email.toLowerCase(),
+    );
+    if (!existing) {
+      throw new Error("No account found for that email — invite them first.");
+    }
+
+    // Generate a new magic link for the existing user
+    const { error: linkError } = await supabaseAdmin.auth.admin.generateLink({
+      type: "magiclink",
+      email: data.email,
+    });
+    if (linkError) throw new Error(linkError.message);
+
+    return { sent: true };
+  });
