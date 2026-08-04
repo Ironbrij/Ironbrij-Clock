@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Archive, Plus } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell, ProjectDot } from "@/components/app-shell";
@@ -46,6 +46,7 @@ import {
   useWorkspaceClients,
   useWorkspaceTags,
   type ProjectInput,
+  type WorkspaceTag,
   type WorkspaceProject,
 } from "@/lib/workspace-store";
 
@@ -239,6 +240,7 @@ function ProjectFormDialog({
   clientNames,
   teams,
   people,
+  tags,
   onSubmit,
   onArchive,
 }: {
@@ -248,6 +250,7 @@ function ProjectFormDialog({
   clientNames: string[];
   teams: { id: string; name: string; color: string }[];
   people: { id: string; name: string; title: string }[];
+  tags: WorkspaceTag[];
   onSubmit: (input: ProjectInput) => void;
   onArchive: () => void;
 }) {
@@ -418,7 +421,7 @@ function ClientsTab({
   );
 }
 
-function TagsTab() {
+function TagsTab({ tags }: { tags: WorkspaceTag[] }) {
   return (
     <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
       {tags.map((t) => (
