@@ -20,6 +20,11 @@ export function toDateKey(date: Date) {
   return `${date.getFullYear()}-${m}-${day}`;
 }
 
+export function fromDateKey(dateKey: string) {
+  const [y, m, d] = dateKey.split("-").map(Number);
+  return new Date(y, (m ?? 1) - 1, d ?? 1);
+}
+
 export function dayIndexOf(dateKey: string, weekStart: Date) {
   const [y, m, d] = dateKey.split("-").map(Number);
   const date = new Date(y, (m ?? 1) - 1, d ?? 1);
@@ -33,11 +38,18 @@ export function formatDayLong(date: Date) {
 export function formatWeekRange(weekStart: Date) {
   const end = addDays(weekStart, 6);
   const sameMonth = weekStart.getMonth() === end.getMonth();
-  const left = weekStart.toLocaleDateString("en-AU", sameMonth ? { day: "numeric" } : { day: "numeric", month: "short" });
+  const left = weekStart.toLocaleDateString(
+    "en-AU",
+    sameMonth ? { day: "numeric" } : { day: "numeric", month: "short" },
+  );
   const right = end.toLocaleDateString("en-AU", { day: "numeric", month: "long" });
   return `${left} – ${right}`;
 }
 
 export function formatClock(iso: string) {
-  return new Date(iso).toLocaleTimeString("en-AU", { hour: "2-digit", minute: "2-digit", hour12: false });
+  return new Date(iso).toLocaleTimeString("en-AU", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
 }
