@@ -9,7 +9,7 @@ const inviteSchema = z.object({
   redirectTo: z.string().url().optional(),
 });
 
-const allowedDomains = ["ironbrij.com", "ironbrij.com.au"];
+const allowedDomains = ["ironbrij.com", "ironbrij.com.au", "gmail.com"];
 
 export const inviteMembers = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
