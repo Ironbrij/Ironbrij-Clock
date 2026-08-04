@@ -367,6 +367,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         full_name: (meta["full_name"] as string) || (meta["name"] as string) || nameFromEmail(email),
         avatar_url: (meta["avatar_url"] as string) ?? null,
         job_title: "Team member",
+        is_pending: true,
       })
       .then(() => qc.invalidateQueries({ queryKey: ["profiles"] }));
   }, [uid, session, profilesQ.data, profilesQ.isLoading, qc]);
