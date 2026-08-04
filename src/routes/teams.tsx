@@ -81,6 +81,7 @@ function TeamsPage() {
     teamMemberCount,
     isAdmin,
     invitePeople,
+    resendInvite,
     updateMemberRole,
     approveMember,
     moveMember,
@@ -292,6 +293,17 @@ function TeamsPage() {
                               </DropdownMenuSubContent>
                             </DropdownMenuSub>
                             <DropdownMenuSeparator />
+                            {m.pending && m.email && (
+                              <DropdownMenuItem
+                                onSelect={() => {
+                                  run(resendInvite(m.email!), () =>
+                                    toast.success(`Invite resent to ${m.email}`),
+                                  );
+                                }}
+                              >
+                                Resend invite
+                              </DropdownMenuItem>
+                            )}
                             <DropdownMenuItem
                               className="text-destructive focus:text-destructive"
                               onSelect={() => {
