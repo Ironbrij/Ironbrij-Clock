@@ -10,13 +10,28 @@ import {
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { Session } from "@supabase/supabase-js";
 import { supabase } from "@/integrations/supabase/client";
-import { dayIndexOf, startOfWeek, toDateKey } from "@/lib/time-utils";
+import { dayIndexOf, fromDateKey, startOfWeek, toDateKey } from "@/lib/time-utils";
 
 export type Role = "Admin" | "Manager" | "Member";
 type DbRole = "admin" | "manager" | "member";
 
-const toRole = (r: DbRole): Role => (r === "admin" ? "Admin" : r === "manager" ? "Manager" : "Member");
+const toRole = (r: DbRole): Role =>
+  r === "admin" ? "Admin" : r === "manager" ? "Manager" : "Member";
 const toDbRole = (r: Role): DbRole => r.toLowerCase() as DbRole;
+
+export type TimesheetStatus = "Draft" | "Submitted" | "Approved" | "Rejected";
+type DbTimesheetStatus = "draft" | "submitted" | "approved" | "rejected";
+
+const toTimesheetStatus = (s: DbTimesheetStatus): TimesheetStatus =>
+  s === "submitted"
+    ? "Submitted"
+    : s === "approved"
+      ? "Approved"
+      : s === "rejected"
+        ? "Rejected"
+        : "Draft";
+const toDbReviewStatus = (s: "Approved" | "Rejected"): "approved" | "rejected" =>
+  s === "Approved" ? "approved" : "rejected";
 
 export const NO_CLIENT = "Internal — no client";
 
@@ -71,6 +86,20 @@ export type WorkspaceEntry = {
   running: boolean;
 };
 
+export type WorkspaceTimesheet = {
+  id: string;
+  userId: string;
+  weekStart: string;
+  status: TimesheetStatus;
+  submittedAt: string | null;
+  reviewedBy: string | null;
+  reviewedAt: string | null;
+  reviewNote: string | null;
+};
+
+/** A submitted timesheet plus the hours it covers, for a manager/admin's review queue. */
+export type PendingApproval = WorkspaceTimesheet & { minutes: number };
+
 export const dotColors = [
   "oklch(0.62 0.15 256)",
   "oklch(0.65 0.16 320)",
@@ -104,14 +133,20 @@ export function isAllowedEmail(email: string | undefined | null) {
 }
 
 export function initialsFrom(input: string) {
-  const clean = input.replace(/@.*$/, "").replace(/[._-]+/g, " ").trim();
+  const clean = input
+    .replace(/@.*$/, "")
+    .replace(/[._-]+/g, " ")
+    .trim();
   const parts = clean.split(/\s+/).filter(Boolean);
   const letters = parts.length > 1 ? parts[0][0] + parts[1][0] : clean.slice(0, 2);
   return letters.toUpperCase();
 }
 
 export function nameFromEmail(email: string) {
-  const local = email.replace(/@.*$/, "").replace(/[._-]+/g, " ").trim();
+  const local = email
+    .replace(/@.*$/, "")
+    .replace(/[._-]+/g, " ")
+    .trim();
   return (
     local
       .split(/\s+/)
@@ -149,6 +184,17 @@ type WorkspaceContextValue = {
   entries: WorkspaceEntry[];
   runningEntry: WorkspaceEntry | null;
 
+  timesheets: WorkspaceTimesheet[];
+  /** Submitted timesheets this person can review (empty for plain Members). */
+  pendingApprovals: PendingApproval[];
+  timesheetForWeek: (weekStart: Date) => WorkspaceTimesheet | undefined;
+  submitTimesheet: (weekStart: Date) => Promise<void>;
+  reviewTimesheet: (
+    timesheetId: string,
+    status: "Approved" | "Rejected",
+    note?: string,
+  ) => Promise<void>;
+
   membersByTeam: (teamId: string) => WorkspaceMember[];
   teamMemberCount: (teamId: string) => number;
   memberById: (id: string) => WorkspaceMember | undefined;
@@ -170,7 +216,11 @@ type WorkspaceContextValue = {
   archiveProject: (projectId: string) => Promise<void>;
 
   updateSettings: (patch: Partial<WorkspaceSettings>) => Promise<void>;
-  updateProfile: (patch: { full_name?: string; job_title?: string; timezone?: string }) => Promise<void>;
+  updateProfile: (patch: {
+    full_name?: string;
+    job_title?: string;
+    timezone?: string;
+  }) => Promise<void>;
 
   startTimer: (input: { projectId: string; task: string; description: string }) => Promise<void>;
   stopTimer: (entryId: string) => Promise<void>;
@@ -234,7 +284,10 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     queryKey: ["teams"],
     enabled,
     queryFn: async () => {
-      const { data, error } = await supabase.from("teams").select("id, name, color").order("created_at");
+      const { data, error } = await supabase
+        .from("teams")
+        .select("id, name, color")
+        .order("created_at");
       if (error) throw error;
       return data;
     },
@@ -344,10 +397,60 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       from.setDate(from.getDate() - 60);
       const { data, error } = await supabase
         .from("time_entries")
-        .select("id, project_id, task, description, start_time, end_time, entry_date, duration_minutes, is_billable")
+        .select(
+          "id, project_id, task, description, start_time, end_time, entry_date, duration_minutes, is_billable",
+        )
         .eq("user_id", uid!)
         .gte("entry_date", toDateKey(from))
         .order("start_time", { ascending: false });
+      if (error) throw error;
+      return data;
+    },
+  });
+
+  const timesheetsQ = useQuery({
+    queryKey: ["timesheets"],
+    enabled,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("timesheets")
+        .select(
+          "id, user_id, week_start, status, submitted_at, reviewed_by, reviewed_at, review_note",
+        )
+        .order("week_start", { ascending: false });
+      if (error) throw error;
+      return data;
+    },
+  });
+
+  const pendingReviewRaw = useMemo(
+    () => (timesheetsQ.data ?? []).filter((t) => t.status === "submitted"),
+    [timesheetsQ.data],
+  );
+
+  // Only fetched once there's something to review, and scoped to just the
+  // people/weeks involved — RLS already limits this to entries the viewer
+  // (a manager on a shared team, or an admin) is allowed to see.
+  const reviewEntriesQ = useQuery({
+    queryKey: [
+      "review_entries",
+      pendingReviewRaw
+        .map((t) => t.id)
+        .sort()
+        .join(","),
+    ],
+    enabled: enabled && pendingReviewRaw.length > 0,
+    queryFn: async () => {
+      const userIds = Array.from(new Set(pendingReviewRaw.map((t) => t.user_id)));
+      const earliest = pendingReviewRaw.reduce(
+        (min, t) => (t.week_start < min ? t.week_start : min),
+        pendingReviewRaw[0].week_start,
+      );
+      const { data, error } = await supabase
+        .from("time_entries")
+        .select("user_id, entry_date, duration_minutes")
+        .in("user_id", userIds)
+        .gte("entry_date", earliest);
       if (error) throw error;
       return data;
     },
@@ -364,7 +467,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       .insert({
         id: uid,
         email,
-        full_name: (meta["full_name"] as string) || (meta["name"] as string) || nameFromEmail(email),
+        full_name:
+          (meta["full_name"] as string) || (meta["name"] as string) || nameFromEmail(email),
         avatar_url: (meta["avatar_url"] as string) ?? null,
         job_title: "Team member",
         is_pending: true,
@@ -456,16 +560,64 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
 
   const runningEntry = useMemo(() => entries.find((e) => e.running) ?? null, [entries]);
 
+  const timesheets = useMemo<WorkspaceTimesheet[]>(
+    () =>
+      (timesheetsQ.data ?? []).map((t) => ({
+        id: t.id,
+        userId: t.user_id,
+        weekStart: t.week_start,
+        status: toTimesheetStatus(t.status as DbTimesheetStatus),
+        submittedAt: t.submitted_at,
+        reviewedBy: t.reviewed_by,
+        reviewedAt: t.reviewed_at,
+        reviewNote: t.review_note,
+      })),
+    [timesheetsQ.data],
+  );
+
+  const pendingApprovals = useMemo<PendingApproval[]>(() => {
+    const rows = reviewEntriesQ.data ?? [];
+    return timesheets
+      .filter((t) => t.status === "Submitted")
+      .map((t) => {
+        const start = fromDateKey(t.weekStart);
+        const minutes = rows
+          .filter((r) => r.user_id === t.userId)
+          .filter((r) => {
+            const idx = dayIndexOf(r.entry_date, start);
+            return idx >= 0 && idx <= 6;
+          })
+          .reduce((sum, r) => sum + (r.duration_minutes ?? 0), 0);
+        return { ...t, minutes };
+      });
+  }, [timesheets, reviewEntriesQ.data]);
+
   const currentUser = useMemo<WorkspaceMember>(() => {
     const me = members.find((m) => m.id === uid);
     if (me) return me;
     const email = session?.user.email ?? "";
-    return email ? { ...emptyUser, id: uid ?? "", name: nameFromEmail(email), initials: initialsFrom(email), email } : emptyUser;
+    return email
+      ? {
+          ...emptyUser,
+          id: uid ?? "",
+          name: nameFromEmail(email),
+          initials: initialsFrom(email),
+          email,
+        }
+      : emptyUser;
   }, [members, uid, session]);
 
   const membersByTeam = useCallback(
     (teamId: string) => members.filter((m) => m.teamIds.includes(teamId)),
     [members],
+  );
+
+  const timesheetForWeek = useCallback(
+    (weekStart: Date) => {
+      const key = toDateKey(weekStart);
+      return timesheets.find((t) => t.userId === uid && t.weekStart === key);
+    },
+    [timesheets, uid],
   );
 
   const invalidate = useCallback(
@@ -483,7 +635,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       await supabase.from("project_tags").delete().eq("project_id", projectId);
       await supabase.from("project_members").delete().eq("project_id", projectId);
       if (tagIds.length)
-        await supabase.from("project_tags").insert(tagIds.map((tag_id) => ({ project_id: projectId, tag_id })));
+        await supabase
+          .from("project_tags")
+          .insert(tagIds.map((tag_id) => ({ project_id: projectId, tag_id })));
       if (memberIds.length)
         await supabase
           .from("project_members")
@@ -498,7 +652,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       teamsQ.isLoading ||
       projectsQ.isLoading ||
       tagsQ.isLoading ||
-      settingsQ.isLoading);
+      settingsQ.isLoading ||
+      timesheetsQ.isLoading);
 
   const value = useMemo<WorkspaceContextValue>(() => {
     const throwIf = (error: { message: string } | null) => {
@@ -524,6 +679,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       settings,
       entries,
       runningEntry,
+      timesheets,
+      pendingApprovals,
+      timesheetForWeek,
       membersByTeam,
       teamMemberCount: (teamId) => membersByTeam(teamId).length,
       memberById: (id) => members.find((m) => m.id === id),
@@ -561,7 +719,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       },
       moveMember: async (memberId, teamId) => {
         await supabase.from("team_members").delete().eq("user_id", memberId);
-        const { error } = await supabase.from("team_members").insert({ user_id: memberId, team_id: teamId });
+        const { error } = await supabase
+          .from("team_members")
+          .insert({ user_id: memberId, team_id: teamId });
         throwIf(error);
         invalidate("team_members");
       },
@@ -572,7 +732,11 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       },
 
       createTeam: async ({ name, color, memberIds }) => {
-        const { data, error } = await supabase.from("teams").insert({ name, color }).select("id").single();
+        const { data, error } = await supabase
+          .from("teams")
+          .insert({ name, color })
+          .select("id")
+          .single();
         throwIf(error);
         if (data && memberIds.length) {
           await supabase
@@ -624,7 +788,10 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         invalidate("projects", "project_members", "project_tags");
       },
       archiveProject: async (projectId) => {
-        const { error } = await supabase.from("projects").update({ is_archived: true }).eq("id", projectId);
+        const { error } = await supabase
+          .from("projects")
+          .update({ is_archived: true })
+          .eq("id", projectId);
         throwIf(error);
         invalidate("projects");
       },
@@ -668,7 +835,10 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         const entry = entries.find((e) => e.id === entryId);
         if (!entry) return;
         const end = new Date();
-        const minutes = Math.max(1, Math.round((end.getTime() - new Date(entry.startTime).getTime()) / 60000));
+        const minutes = Math.max(
+          1,
+          Math.round((end.getTime() - new Date(entry.startTime).getTime()) / 60000),
+        );
         const { error } = await supabase
           .from("time_entries")
           .update({ end_time: end.toISOString(), duration_minutes: minutes })
@@ -680,6 +850,23 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         const { error } = await supabase.from("time_entries").update(patch).eq("id", entryId);
         throwIf(error);
         invalidate("time_entries");
+      },
+
+      submitTimesheet: async (weekStart) => {
+        const { error } = await supabase.rpc("submit_timesheet", {
+          _week_start: toDateKey(weekStart),
+        });
+        throwIf(error);
+        invalidate("timesheets");
+      },
+      reviewTimesheet: async (timesheetId, status, note) => {
+        const { error } = await supabase.rpc("review_timesheet", {
+          _timesheet_id: timesheetId,
+          _status: toDbReviewStatus(status),
+          _note: note ?? null,
+        });
+        throwIf(error);
+        invalidate("timesheets", "time_entries", "review_entries");
       },
       refreshAll: () => qc.invalidateQueries(),
     };
@@ -695,6 +882,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     settings,
     entries,
     runningEntry,
+    timesheets,
+    pendingApprovals,
+    timesheetForWeek,
     membersByTeam,
     invalidate,
     resolveClientId,
