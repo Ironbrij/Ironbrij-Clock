@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useMemo, useState } from "react";
-import { Check, ChevronLeft, ChevronRight, Pause, Pencil, Play } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Check, ChevronLeft, ChevronRight, Pause, Pencil, Play, Repeat } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell, ProjectDot } from "@/components/app-shell";
 import { TimesheetGrid } from "@/components/timesheet-grid";
@@ -100,7 +100,7 @@ function TimerBar() {
   const m = Math.floor((seconds % 3600) / 60);
   const s = seconds % 60;
 
-  const toggle = async () => {
+  const toggle = useCallback(async () => {
     setBusy(true);
     try {
       if (runningEntry) {
@@ -120,7 +120,35 @@ function TimerBar() {
     } finally {
       setBusy(false);
     }
-  };
+  }, [runningEntry, project, task, description, startTimer, stopTimer]);
+
+  // Space bar starts/stops the timer — as long as focus isn't in a text
+  // field or on another interactive control (inputs, selects, buttons,
+  // links), so typing a description or tabbing through the page still
+  // behaves normally and the browser's own click-on-Space isn't double-fired.
+  useEffect(() => {
+    const isInteractiveTarget = (el: EventTarget | null) => {
+      if (!(el instanceof HTMLElement)) return false;
+      const tag = el.tagName;
+      return (
+        tag === "INPUT" ||
+        tag === "TEXTAREA" ||
+        tag === "SELECT" ||
+        tag === "BUTTON" ||
+        tag === "A" ||
+        el.isContentEditable
+      );
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.code !== "Space" || e.repeat) return;
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      if (isInteractiveTarget(e.target)) return;
+      e.preventDefault();
+      if (!busy) void toggle();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [toggle, busy]);
 
   return (
     <Card className="sticky top-20 z-10 shadow-card">
@@ -155,16 +183,23 @@ function TimerBar() {
           </Select>
         </div>
         <div className="flex items-center justify-between gap-4 lg:justify-end">
-          <span
-            className="font-mono text-3xl font-semibold tabular-nums tracking-tight"
-            style={{ color: running ? "var(--brand)" : undefined }}
-          >
-            {pad(h)}:{pad(m)}:{pad(s)}
-          </span>
+          <div className="flex flex-col items-end gap-0.5">
+            <span
+              className="font-mono text-3xl font-semibold tabular-nums tracking-tight"
+              style={{ color: running ? "var(--brand)" : undefined }}
+            >
+              {pad(h)}:{pad(m)}:{pad(s)}
+            </span>
+            <span className="hidden text-[11px] text-muted-foreground sm:block">
+              Press <kbd className="rounded border border-border px-1 py-0.5 font-sans">Space</kbd> to{" "}
+              {running ? "stop" : "start"}
+            </span>
+          </div>
           <Button
             size="icon"
             variant={running ? "destructive" : "default"}
             aria-label={running ? "Stop timer" : "Start timer"}
+            title={running ? "Stop timer (Space)" : "Start timer (Space)"}
             disabled={busy}
             onClick={() => void toggle()}
             className="h-12 w-12 rounded-full shadow-elevated transition-transform active:scale-95"
@@ -178,13 +213,34 @@ function TimerBar() {
 }
 
 function EntryList({ entries }: { entries: WorkspaceEntry[] }) {
-  const { projectById, updateEntry } = useWorkspace();
+  const { projectById, updateEntry, startTimer, runningEntry } = useWorkspace();
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
+  const [repeatingId, setRepeatingId] = useState<string | null>(null);
 
   if (entries.length === 0) {
     return <p className="px-6 py-6 text-sm text-muted-foreground">No time logged on this day.</p>;
   }
+
+  const repeatEntry = async (entry: WorkspaceEntry) => {
+    if (!entry.projectId) {
+      toast.error("Can't repeat this entry", { description: "It doesn't have a project attached." });
+      return;
+    }
+    if (runningEntry) {
+      toast.error("A timer is already running", { description: "Stop it first, then repeat this entry." });
+      return;
+    }
+    setRepeatingId(entry.id);
+    try {
+      await startTimer({ projectId: entry.projectId, task: entry.task, description: entry.description });
+      toast.success("Timer started", { description: "Picked up right where that entry left off." });
+    } catch (error) {
+      toast.error("Couldn't start that", { description: (error as Error).message });
+    } finally {
+      setRepeatingId(null);
+    }
+  };
 
   return (
     <ul className="divide-y divide-border">
@@ -228,6 +284,18 @@ function EntryList({ entries }: { entries: WorkspaceEntry[] }) {
               <span className="tabular-nums text-sm font-medium">
                 {entry.running ? "running" : formatMinutes(entry.minutes)}
               </span>
+              {!entry.running && (
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  aria-label="Repeat this entry"
+                  title="Start a new timer with the same project, task and description"
+                  disabled={!!runningEntry || repeatingId === entry.id}
+                  onClick={() => void repeatEntry(entry)}
+                >
+                  <Repeat className="h-4 w-4" />
+                </Button>
+              )}
               <Button
                 size="icon"
                 variant="ghost"
