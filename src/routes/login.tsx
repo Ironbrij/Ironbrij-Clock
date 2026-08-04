@@ -2,7 +2,6 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
-import mark from "@/assets/ironbrij-mark.png.asset.json";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -70,7 +69,7 @@ function Login() {
     <main className="flex min-h-screen items-center justify-center bg-muted/40 px-4 py-12">
       <div className="w-full max-w-sm">
         <div className="mb-8 flex flex-col items-center text-center">
-          <img src={mark.url} alt="Ironbrij" className="h-14 w-14" />
+          <img src="/ironbrij-mark.png" alt="Ironbrij" className="h-14 w-14" />
           <h1 className="mt-4 text-2xl font-semibold tracking-tight">Welcome back</h1>
           <p className="mt-1 text-sm text-muted-foreground">
             Sign in to Ironbrij Time and pick up where you left off.
