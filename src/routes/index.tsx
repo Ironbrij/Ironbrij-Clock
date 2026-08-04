@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { ArrowRight } from "lucide-react";
+import { ArrowRight, Users } from "lucide-react";
 import { AppShell, ProjectDot } from "@/components/app-shell";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -27,9 +27,11 @@ function greeting() {
 }
 
 function Dashboard() {
-  const { settings, currentUser, entries, projects } = useWorkspace();
+  const { settings, currentUser, entries, projects, isAdmin, members } = useWorkspace();
   const weekStart = useThisWeekStart();
   const dailyGoal = settings.weeklyHours / 5;
+
+  const pendingCount = isAdmin ? members.filter((m) => m.pending).length : 0;
 
   const todayKey = toDateKey(new Date());
   const todayEntries = entries.filter((e) => e.date === todayKey);
@@ -72,6 +74,27 @@ function Dashboard() {
         </Button>
       }
     >
+      {pendingCount > 0 && (
+        <Card className="border-amber-500/30 bg-amber-50/50 shadow-card dark:bg-amber-950/20">
+          <CardContent className="flex items-center gap-4 p-4">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-amber-500/10">
+              <Users className="h-5 w-5 text-amber-600 dark:text-amber-400" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-semibold">
+                {pendingCount} {pendingCount === 1 ? "person" : "people"} waiting for approval
+              </p>
+              <p className="text-xs text-muted-foreground">
+                They've signed in but can't access the dashboard until you approve them.
+              </p>
+            </div>
+            <Button asChild size="sm" variant="outline">
+              <Link to="/settings">Review</Link>
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard
           label="Tracked today"
