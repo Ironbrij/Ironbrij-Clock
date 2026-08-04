@@ -12,7 +12,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { formatHours, projects, teams, weekGrid } from "@/lib/mock-data";
+import { formatHours } from "@/lib/mock-data";
+import { useWorkspace } from "@/lib/workspace-store";
 
 export const Route = createFileRoute("/reports")({
   head: () => ({
@@ -31,10 +32,11 @@ type SortKey = "name" | "hours" | "team";
 function Reports() {
   const [sortKey, setSortKey] = useState<SortKey>("hours");
   const [asc, setAsc] = useState(false);
+  const { projects, teams } = useWorkspace();
 
   const rows = projects.map((p) => ({
     ...p,
-    week: (weekGrid[p.id] ?? []).reduce((a, b) => a + b, 0),
+    week: p.weekHours,
     team: teams.find((t) => t.id === p.teamId)?.name ?? "",
   }));
 
