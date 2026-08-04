@@ -42,7 +42,7 @@ export function AppShell({
 }) {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const navigate = useNavigate();
-  const { session, authLoading, currentUser, signOut } = useWorkspace();
+  const { session, authLoading, currentUser, isAdmin, signOut } = useWorkspace();
 
   useEffect(() => {
     if (!authLoading && !session) navigate({ to: "/login", replace: true });
@@ -52,6 +52,27 @@ export function AppShell({
     return (
       <div className="flex min-h-screen items-center justify-center bg-background">
         <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  // Signed in, but an admin hasn't approved this account yet — block the
+  // dashboard instead of falling through. Admins skip this even if their own
+  // record happens to still be marked pending, so nobody can lock out every
+  // admin at once.
+  if (currentUser.pending && !isAdmin) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-background px-4">
+        <div className="w-full max-w-sm rounded-xl border bg-card p-8 text-center shadow-sm">
+          <h1 className="text-lg font-semibold">Awaiting approval</h1>
+          <p className="mt-2 text-sm text-muted-foreground">
+            You're signed in, but an admin hasn't approved your account yet. You'll get
+            access as soon as they do — no need to sign in again.
+          </p>
+          <Button variant="outline" className="mt-6 w-full" onClick={() => void signOut()}>
+            Sign out
+          </Button>
+        </div>
       </div>
     );
   }
