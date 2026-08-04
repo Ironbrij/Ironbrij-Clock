@@ -2,30 +2,54 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
   useState,
   type ReactNode,
 } from "react";
-import {
-  members as seedMembers,
-  projects as seedProjects,
-  tags as seedTags,
-  teams as seedTeams,
-  teamMemberCount as seedTeamMemberCount,
-  type Member,
-  type Project,
-  type Role,
-} from "./mock-data";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import type { Session } from "@supabase/supabase-js";
+import { supabase } from "@/integrations/supabase/client";
+import { dayIndexOf, startOfWeek, toDateKey } from "@/lib/time-utils";
+
+export type Role = "Admin" | "Manager" | "Member";
+type DbRole = "admin" | "manager" | "member";
+
+const toRole = (r: DbRole): Role => (r === "admin" ? "Admin" : r === "manager" ? "Manager" : "Member");
+const toDbRole = (r: Role): DbRole => r.toLowerCase() as DbRole;
+
+export const NO_CLIENT = "Internal — no client";
 
 export type Team = { id: string; name: string; color: string };
 
-export type WorkspaceMember = Member & { pending?: boolean; email?: string };
+export type WorkspaceMember = {
+  id: string;
+  name: string;
+  initials: string;
+  role: Role;
+  title: string;
+  teamId: string;
+  teamIds: string[];
+  email?: string;
+  pending?: boolean;
+};
 
-export type WorkspaceProject = Project & {
-  billable: boolean;
+export type WorkspaceProject = {
+  id: string;
+  name: string;
+  client: string;
+  clientId: string | null;
+  teamId: string;
+  color: string;
+  hours: number;
+  weekHours: number;
+  memberIds: string[];
   tagIds: string[];
+  billable: boolean;
   archived: boolean;
 };
+
+export type WorkspaceTag = { id: string; name: string; color: string; entryCount: number };
 
 export type WorkspaceSettings = {
   companyName: string;
@@ -33,6 +57,18 @@ export type WorkspaceSettings = {
   timezone: string;
   weeklyHours: number;
   currency: string;
+};
+
+export type WorkspaceEntry = {
+  id: string;
+  projectId: string | null;
+  task: string;
+  description: string;
+  minutes: number;
+  startTime: string;
+  endTime: string | null;
+  date: string;
+  running: boolean;
 };
 
 export const dotColors = [
@@ -59,6 +95,14 @@ export const timezones = [
 
 export const currencies = ["AUD", "USD", "PHP", "NZD", "GBP", "EUR"];
 
+export const allowedEmailDomains = ["ironbrij.com", "ironbrij.com.au"];
+
+export function isAllowedEmail(email: string | undefined | null) {
+  if (!email) return false;
+  const domain = email.split("@")[1]?.toLowerCase();
+  return !!domain && allowedEmailDomains.includes(domain);
+}
+
 export function initialsFrom(input: string) {
   const clean = input.replace(/@.*$/, "").replace(/[._-]+/g, " ").trim();
   const parts = clean.split(/\s+/).filter(Boolean);
@@ -66,45 +110,16 @@ export function initialsFrom(input: string) {
   return letters.toUpperCase();
 }
 
-function nameFromEmail(email: string) {
+export function nameFromEmail(email: string) {
   const local = email.replace(/@.*$/, "").replace(/[._-]+/g, " ").trim();
-  return local
-    .split(/\s+/)
-    .filter(Boolean)
-    .map((w) => w[0].toUpperCase() + w.slice(1))
-    .join(" ") || email;
+  return (
+    local
+      .split(/\s+/)
+      .filter(Boolean)
+      .map((w) => w[0].toUpperCase() + w.slice(1))
+      .join(" ") || email
+  );
 }
-
-type WorkspaceContextValue = {
-  currentUser: WorkspaceMember;
-  isAdmin: boolean;
-  canManage: boolean;
-  setCurrentUserRole: (role: Role) => void;
-
-  members: WorkspaceMember[];
-  teams: Team[];
-  projects: WorkspaceProject[];
-  settings: WorkspaceSettings;
-
-  membersByTeam: (teamId: string) => WorkspaceMember[];
-  teamMemberCount: (teamId: string) => number;
-  memberById: (id: string) => WorkspaceMember | undefined;
-
-  invitePeople: (input: { emails: string[]; teamId: string; role: Role }) => number;
-  updateMemberRole: (memberId: string, role: Role) => void;
-  moveMember: (memberId: string, teamId: string) => void;
-  removeMember: (memberId: string) => void;
-
-  createTeam: (input: { name: string; color: string; memberIds: string[] }) => void;
-  updateTeam: (teamId: string, input: { name: string; color: string }) => void;
-  deleteTeam: (teamId: string) => void;
-
-  createProject: (input: ProjectInput) => void;
-  updateProject: (projectId: string, input: ProjectInput) => void;
-  archiveProject: (projectId: string) => void;
-
-  updateSettings: (patch: Partial<WorkspaceSettings>) => void;
-};
 
 export type ProjectInput = {
   name: string;
@@ -116,106 +131,552 @@ export type ProjectInput = {
   memberIds: string[];
 };
 
+type WorkspaceContextValue = {
+  session: Session | null;
+  authLoading: boolean;
+  loading: boolean;
+  signOut: () => Promise<void>;
+
+  currentUser: WorkspaceMember;
+  isAdmin: boolean;
+  canManage: boolean;
+
+  members: WorkspaceMember[];
+  teams: Team[];
+  projects: WorkspaceProject[];
+  tags: WorkspaceTag[];
+  settings: WorkspaceSettings;
+  entries: WorkspaceEntry[];
+  runningEntry: WorkspaceEntry | null;
+
+  membersByTeam: (teamId: string) => WorkspaceMember[];
+  teamMemberCount: (teamId: string) => number;
+  memberById: (id: string) => WorkspaceMember | undefined;
+  projectById: (id: string | null) => WorkspaceProject | undefined;
+
+  invitePeople: (input: { emails: string[]; teamId: string; role: Role }) => Promise<number>;
+  updateMemberRole: (memberId: string, role: Role) => Promise<void>;
+  moveMember: (memberId: string, teamId: string) => Promise<void>;
+  removeMember: (memberId: string) => Promise<void>;
+
+  createTeam: (input: { name: string; color: string; memberIds: string[] }) => Promise<void>;
+  updateTeam: (teamId: string, input: { name: string; color: string }) => Promise<void>;
+  deleteTeam: (teamId: string) => Promise<void>;
+
+  createProject: (input: ProjectInput) => Promise<void>;
+  updateProject: (projectId: string, input: ProjectInput) => Promise<void>;
+  archiveProject: (projectId: string) => Promise<void>;
+
+  updateSettings: (patch: Partial<WorkspaceSettings>) => Promise<void>;
+  updateProfile: (patch: { full_name?: string; job_title?: string; timezone?: string }) => Promise<void>;
+
+  startTimer: (input: { projectId: string; task: string; description: string }) => Promise<void>;
+  stopTimer: (entryId: string) => Promise<void>;
+  updateEntry: (entryId: string, patch: { description?: string }) => Promise<void>;
+  refreshAll: () => void;
+};
+
 const WorkspaceContext = createContext<WorkspaceContextValue | null>(null);
 
-let idCounter = 0;
-const nextId = (prefix: string) => `${prefix}${Date.now().toString(36)}${(idCounter++).toString(36)}`;
+const emptyUser: WorkspaceMember = {
+  id: "",
+  name: "",
+  initials: "—",
+  role: "Member",
+  title: "",
+  teamId: "",
+  teamIds: [],
+};
 
 export function WorkspaceProvider({ children }: { children: ReactNode }) {
-  const [members, setMembers] = useState<WorkspaceMember[]>(() => seedMembers.map((m) => ({ ...m })));
-  const [teams, setTeams] = useState<Team[]>(() => seedTeams.map((t) => ({ ...t })));
-  const [projects, setProjects] = useState<WorkspaceProject[]>(() =>
-    seedProjects.map((p) => ({
-      ...p,
-      billable: !p.client.startsWith("Internal"),
-      tagIds: p.client.startsWith("Internal") ? ["internal"] : ["billable"],
-      archived: false,
-    })),
-  );
-  const [settings, setSettings] = useState<WorkspaceSettings>({
-    companyName: "Ironbrij / Virtual Assistant Australia",
-    logoDataUrl: null,
-    timezone: "Australia/Sydney",
-    weeklyHours: 37.5,
-    currency: "AUD",
+  const qc = useQueryClient();
+  const [session, setSession] = useState<Session | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+
+  useEffect(() => {
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, next) => {
+      setSession(next);
+      setAuthLoading(false);
+      qc.invalidateQueries();
+    });
+    supabase.auth.getSession().then(({ data }) => {
+      setSession(data.session);
+      setAuthLoading(false);
+    });
+    return () => sub.subscription.unsubscribe();
+  }, [qc]);
+
+  const uid = session?.user.id ?? null;
+  const enabled = !!uid;
+
+  const profilesQ = useQuery({
+    queryKey: ["profiles"],
+    enabled,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("id, email, full_name, avatar_url, job_title, timezone, role, is_pending")
+        .order("full_name");
+      if (error) throw error;
+      return data;
+    },
   });
-  const [currentRole, setCurrentRole] = useState<Role>("Admin");
+
+  const teamsQ = useQuery({
+    queryKey: ["teams"],
+    enabled,
+    queryFn: async () => {
+      const { data, error } = await supabase.from("teams").select("id, name, color").order("created_at");
+      if (error) throw error;
+      return data;
+    },
+  });
+
+  const teamMembersQ = useQuery({
+    queryKey: ["team_members"],
+    enabled,
+    queryFn: async () => {
+      const { data, error } = await supabase.from("team_members").select("user_id, team_id");
+      if (error) throw error;
+      return data;
+    },
+  });
+
+  const clientsQ = useQuery({
+    queryKey: ["clients"],
+    enabled,
+    queryFn: async () => {
+      const { data, error } = await supabase.from("clients").select("id, name").order("name");
+      if (error) throw error;
+      return data;
+    },
+  });
+
+  const tagsQ = useQuery({
+    queryKey: ["tags"],
+    enabled,
+    queryFn: async () => {
+      const { data, error } = await supabase.from("tags").select("id, name, color").order("name");
+      if (error) throw error;
+      return data;
+    },
+  });
+
+  const tagUsageQ = useQuery({
+    queryKey: ["tag_usage"],
+    enabled,
+    queryFn: async () => {
+      const { data, error } = await supabase.rpc("tag_usage");
+      if (error) throw error;
+      return data;
+    },
+  });
+
+  const projectsQ = useQuery({
+    queryKey: ["projects"],
+    enabled,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("projects")
+        .select("id, name, client_id, team_id, color, is_billable, is_archived")
+        .order("created_at");
+      if (error) throw error;
+      return data;
+    },
+  });
+
+  const projectMembersQ = useQuery({
+    queryKey: ["project_members"],
+    enabled,
+    queryFn: async () => {
+      const { data, error } = await supabase.from("project_members").select("project_id, user_id");
+      if (error) throw error;
+      return data;
+    },
+  });
+
+  const projectTagsQ = useQuery({
+    queryKey: ["project_tags"],
+    enabled,
+    queryFn: async () => {
+      const { data, error } = await supabase.from("project_tags").select("project_id, tag_id");
+      if (error) throw error;
+      return data;
+    },
+  });
+
+  const projectHoursQ = useQuery({
+    queryKey: ["project_hours"],
+    enabled,
+    queryFn: async () => {
+      const { data, error } = await supabase.rpc("project_hours");
+      if (error) throw error;
+      return data;
+    },
+  });
+
+  const settingsQ = useQuery({
+    queryKey: ["workspace_settings"],
+    enabled,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("workspace_settings")
+        .select("company_name, logo_url, timezone, weekly_hours, currency")
+        .maybeSingle();
+      if (error) throw error;
+      return data;
+    },
+  });
+
+  const entriesQ = useQuery({
+    queryKey: ["time_entries", uid],
+    enabled,
+    queryFn: async () => {
+      const from = new Date();
+      from.setDate(from.getDate() - 60);
+      const { data, error } = await supabase
+        .from("time_entries")
+        .select("id, project_id, task, description, start_time, end_time, entry_date, duration_minutes, is_billable")
+        .eq("user_id", uid!)
+        .gte("entry_date", toDateKey(from))
+        .order("start_time", { ascending: false });
+      if (error) throw error;
+      return data;
+    },
+  });
+
+  // Make sure a signed-in person always has a profile row.
+  useEffect(() => {
+    if (!uid || !session?.user || profilesQ.isLoading || !profilesQ.data) return;
+    if (profilesQ.data.some((p) => p.id === uid)) return;
+    const email = session.user.email ?? "";
+    const meta = session.user.user_metadata ?? {};
+    supabase
+      .from("profiles")
+      .insert({
+        id: uid,
+        email,
+        full_name: (meta["full_name"] as string) || (meta["name"] as string) || nameFromEmail(email),
+        avatar_url: (meta["avatar_url"] as string) ?? null,
+        job_title: "Team member",
+      })
+      .then(() => qc.invalidateQueries({ queryKey: ["profiles"] }));
+  }, [uid, session, profilesQ.data, profilesQ.isLoading, qc]);
+
+  const teams = useMemo<Team[]>(() => teamsQ.data ?? [], [teamsQ.data]);
+
+  const members = useMemo<WorkspaceMember[]>(() => {
+    const links = teamMembersQ.data ?? [];
+    return (profilesQ.data ?? []).map((p) => {
+      const teamIds = links.filter((l) => l.user_id === p.id).map((l) => l.team_id);
+      const name = p.full_name || p.email || "Unnamed";
+      return {
+        id: p.id,
+        name,
+        initials: initialsFrom(name),
+        role: toRole(p.role as DbRole),
+        title: p.job_title ?? "",
+        teamId: teamIds[0] ?? "",
+        teamIds,
+        email: p.email ?? undefined,
+        pending: p.is_pending ?? false,
+      };
+    });
+  }, [profilesQ.data, teamMembersQ.data]);
+
+  const tags = useMemo<WorkspaceTag[]>(() => {
+    const usage = tagUsageQ.data ?? [];
+    return (tagsQ.data ?? []).map((t) => ({
+      id: t.id,
+      name: t.name,
+      color: t.color,
+      entryCount: usage.find((u) => u.tag_id === t.id)?.entry_count ?? 0,
+    }));
+  }, [tagsQ.data, tagUsageQ.data]);
+
+  const projects = useMemo<WorkspaceProject[]>(() => {
+    const clients = clientsQ.data ?? [];
+    const pm = projectMembersQ.data ?? [];
+    const pt = projectTagsQ.data ?? [];
+    const hours = projectHoursQ.data ?? [];
+    return (projectsQ.data ?? []).map((p) => {
+      const h = hours.find((x) => x.project_id === p.id);
+      return {
+        id: p.id,
+        name: p.name,
+        clientId: p.client_id,
+        client: clients.find((c) => c.id === p.client_id)?.name ?? NO_CLIENT,
+        teamId: p.team_id ?? "",
+        color: p.color,
+        hours: (h?.total_minutes ?? 0) / 60,
+        weekHours: (h?.week_minutes ?? 0) / 60,
+        memberIds: pm.filter((x) => x.project_id === p.id).map((x) => x.user_id),
+        tagIds: pt.filter((x) => x.project_id === p.id).map((x) => x.tag_id),
+        billable: p.is_billable,
+        archived: p.is_archived,
+      };
+    });
+  }, [projectsQ.data, clientsQ.data, projectMembersQ.data, projectTagsQ.data, projectHoursQ.data]);
+
+  const settings = useMemo<WorkspaceSettings>(() => {
+    const s = settingsQ.data;
+    return {
+      companyName: s?.company_name ?? "Ironbrij",
+      logoDataUrl: s?.logo_url ?? null,
+      timezone: s?.timezone ?? "Australia/Sydney",
+      weeklyHours: Number(s?.weekly_hours ?? 37.5),
+      currency: s?.currency ?? "AUD",
+    };
+  }, [settingsQ.data]);
+
+  const entries = useMemo<WorkspaceEntry[]>(
+    () =>
+      (entriesQ.data ?? []).map((e) => ({
+        id: e.id,
+        projectId: e.project_id,
+        task: e.task ?? "",
+        description: e.description,
+        minutes: e.duration_minutes ?? 0,
+        startTime: e.start_time,
+        endTime: e.end_time,
+        date: e.entry_date,
+        running: !e.end_time,
+      })),
+    [entriesQ.data],
+  );
+
+  const runningEntry = useMemo(() => entries.find((e) => e.running) ?? null, [entries]);
 
   const currentUser = useMemo<WorkspaceMember>(() => {
-    const me = members.find((m) => m.id === "m1") ?? members[0];
-    return { ...me, role: currentRole };
-  }, [members, currentRole]);
+    const me = members.find((m) => m.id === uid);
+    if (me) return me;
+    const email = session?.user.email ?? "";
+    return email ? { ...emptyUser, id: uid ?? "", name: nameFromEmail(email), initials: initialsFrom(email), email } : emptyUser;
+  }, [members, uid, session]);
 
   const membersByTeam = useCallback(
-    (teamId: string) => members.filter((m) => m.teamId === teamId),
+    (teamId: string) => members.filter((m) => m.teamIds.includes(teamId)),
     [members],
   );
 
-  const teamMemberCount = useCallback(
-    (teamId: string) => {
-      const seedBase = seedMembers.filter((m) => m.teamId === teamId).length;
-      const padding = Math.max(seedTeamMemberCount(teamId) - seedBase, 0);
-      return membersByTeam(teamId).length + padding;
-    },
-    [membersByTeam],
+  const invalidate = useCallback(
+    (...keys: string[]) => keys.forEach((k) => qc.invalidateQueries({ queryKey: [k] })),
+    [qc],
   );
 
+  const resolveClientId = useCallback(
+    (name: string) => (clientsQ.data ?? []).find((c) => c.name === name)?.id ?? null,
+    [clientsQ.data],
+  );
+
+  const writeProjectLinks = useCallback(
+    async (projectId: string, tagIds: string[], memberIds: string[]) => {
+      await supabase.from("project_tags").delete().eq("project_id", projectId);
+      await supabase.from("project_members").delete().eq("project_id", projectId);
+      if (tagIds.length)
+        await supabase.from("project_tags").insert(tagIds.map((tag_id) => ({ project_id: projectId, tag_id })));
+      if (memberIds.length)
+        await supabase
+          .from("project_members")
+          .insert(memberIds.map((user_id) => ({ project_id: projectId, user_id })));
+    },
+    [],
+  );
+
+  const loading =
+    enabled &&
+    (profilesQ.isLoading ||
+      teamsQ.isLoading ||
+      projectsQ.isLoading ||
+      tagsQ.isLoading ||
+      settingsQ.isLoading);
+
   const value = useMemo<WorkspaceContextValue>(() => {
+    const throwIf = (error: { message: string } | null) => {
+      if (error) throw new Error(error.message);
+    };
+
     return {
+      session,
+      authLoading,
+      loading,
+      signOut: async () => {
+        await qc.cancelQueries();
+        qc.clear();
+        await supabase.auth.signOut();
+      },
       currentUser,
-      isAdmin: currentRole === "Admin",
-      canManage: currentRole === "Admin" || currentRole === "Manager",
-      setCurrentUserRole: setCurrentRole,
+      isAdmin: currentUser.role === "Admin",
+      canManage: currentUser.role === "Admin" || currentUser.role === "Manager",
       members,
       teams,
       projects,
+      tags,
       settings,
+      entries,
+      runningEntry,
       membersByTeam,
-      teamMemberCount,
+      teamMemberCount: (teamId) => membersByTeam(teamId).length,
       memberById: (id) => members.find((m) => m.id === id),
-      invitePeople: ({ emails, teamId, role }) => {
-        const fresh = emails.map<WorkspaceMember>((email) => ({
-          id: nextId("m"),
-          name: nameFromEmail(email),
-          initials: initialsFrom(email),
-          role,
-          title: "Invited — awaiting sign-up",
-          teamId,
-          email,
-          pending: true,
-        }));
-        setMembers((prev) => [...prev, ...fresh]);
-        return fresh.length;
+      projectById: (id) => (id ? projects.find((p) => p.id === id) : undefined),
+
+      invitePeople: async ({ emails, teamId, role }) => {
+        const { inviteMembers } = await import("@/lib/admin.functions");
+        const result = await inviteMembers({ data: { emails, teamId, role: toDbRole(role) } });
+        invalidate("profiles", "team_members");
+        return result.invited;
       },
-      updateMemberRole: (memberId, role) =>
-        setMembers((prev) => prev.map((m) => (m.id === memberId ? { ...m, role } : m))),
-      moveMember: (memberId, teamId) =>
-        setMembers((prev) => prev.map((m) => (m.id === memberId ? { ...m, teamId } : m))),
-      removeMember: (memberId) => setMembers((prev) => prev.filter((m) => m.id !== memberId)),
-      createTeam: ({ name, color, memberIds }) => {
-        const id = nextId("tm");
-        setTeams((prev) => [...prev, { id, name, color }]);
-        if (memberIds.length) {
-          setMembers((prev) =>
-            prev.map((m) => (memberIds.includes(m.id) ? { ...m, teamId: id } : m)),
-          );
+      updateMemberRole: async (memberId, role) => {
+        const { error } = await supabase.rpc("set_member_role", {
+          _user_id: memberId,
+          _role: toDbRole(role),
+        });
+        throwIf(error);
+        invalidate("profiles");
+      },
+      moveMember: async (memberId, teamId) => {
+        await supabase.from("team_members").delete().eq("user_id", memberId);
+        const { error } = await supabase.from("team_members").insert({ user_id: memberId, team_id: teamId });
+        throwIf(error);
+        invalidate("team_members");
+      },
+      removeMember: async (memberId) => {
+        const { error } = await supabase.from("team_members").delete().eq("user_id", memberId);
+        throwIf(error);
+        invalidate("team_members");
+      },
+
+      createTeam: async ({ name, color, memberIds }) => {
+        const { data, error } = await supabase.from("teams").insert({ name, color }).select("id").single();
+        throwIf(error);
+        if (data && memberIds.length) {
+          await supabase
+            .from("team_members")
+            .insert(memberIds.map((user_id) => ({ user_id, team_id: data.id })));
         }
+        invalidate("teams", "team_members");
       },
-      updateTeam: (teamId, input) =>
-        setTeams((prev) => prev.map((t) => (t.id === teamId ? { ...t, ...input } : t))),
-      deleteTeam: (teamId) => setTeams((prev) => prev.filter((t) => t.id !== teamId)),
-      createProject: (input) =>
-        setProjects((prev) => [
-          ...prev,
-          { id: nextId("p"), hours: 0, archived: false, ...input },
-        ]),
-      updateProject: (projectId, input) =>
-        setProjects((prev) => prev.map((p) => (p.id === projectId ? { ...p, ...input } : p))),
-      archiveProject: (projectId) =>
-        setProjects((prev) => prev.map((p) => (p.id === projectId ? { ...p, archived: true } : p))),
-      updateSettings: (patch) => setSettings((prev) => ({ ...prev, ...patch })),
+      updateTeam: async (teamId, input) => {
+        const { error } = await supabase.from("teams").update(input).eq("id", teamId);
+        throwIf(error);
+        invalidate("teams");
+      },
+      deleteTeam: async (teamId) => {
+        const { error } = await supabase.from("teams").delete().eq("id", teamId);
+        throwIf(error);
+        invalidate("teams", "team_members", "projects");
+      },
+
+      createProject: async (input) => {
+        const { data, error } = await supabase
+          .from("projects")
+          .insert({
+            name: input.name,
+            client_id: resolveClientId(input.client),
+            team_id: input.teamId || null,
+            color: input.color,
+            is_billable: input.billable,
+          })
+          .select("id")
+          .single();
+        throwIf(error);
+        if (data) await writeProjectLinks(data.id, input.tagIds, input.memberIds);
+        invalidate("projects", "project_members", "project_tags", "project_hours");
+      },
+      updateProject: async (projectId, input) => {
+        const { error } = await supabase
+          .from("projects")
+          .update({
+            name: input.name,
+            client_id: resolveClientId(input.client),
+            team_id: input.teamId || null,
+            color: input.color,
+            is_billable: input.billable,
+          })
+          .eq("id", projectId);
+        throwIf(error);
+        await writeProjectLinks(projectId, input.tagIds, input.memberIds);
+        invalidate("projects", "project_members", "project_tags");
+      },
+      archiveProject: async (projectId) => {
+        const { error } = await supabase.from("projects").update({ is_archived: true }).eq("id", projectId);
+        throwIf(error);
+        invalidate("projects");
+      },
+
+      updateSettings: async (patch) => {
+        const row: Record<string, unknown> = { id: true };
+        if (patch.companyName !== undefined) row["company_name"] = patch.companyName;
+        if (patch.logoDataUrl !== undefined) row["logo_url"] = patch.logoDataUrl;
+        if (patch.timezone !== undefined) row["timezone"] = patch.timezone;
+        if (patch.weeklyHours !== undefined) row["weekly_hours"] = patch.weeklyHours;
+        if (patch.currency !== undefined) row["currency"] = patch.currency;
+        const { error } = await supabase.from("workspace_settings").upsert(row as never);
+        throwIf(error);
+        invalidate("workspace_settings");
+      },
+      updateProfile: async (patch) => {
+        if (!uid) return;
+        const { error } = await supabase.from("profiles").update(patch).eq("id", uid);
+        throwIf(error);
+        invalidate("profiles");
+      },
+
+      startTimer: async ({ projectId, task, description }) => {
+        if (!uid) return;
+        const project = projects.find((p) => p.id === projectId);
+        const now = new Date();
+        const { error } = await supabase.from("time_entries").insert({
+          user_id: uid,
+          project_id: projectId,
+          task,
+          description,
+          start_time: now.toISOString(),
+          entry_date: toDateKey(now),
+          is_billable: project?.billable ?? true,
+          tag_ids: project?.tagIds ?? [],
+        });
+        throwIf(error);
+        invalidate("time_entries", "project_hours", "tag_usage");
+      },
+      stopTimer: async (entryId) => {
+        const entry = entries.find((e) => e.id === entryId);
+        if (!entry) return;
+        const end = new Date();
+        const minutes = Math.max(1, Math.round((end.getTime() - new Date(entry.startTime).getTime()) / 60000));
+        const { error } = await supabase
+          .from("time_entries")
+          .update({ end_time: end.toISOString(), duration_minutes: minutes })
+          .eq("id", entryId);
+        throwIf(error);
+        invalidate("time_entries", "project_hours", "tag_usage");
+      },
+      updateEntry: async (entryId, patch) => {
+        const { error } = await supabase.from("time_entries").update(patch).eq("id", entryId);
+        throwIf(error);
+        invalidate("time_entries");
+      },
+      refreshAll: () => qc.invalidateQueries(),
     };
-  }, [currentUser, currentRole, members, teams, projects, settings, membersByTeam, teamMemberCount]);
+  }, [
+    session,
+    authLoading,
+    loading,
+    currentUser,
+    members,
+    teams,
+    projects,
+    tags,
+    settings,
+    entries,
+    runningEntry,
+    membersByTeam,
+    invalidate,
+    resolveClientId,
+    writeProjectLinks,
+    qc,
+    uid,
+  ]);
 
   return <WorkspaceContext.Provider value={value}>{children}</WorkspaceContext.Provider>;
 }
@@ -227,7 +688,7 @@ export function useWorkspace() {
 }
 
 export function useWorkspaceTags() {
-  return seedTags;
+  return useWorkspace().tags;
 }
 
 export function useWorkspaceClients() {
@@ -240,8 +701,30 @@ export function useWorkspaceClients() {
         name,
         projects: linked,
         hours: linked.reduce((sum, p) => sum + p.hours, 0),
-        internal: name.startsWith("Internal"),
+        internal: name === NO_CLIENT,
       };
     });
   }, [projects]);
 }
+
+/** Hours per project per weekday for the given week, from the signed-in person's entries. */
+export function useWeekGrid(weekStart: Date) {
+  const { entries } = useWorkspace();
+  return useMemo(() => {
+    const grid: Record<string, number[]> = {};
+    for (const e of entries) {
+      if (!e.projectId) continue;
+      const idx = dayIndexOf(e.date, weekStart);
+      if (idx < 0 || idx > 6) continue;
+      grid[e.projectId] ??= [0, 0, 0, 0, 0, 0, 0];
+      grid[e.projectId][idx] += e.minutes / 60;
+    }
+    return grid;
+  }, [entries, weekStart]);
+}
+
+export function useThisWeekStart() {
+  return useMemo(() => startOfWeek(new Date()), []);
+}
+
+export { useMutation };
