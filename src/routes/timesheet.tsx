@@ -1,20 +1,26 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { ChevronLeft, ChevronRight, Lock, Send } from "lucide-react";
+import { toast } from "sonner";
 import { AppShell, ProjectDot } from "@/components/app-shell";
 import { TimesheetGrid } from "@/components/timesheet-grid";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { formatHours, formatMinutes } from "@/lib/mock-data";
 import { addDays, formatClock, formatWeekRange, toDateKey } from "@/lib/time-utils";
-import { useThisWeekStart, useWorkspace } from "@/lib/workspace-store";
+import { useThisWeekStart, useWorkspace, type TimesheetStatus } from "@/lib/workspace-store";
 
 export const Route = createFileRoute("/timesheet")({
   head: () => ({
     meta: [
       { title: "Timesheet — Ironbrij Time" },
-      { name: "description", content: "Review your week in a project-by-day grid or a chronological list of logged time entries." },
+      {
+        name: "description",
+        content:
+          "Review your week in a project-by-day grid or a chronological list of logged time entries.",
+      },
       { property: "og:title", content: "Timesheet — Ironbrij Time" },
       { property: "og:description", content: "Weekly grid and list views of your tracked time." },
     ],
@@ -27,7 +33,7 @@ function Timesheet() {
   const [offset, setOffset] = useState(0);
   const thisWeek = useThisWeekStart();
   const weekStart = useMemo(() => addDays(thisWeek, offset * 7), [thisWeek, offset]);
-  const { entries, projectById } = useWorkspace();
+  const { entries, projectById, timesheetForWeek } = useWorkspace();
 
   const dayKeys = useMemo(
     () => Array.from({ length: 7 }, (_, i) => toDateKey(addDays(weekStart, i))),
@@ -37,16 +43,21 @@ function Timesheet() {
     .filter((e) => dayKeys.includes(e.date))
     .sort((a, b) => a.startTime.localeCompare(b.startTime));
   const weekTotal = weekEntries.reduce((s, e) => s + e.minutes, 0) / 60;
+  const timesheet = timesheetForWeek(weekStart);
 
   return (
     <AppShell title="Timesheet" subtitle="Everything you logged this week, in one place.">
-      <div className="mb-6 grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4">
+      <div className="mb-4 grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4">
         <div className="flex min-w-0 items-center gap-2">
           <Button variant="outline" size="icon" onClick={() => setOffset((w) => w - 1)}>
             <ChevronLeft className="h-4 w-4" />
           </Button>
           <span className="truncate text-sm font-medium">{formatWeekRange(weekStart)}</span>
-          <Button variant="outline" size="icon" onClick={() => setOffset((w) => Math.min(0, w + 1))}>
+          <Button
+            variant="outline"
+            size="icon"
+            onClick={() => setOffset((w) => Math.min(0, w + 1))}
+          >
             <ChevronRight className="h-4 w-4" />
           </Button>
           <span className="ml-2 hidden text-sm text-muted-foreground sm:inline">
@@ -60,6 +71,13 @@ function Timesheet() {
           </TabsList>
         </Tabs>
       </div>
+
+      <SubmissionPanel
+        weekStart={weekStart}
+        status={timesheet?.status}
+        reviewNote={timesheet?.reviewNote ?? null}
+        hasEntries={weekEntries.length > 0}
+      />
 
       {view === "grid" ? (
         <TimesheetGrid weekStart={weekStart} />
@@ -83,7 +101,9 @@ function Timesheet() {
                       <div className="flex min-w-0 items-center gap-3">
                         <ProjectDot color={color} />
                         <div className="min-w-0">
-                          <p className="truncate text-sm font-medium">{e.description || "No description"}</p>
+                          <p className="truncate text-sm font-medium">
+                            {e.description || "No description"}
+                          </p>
                           <p className="truncate text-xs text-muted-foreground">
                             {p?.name ?? "No project"} · {e.task || "—"} · {formatClock(e.startTime)}
                           </p>
@@ -101,5 +121,93 @@ function Timesheet() {
         </Card>
       )}
     </AppShell>
+  );
+}
+
+function SubmissionPanel({
+  weekStart,
+  status,
+  reviewNote,
+  hasEntries,
+}: {
+  weekStart: Date;
+  status?: TimesheetStatus;
+  reviewNote: string | null;
+  hasEntries: boolean;
+}) {
+  const { submitTimesheet } = useWorkspace();
+  const [busy, setBusy] = useState(false);
+
+  const submit = async () => {
+    setBusy(true);
+    try {
+      await submitTimesheet(weekStart);
+      toast.success("Timesheet submitted", {
+        description: "Your manager will review it from here.",
+      });
+    } catch (error) {
+      toast.error("Couldn't submit that", { description: (error as Error).message });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (status === "Approved") {
+    return (
+      <Card className="mb-4 border-primary/20 bg-primary/5 shadow-card">
+        <CardContent className="flex flex-wrap items-center justify-between gap-3 p-4">
+          <div className="flex items-center gap-2">
+            <Lock className="h-4 w-4 text-primary" />
+            <p className="text-sm font-medium">Approved — this week is locked</p>
+          </div>
+          <Badge>Approved</Badge>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (status === "Submitted") {
+    return (
+      <Card className="mb-4 shadow-card">
+        <CardContent className="flex flex-wrap items-center justify-between gap-3 p-4">
+          <p className="text-sm font-medium text-muted-foreground">
+            Waiting on your manager to review it.
+          </p>
+          <Badge variant="secondary">Submitted</Badge>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <Card className="mb-4 shadow-card">
+      <CardContent className="flex flex-wrap items-center justify-between gap-3 p-4">
+        <div className="min-w-0">
+          {status === "Rejected" ? (
+            <>
+              <p className="text-sm font-medium">Sent back — take another look and resubmit.</p>
+              {reviewNote && <p className="mt-0.5 text-sm text-muted-foreground">"{reviewNote}"</p>}
+            </>
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              Ready to submit once this week looks right.
+            </p>
+          )}
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          {status === "Rejected" && <Badge variant="destructive">Changes requested</Badge>}
+          <Button
+            size="sm"
+            className="gap-2"
+            disabled={busy || !hasEntries}
+            onClick={() => void submit()}
+            title={hasEntries ? undefined : "Log some time first"}
+          >
+            <Send className="h-4 w-4" />
+            {status === "Rejected" ? "Resubmit" : "Submit for approval"}
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
