@@ -57,9 +57,16 @@ export const Route = createFileRoute("/teams")({
   head: () => ({
     meta: [
       { title: "Teams — Ironbrij Time" },
-      { name: "description", content: "Ironbrij internal teams, their members and roles — invite people, create teams and manage rosters." },
+      {
+        name: "description",
+        content:
+          "Ironbrij internal teams, their members and roles — invite people, create teams and manage rosters.",
+      },
       { property: "og:title", content: "Teams — Ironbrij Time" },
-      { property: "og:description", content: "Internal Ironbrij teams, rosters and role management." },
+      {
+        property: "og:description",
+        content: "Internal Ironbrij teams, rosters and role management.",
+      },
     ],
   }),
   component: TeamsPage,
@@ -68,9 +75,9 @@ export const Route = createFileRoute("/teams")({
 const roles: Role[] = ["Admin", "Manager", "Member"];
 
 function run(promise: Promise<unknown>, success: () => void) {
-  promise.then(success).catch((error: Error) =>
-    toast.error("That didn't save", { description: error.message }),
-  );
+  promise
+    .then(success)
+    .catch((error: Error) => toast.error("That didn't save", { description: error.message }));
 }
 
 function TeamsPage() {
@@ -80,6 +87,7 @@ function TeamsPage() {
     membersByTeam,
     teamMemberCount,
     isAdmin,
+    canManage,
     invitePeople,
     resendInvite,
     updateMemberRole,
@@ -111,22 +119,26 @@ function TeamsPage() {
       title="Teams"
       subtitle={`${teams.length} teams, one workspace. Pick a team to see who's in it.`}
       actions={
-        isAdmin ? (
+        (isAdmin || canManage) && (
           <div className="flex flex-wrap gap-2">
-            <Button variant="outline" className="gap-2" onClick={() => setInviteOpen(true)}>
-              <UserPlus className="h-4 w-4" /> Invite people
-            </Button>
-            <Button
-              className="gap-2"
-              onClick={() => {
-                setEditingTeamId(null);
-                setTeamFormOpen(true);
-              }}
-            >
-              <Plus className="h-4 w-4" /> New team
-            </Button>
+            {isAdmin && (
+              <Button variant="outline" className="gap-2" onClick={() => setInviteOpen(true)}>
+                <UserPlus className="h-4 w-4" /> Invite people
+              </Button>
+            )}
+            {canManage && (
+              <Button
+                className="gap-2"
+                onClick={() => {
+                  setEditingTeamId(null);
+                  setTeamFormOpen(true);
+                }}
+              >
+                <Plus className="h-4 w-4" /> New team
+              </Button>
+            )}
           </div>
-        ) : undefined
+        )
       }
     >
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)]">
@@ -147,29 +159,44 @@ function TeamsPage() {
                       <div className="flex min-w-0 items-center gap-3">
                         <span
                           className="h-8 w-8 shrink-0 rounded-lg"
-                          style={{ backgroundColor: `color-mix(in oklab, ${t.color} 22%, transparent)` }}
+                          style={{
+                            backgroundColor: `color-mix(in oklab, ${t.color} 22%, transparent)`,
+                          }}
                         />
                         <div className="min-w-0">
                           <p className="truncate text-sm font-medium">{t.name}</p>
-                          <p className="text-xs text-muted-foreground">{teamMemberCount(t.id)} members</p>
+                          <p className="text-xs text-muted-foreground">
+                            {teamMemberCount(t.id)} members
+                          </p>
                         </div>
                       </div>
                       <div className="flex shrink-0 items-center gap-2">
                         <div className="hidden -space-x-2 sm:flex">
                           {preview.slice(0, 3).map((m) => (
                             <Avatar key={m.id} className="h-7 w-7 border-2 border-card">
-                              <AvatarFallback className="bg-secondary text-[10px]">{m.initials}</AvatarFallback>
+                              <AvatarFallback className="bg-secondary text-[10px]">
+                                {m.initials}
+                              </AvatarFallback>
                             </Avatar>
                           ))}
                         </div>
-                        {isAdmin ? <span className="w-8" /> : <ChevronRight className="h-4 w-4 text-muted-foreground" />}
+                        {canManage ? (
+                          <span className="w-8" />
+                        ) : (
+                          <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                        )}
                       </div>
                     </button>
-                    {isAdmin && (
+                    {canManage && (
                       <div className="absolute right-4 top-1/2 -translate-y-1/2">
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" size="icon" className="h-8 w-8" aria-label={`Manage ${t.name}`}>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8"
+                              aria-label={`Manage ${t.name}`}
+                            >
                               <MoreHorizontal className="h-4 w-4" />
                             </Button>
                           </DropdownMenuTrigger>
@@ -183,7 +210,10 @@ function TeamsPage() {
                               <Pencil className="h-4 w-4" /> Edit team
                             </DropdownMenuItem>
                             <DropdownMenuSeparator />
-                            <DropdownMenuItem className="text-destructive focus:text-destructive" onSelect={() => setDeletingTeamId(t.id)}>
+                            <DropdownMenuItem
+                              className="text-destructive focus:text-destructive"
+                              onSelect={() => setDeletingTeamId(t.id)}
+                            >
                               Delete team
                             </DropdownMenuItem>
                           </DropdownMenuContent>
@@ -213,7 +243,9 @@ function TeamsPage() {
                   <li key={m.id} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3">
                     <div className="flex min-w-0 items-center gap-3">
                       <Avatar className="h-9 w-9 shrink-0">
-                        <AvatarFallback className="bg-secondary text-xs">{m.initials}</AvatarFallback>
+                        <AvatarFallback className="bg-secondary text-xs">
+                          {m.initials}
+                        </AvatarFallback>
                       </Avatar>
                       <div className="min-w-0">
                         <p className="flex items-center gap-2 truncate text-sm font-medium">
@@ -240,7 +272,9 @@ function TeamsPage() {
                             </Button>
                           )}
                         </p>
-                        <p className="truncate text-xs text-muted-foreground">{m.email ?? m.title}</p>
+                        <p className="truncate text-xs text-muted-foreground">
+                          {m.email ?? m.title}
+                        </p>
                       </div>
                     </div>
                     <div className="flex shrink-0 items-center gap-1.5">
@@ -248,7 +282,12 @@ function TeamsPage() {
                       {isAdmin && (
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" size="icon" className="h-8 w-8" aria-label={`Manage ${m.name}`}>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8"
+                              aria-label={`Manage ${m.name}`}
+                            >
                               <MoreHorizontal className="h-4 w-4" />
                             </Button>
                           </DropdownMenuTrigger>
@@ -258,7 +297,9 @@ function TeamsPage() {
                               value={m.role}
                               onValueChange={(v) => {
                                 run(updateMemberRole(m.id, v as Role), () =>
-                                  toast.success(`${m.name} is now ${v === "Admin" ? "an" : "a"} ${v}`),
+                                  toast.success(
+                                    `${m.name} is now ${v === "Admin" ? "an" : "a"} ${v}`,
+                                  ),
                                 );
                               }}
                             >
@@ -337,9 +378,7 @@ function TeamsPage() {
                 description: `${count} ${count === 1 ? "person" : "people"} invited as ${payload.role}.`,
               }),
             )
-            .catch((error: Error) =>
-              toast.error("Invite failed", { description: error.message }),
-            );
+            .catch((error: Error) => toast.error("Invite failed", { description: error.message }));
         }}
       />
 
@@ -367,8 +406,8 @@ function TeamsPage() {
           <AlertDialogHeader>
             <AlertDialogTitle>Delete {deletingTeam?.name}?</AlertDialogTitle>
             <AlertDialogDescription>
-              This removes the team from the workspace. People in it stay, but they'll need reassigning
-              to another team.
+              This removes the team from the workspace. People in it stay, but they'll need
+              reassigning to another team.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -417,7 +456,11 @@ function InviteDialog({
   }, [open, defaultTeamId, teams]);
 
   const emails = useMemo(
-    () => raw.split(/[\s,;]+/).map((s) => s.trim()).filter((s) => s.includes("@")),
+    () =>
+      raw
+        .split(/[\s,;]+/)
+        .map((s) => s.trim())
+        .filter((s) => s.includes("@")),
     [raw],
   );
 
@@ -427,7 +470,8 @@ function InviteDialog({
         <DialogHeader>
           <DialogTitle>Invite people</DialogTitle>
           <DialogDescription>
-            Add one email per line, or paste a few separated by commas — we'll send them all at once.
+            Add one email per line, or paste a few separated by commas — we'll send them all at
+            once.
           </DialogDescription>
         </DialogHeader>
         <div className="grid gap-5">
@@ -448,10 +492,14 @@ function InviteDialog({
             <div className="grid gap-2">
               <Label htmlFor="invite-team">Team</Label>
               <Select value={teamId} onValueChange={setTeamId}>
-                <SelectTrigger id="invite-team"><SelectValue placeholder="Pick a team" /></SelectTrigger>
+                <SelectTrigger id="invite-team">
+                  <SelectValue placeholder="Pick a team" />
+                </SelectTrigger>
                 <SelectContent>
                   {teams.map((t) => (
-                    <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>
+                    <SelectItem key={t.id} value={t.id}>
+                      {t.name}
+                    </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
@@ -459,10 +507,14 @@ function InviteDialog({
             <div className="grid gap-2">
               <Label htmlFor="invite-role">Role</Label>
               <Select value={role} onValueChange={(v) => setRole(v as Role)}>
-                <SelectTrigger id="invite-role"><SelectValue /></SelectTrigger>
+                <SelectTrigger id="invite-role">
+                  <SelectValue />
+                </SelectTrigger>
                 <SelectContent>
                   {roles.map((r) => (
-                    <SelectItem key={r} value={r}>{r}</SelectItem>
+                    <SelectItem key={r} value={r}>
+                      {r}
+                    </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
@@ -470,7 +522,9 @@ function InviteDialog({
           </div>
         </div>
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
           <Button
             disabled={emails.length === 0 || !teamId}
             onClick={() => {
@@ -560,7 +614,9 @@ function TeamFormDialog({
           )}
         </div>
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
           <Button
             disabled={!name.trim()}
             onClick={() => {
