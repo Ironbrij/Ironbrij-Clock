@@ -1,12 +1,30 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Check, ChevronLeft, ChevronRight, Pause, Pencil, Play, Repeat } from "lucide-react";
+import { ChevronLeft, ChevronRight, Pause, Pencil, Play, Plus, Repeat, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell, ProjectDot } from "@/components/app-shell";
-import { TimesheetGrid } from "@/components/timesheet-grid";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
@@ -14,6 +32,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { TimesheetGrid } from "@/components/timesheet-grid";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { formatHours, formatMinutes, tasks } from "@/lib/mock-data";
 import {
@@ -21,6 +40,7 @@ import {
   formatClock,
   formatDayLong,
   formatWeekRange,
+  fromDateKey,
   startOfWeek,
   toDateKey,
   weekdayNames,
@@ -37,7 +57,10 @@ export const Route = createFileRoute("/time")({
           "Track time with a live timer and review your entries as a list, weekly grid or calendar.",
       },
       { property: "og:title", content: "Time — Ironbrij Time" },
-      { property: "og:description", content: "Live timer plus list, grid and calendar views of your tracked time." },
+      {
+        property: "og:description",
+        content: "Live timer plus list, grid and calendar views of your tracked time.",
+      },
     ],
   }),
   component: TimePage,
@@ -47,22 +70,30 @@ const pad = (n: number) => n.toString().padStart(2, "0");
 
 function TimePage() {
   const [view, setView] = useState("list");
+  const [addOpen, setAddOpen] = useState(false);
 
   return (
     <AppShell title="Time" subtitle="One place to start the clock and see where your hours went.">
       <TimerBar />
-      <Tabs value={view} onValueChange={setView} className="mt-6">
-        <TabsList>
-          <TabsTrigger value="list">List</TabsTrigger>
-          <TabsTrigger value="grid">Grid</TabsTrigger>
-          <TabsTrigger value="calendar">Calendar</TabsTrigger>
-        </TabsList>
-      </Tabs>
+      <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
+        <Tabs value={view} onValueChange={setView}>
+          <TabsList>
+            <TabsTrigger value="list">List</TabsTrigger>
+            <TabsTrigger value="grid">Grid</TabsTrigger>
+            <TabsTrigger value="calendar">Calendar</TabsTrigger>
+          </TabsList>
+        </Tabs>
+        <Button variant="outline" size="sm" className="gap-2" onClick={() => setAddOpen(true)}>
+          <Plus className="h-4 w-4" />
+          Add manual entry
+        </Button>
+      </div>
       <div className="mt-4">
         {view === "list" && <ListView />}
         {view === "grid" && <GridView />}
         {view === "calendar" && <CalendarView />}
       </div>
+      <EntryFormDialog open={addOpen} onOpenChange={setAddOpen} entry={null} />
     </AppShell>
   );
 }
@@ -89,7 +120,9 @@ function TimerBar() {
     setTask(runningEntry.task || tasks[0]);
     setDescription(runningEntry.description);
     const tick = () =>
-      setSeconds(Math.max(0, Math.floor((Date.now() - new Date(runningEntry.startTime).getTime()) / 1000)));
+      setSeconds(
+        Math.max(0, Math.floor((Date.now() - new Date(runningEntry.startTime).getTime()) / 1000)),
+      );
     tick();
     const interval = setInterval(tick, 1000);
     return () => clearInterval(interval);
@@ -161,7 +194,9 @@ function TimerBar() {
         />
         <div className="grid gap-3 sm:grid-cols-2 lg:w-[380px]">
           <Select value={project} onValueChange={setProject} disabled={running}>
-            <SelectTrigger><SelectValue placeholder="Project" /></SelectTrigger>
+            <SelectTrigger>
+              <SelectValue placeholder="Project" />
+            </SelectTrigger>
             <SelectContent>
               {active.map((p) => (
                 <SelectItem key={p.id} value={p.id}>
@@ -174,10 +209,14 @@ function TimerBar() {
             </SelectContent>
           </Select>
           <Select value={task} onValueChange={setTask} disabled={running}>
-            <SelectTrigger><SelectValue placeholder="Task" /></SelectTrigger>
+            <SelectTrigger>
+              <SelectValue placeholder="Task" />
+            </SelectTrigger>
             <SelectContent>
               {tasks.map((t) => (
-                <SelectItem key={t} value={t}>{t}</SelectItem>
+                <SelectItem key={t} value={t}>
+                  {t}
+                </SelectItem>
               ))}
             </SelectContent>
           </Select>
@@ -191,8 +230,8 @@ function TimerBar() {
               {pad(h)}:{pad(m)}:{pad(s)}
             </span>
             <span className="hidden text-[11px] text-muted-foreground sm:block">
-              Press <kbd className="rounded border border-border px-1 py-0.5 font-sans">Space</kbd> to{" "}
-              {running ? "stop" : "start"}
+              Press <kbd className="rounded border border-border px-1 py-0.5 font-sans">Space</kbd>{" "}
+              to {running ? "stop" : "start"}
             </span>
           </div>
           <Button
@@ -204,7 +243,11 @@ function TimerBar() {
             onClick={() => void toggle()}
             className="h-12 w-12 rounded-full shadow-elevated transition-transform active:scale-95"
           >
-            {running ? <Pause className="h-5 w-5 fill-current" /> : <Play className="h-5 w-5 fill-current" />}
+            {running ? (
+              <Pause className="h-5 w-5 fill-current" />
+            ) : (
+              <Play className="h-5 w-5 fill-current" />
+            )}
           </Button>
         </div>
       </CardContent>
@@ -213,10 +256,11 @@ function TimerBar() {
 }
 
 function EntryList({ entries }: { entries: WorkspaceEntry[] }) {
-  const { projectById, updateEntry, startTimer, runningEntry } = useWorkspace();
-  const [editing, setEditing] = useState<string | null>(null);
-  const [draft, setDraft] = useState("");
+  const { projectById, deleteEntry, startTimer, runningEntry } = useWorkspace();
   const [repeatingId, setRepeatingId] = useState<string | null>(null);
+  const [editingEntry, setEditingEntry] = useState<WorkspaceEntry | null>(null);
+  const [deletingEntry, setDeletingEntry] = useState<WorkspaceEntry | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   if (entries.length === 0) {
     return <p className="px-6 py-6 text-sm text-muted-foreground">No time logged on this day.</p>;
@@ -224,16 +268,24 @@ function EntryList({ entries }: { entries: WorkspaceEntry[] }) {
 
   const repeatEntry = async (entry: WorkspaceEntry) => {
     if (!entry.projectId) {
-      toast.error("Can't repeat this entry", { description: "It doesn't have a project attached." });
+      toast.error("Can't repeat this entry", {
+        description: "It doesn't have a project attached.",
+      });
       return;
     }
     if (runningEntry) {
-      toast.error("A timer is already running", { description: "Stop it first, then repeat this entry." });
+      toast.error("A timer is already running", {
+        description: "Stop it first, then repeat this entry.",
+      });
       return;
     }
     setRepeatingId(entry.id);
     try {
-      await startTimer({ projectId: entry.projectId, task: entry.task, description: entry.description });
+      await startTimer({
+        projectId: entry.projectId,
+        task: entry.task,
+        description: entry.description,
+      });
       toast.success("Timer started", { description: "Picked up right where that entry left off." });
     } catch (error) {
       toast.error("Couldn't start that", { description: (error as Error).message });
@@ -242,79 +294,292 @@ function EntryList({ entries }: { entries: WorkspaceEntry[] }) {
     }
   };
 
+  const confirmDelete = async () => {
+    if (!deletingEntry) return;
+    setDeleting(true);
+    try {
+      await deleteEntry(deletingEntry.id);
+      toast.success("Entry deleted");
+      setDeletingEntry(null);
+    } catch (error) {
+      toast.error("Couldn't delete that", { description: (error as Error).message });
+    } finally {
+      setDeleting(false);
+    }
+  };
+
   return (
-    <ul className="divide-y divide-border">
-      {entries.map((entry) => {
-        const p = projectById(entry.projectId);
-        const isEditing = editing === entry.id;
-        return (
-          <li
-            key={entry.id}
-            className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 px-6 py-3.5 transition-colors hover:bg-muted/50"
-          >
-            <div className="flex min-w-0 items-center gap-3">
-              <ProjectDot color={p?.color ?? "var(--muted-foreground)"} />
-              <div className="min-w-0 flex-1">
-                {isEditing ? (
-                  <Input
-                    autoFocus
-                    value={draft}
-                    onChange={(e) => setDraft(e.target.value)}
-                    onBlur={() => {
-                      setEditing(null);
-                      if (draft !== entry.description) {
-                        updateEntry(entry.id, { description: draft }).catch((error: Error) =>
-                          toast.error("Couldn't save that", { description: error.message }),
-                        );
-                      }
-                    }}
-                    className="h-8"
-                  />
-                ) : (
+    <>
+      <ul className="divide-y divide-border">
+        {entries.map((entry) => {
+          const p = projectById(entry.projectId);
+          return (
+            <li
+              key={entry.id}
+              className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 px-6 py-3.5 transition-colors hover:bg-muted/50"
+            >
+              <div className="flex min-w-0 items-center gap-3">
+                <ProjectDot color={p?.color ?? "var(--muted-foreground)"} />
+                <div className="min-w-0 flex-1">
                   <p className="truncate text-sm font-medium">
                     {entry.description || "No description"}
                   </p>
-                )}
-                <p className="truncate text-xs text-muted-foreground">
-                  {p?.name ?? "No project"} · {entry.task || "—"} · from {formatClock(entry.startTime)}
-                </p>
+                  <p className="truncate text-xs text-muted-foreground">
+                    {p?.name ?? "No project"} · {entry.task || "—"} · from{" "}
+                    {formatClock(entry.startTime)}
+                  </p>
+                </div>
               </div>
-            </div>
-            <div className="flex shrink-0 items-center gap-1">
-              <span className="tabular-nums text-sm font-medium">
-                {entry.running ? "running" : formatMinutes(entry.minutes)}
-              </span>
-              {!entry.running && (
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  aria-label="Repeat this entry"
-                  title="Start a new timer with the same project, task and description"
-                  disabled={!!runningEntry || repeatingId === entry.id}
-                  onClick={() => void repeatEntry(entry)}
-                >
-                  <Repeat className="h-4 w-4" />
-                </Button>
-              )}
-              <Button
-                size="icon"
-                variant="ghost"
-                aria-label="Edit entry"
-                onClick={() => {
-                  if (isEditing) setEditing(null);
-                  else {
-                    setDraft(entry.description);
-                    setEditing(entry.id);
-                  }
-                }}
+              <div className="flex shrink-0 items-center gap-1">
+                <span className="tabular-nums text-sm font-medium">
+                  {entry.running ? "running" : formatMinutes(entry.minutes)}
+                </span>
+                {!entry.running && (
+                  <>
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      aria-label="Repeat this entry"
+                      title="Start a new timer with the same project, task and description"
+                      disabled={!!runningEntry || repeatingId === entry.id}
+                      onClick={() => void repeatEntry(entry)}
+                    >
+                      <Repeat className="h-4 w-4" />
+                    </Button>
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      aria-label="Edit entry"
+                      onClick={() => setEditingEntry(entry)}
+                    >
+                      <Pencil className="h-4 w-4" />
+                    </Button>
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      aria-label="Delete entry"
+                      onClick={() => setDeletingEntry(entry)}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </>
+                )}
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+
+      <EntryFormDialog
+        open={!!editingEntry}
+        onOpenChange={(open) => !open && setEditingEntry(null)}
+        entry={editingEntry}
+      />
+
+      <AlertDialog open={!!deletingEntry} onOpenChange={(open) => !open && setDeletingEntry(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete this entry?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {deletingEntry
+                ? `"${deletingEntry.description || "No description"}" — ${formatMinutes(
+                    deletingEntry.minutes,
+                  )} on ${formatDayLong(fromDateKey(deletingEntry.date))}. This can't be undone.`
+                : ""}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleting}>Keep it</AlertDialogCancel>
+            <AlertDialogAction disabled={deleting} onClick={() => void confirmDelete()}>
+              Delete entry
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
+  );
+}
+
+type EntryFormValues = {
+  projectId: string;
+  task: string;
+  description: string;
+  date: string;
+  startTime: string;
+  endTime: string;
+};
+
+function toFormValues(entry: WorkspaceEntry | null): EntryFormValues {
+  if (!entry) {
+    return {
+      projectId: "",
+      task: tasks[0],
+      description: "",
+      date: toDateKey(new Date()),
+      startTime: "",
+      endTime: "",
+    };
+  }
+  const start = new Date(entry.startTime);
+  const end = entry.endTime ? new Date(entry.endTime) : start;
+  return {
+    projectId: entry.projectId ?? "",
+    task: entry.task || tasks[0],
+    description: entry.description,
+    date: entry.date,
+    startTime: `${pad(start.getHours())}:${pad(start.getMinutes())}`,
+    endTime: `${pad(end.getHours())}:${pad(end.getMinutes())}`,
+  };
+}
+
+/** Shared dialog for both adding a manual entry and editing an existing one — entry is null for "add". */
+function EntryFormDialog({
+  open,
+  onOpenChange,
+  entry,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  entry: WorkspaceEntry | null;
+}) {
+  const { projects, createEntry, updateEntry } = useWorkspace();
+  const active = projects.filter((p) => !p.archived);
+  const [values, setValues] = useState<EntryFormValues>(() => toFormValues(entry));
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (open) setValues(toFormValues(entry));
+  }, [open, entry]);
+
+  const submit = async () => {
+    if (!values.projectId) {
+      toast.error("Pick a project first");
+      return;
+    }
+    if (!values.startTime || !values.endTime) {
+      toast.error("Add a start and end time");
+      return;
+    }
+    setBusy(true);
+    try {
+      if (entry) {
+        await updateEntry(entry.id, values);
+        toast.success("Entry updated");
+      } else {
+        await createEntry(values);
+        toast.success("Entry added", { description: "Logged to your timesheet." });
+      }
+      onOpenChange(false);
+    } catch (error) {
+      toast.error("Couldn't save that", { description: (error as Error).message });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>{entry ? "Edit entry" : "Add a time entry"}</DialogTitle>
+          <DialogDescription>
+            {entry
+              ? "Update the project, times or details for this entry."
+              : "Log time you forgot to track live — for today or any earlier day."}
+          </DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-4 py-2">
+          <div className="grid gap-2">
+            <Label htmlFor="entry-description">Description</Label>
+            <Input
+              id="entry-description"
+              placeholder="What did you work on?"
+              value={values.description}
+              onChange={(e) => setValues((v) => ({ ...v, description: e.target.value }))}
+            />
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="grid gap-2">
+              <Label>Project</Label>
+              <Select
+                value={values.projectId}
+                onValueChange={(projectId) => setValues((v) => ({ ...v, projectId }))}
               >
-                {isEditing ? <Check className="h-4 w-4" /> : <Pencil className="h-4 w-4" />}
-              </Button>
+                <SelectTrigger>
+                  <SelectValue placeholder="Project" />
+                </SelectTrigger>
+                <SelectContent>
+                  {active.map((p) => (
+                    <SelectItem key={p.id} value={p.id}>
+                      <span className="flex items-center gap-2">
+                        <ProjectDot color={p.color} />
+                        {p.name}
+                      </span>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
-          </li>
-        );
-      })}
-    </ul>
+            <div className="grid gap-2">
+              <Label>Task</Label>
+              <Select
+                value={values.task}
+                onValueChange={(task) => setValues((v) => ({ ...v, task }))}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Task" />
+                </SelectTrigger>
+                <SelectContent>
+                  {tasks.map((t) => (
+                    <SelectItem key={t} value={t}>
+                      {t}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <div className="grid gap-4 sm:grid-cols-3">
+            <div className="grid gap-2">
+              <Label htmlFor="entry-date">Date</Label>
+              <Input
+                id="entry-date"
+                type="date"
+                max={toDateKey(new Date())}
+                value={values.date}
+                onChange={(e) => setValues((v) => ({ ...v, date: e.target.value }))}
+              />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="entry-start">Start</Label>
+              <Input
+                id="entry-start"
+                type="time"
+                value={values.startTime}
+                onChange={(e) => setValues((v) => ({ ...v, startTime: e.target.value }))}
+              />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="entry-end">End</Label>
+              <Input
+                id="entry-end"
+                type="time"
+                value={values.endTime}
+                onChange={(e) => setValues((v) => ({ ...v, endTime: e.target.value }))}
+              />
+            </div>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button disabled={busy} onClick={() => void submit()}>
+            {entry ? "Save changes" : "Add entry"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -381,7 +646,10 @@ function CalendarView() {
     const daysInMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate();
     return [
       ...Array.from({ length: lead }, () => null),
-      ...Array.from({ length: daysInMonth }, (_, i) => new Date(today.getFullYear(), today.getMonth(), i + 1)),
+      ...Array.from(
+        { length: daysInMonth },
+        (_, i) => new Date(today.getFullYear(), today.getMonth(), i + 1),
+      ),
     ];
   }, [today]);
 
@@ -409,7 +677,9 @@ function CalendarView() {
           <div className="min-w-[720px]">
             <div className="grid grid-cols-7 gap-2 pb-2 text-xs uppercase tracking-wide text-muted-foreground">
               {weekdayNames.map((d) => (
-                <span key={d} className="px-1">{d}</span>
+                <span key={d} className="px-1">
+                  {d}
+                </span>
               ))}
             </div>
             <div className="grid grid-cols-7 gap-2">
