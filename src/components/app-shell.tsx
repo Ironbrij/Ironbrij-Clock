@@ -58,11 +58,16 @@ export function AppShell({
     );
   }
 
-  // Signed in, but an admin hasn't approved this account yet — block the
-  // dashboard instead of falling through. Admins skip this even if their own
-  // record happens to still be marked pending, so nobody can lock out every
-  // admin at once.
-  if (currentUser.pending && !isAdmin) {
+  // Signed in, but nobody's approved this account yet — block the
+  // dashboard instead of falling through. This used to exempt admins so
+  // nobody could lock out every admin at once, but that exemption was
+  // exactly what let a freshly admin-invited account skip approval
+  // entirely (role is set at invite time, before any human reviews it).
+  // The extreme edge case this exemption was guarding against — the
+  // only admin somehow stuck pending — is recoverable directly in
+  // Supabase's SQL editor if it ever genuinely happens; that's a safer
+  // trade than leaving this bypass in place.
+  if (currentUser.pending) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background px-4">
         <div className="w-full max-w-sm rounded-xl border bg-card p-8 text-center shadow-sm">
