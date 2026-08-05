@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
-import { Archive, Plus } from "lucide-react";
+import { Archive, Pencil, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell, ProjectDot } from "@/components/app-shell";
 import { ColorDotPicker } from "@/components/color-dot-picker";
@@ -77,13 +77,17 @@ function ProjectsPage() {
     createProject,
     updateProject,
     archiveProject,
+    clients: realClients,
+    createClient,
+    updateClient,
+    deleteClient,
   } = useWorkspace();
-  const clients = useWorkspaceClients();
+  const clientGroups = useWorkspaceClients();
   const tags = useWorkspaceTags();
   const clientNames = useMemo(() => {
-    const names = clients.map((c) => c.name).filter((n) => n !== NO_CLIENT);
+    const names = realClients.map((c) => c.name).filter((n) => n !== NO_CLIENT);
     return [NO_CLIENT, ...names];
-  }, [clients]);
+  }, [realClients]);
 
   const [formOpen, setFormOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -118,7 +122,22 @@ function ProjectsPage() {
         </TabsList>
       </Tabs>
 
-      {tab === "clients" && <ClientsTab clients={clients} />}
+      {tab === "clients" && (
+        <ClientsTab
+          clients={realClients.map((rc) => {
+            const group = clientGroups.find((g) => g.name === rc.name);
+            return {
+              id: rc.id,
+              name: rc.name,
+              projects: group?.projects ?? [],
+              hours: group?.hours ?? 0,
+            };
+          })}
+          createClient={createClient}
+          updateClient={updateClient}
+          deleteClient={deleteClient}
+        />
+      )}
       {tab === "tags" && <TagsTab tags={tags} />}
       {tab === "projects" && (
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
@@ -436,48 +455,195 @@ function ProjectFormDialog({
 
 function ClientsTab({
   clients,
+  createClient,
+  updateClient,
+  deleteClient,
 }: {
-  clients: { name: string; projects: WorkspaceProject[]; hours: number; internal: boolean }[];
+  clients: { id: string; name: string; projects: WorkspaceProject[]; hours: number }[];
+  createClient: (name: string) => Promise<void>;
+  updateClient: (id: string, name: string) => Promise<void>;
+  deleteClient: (id: string) => Promise<void>;
 }) {
+  const [newName, setNewName] = useState("");
+  const [adding, setAdding] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editName, setEditName] = useState("");
+  const [deleteTarget, setDeleteTarget] = useState<{
+    id: string;
+    name: string;
+    projectCount: number;
+  } | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
+  const add = async () => {
+    const name = newName.trim();
+    if (!name) return;
+    setAdding(true);
+    try {
+      await createClient(name);
+      setNewName("");
+      toast.success("Client added");
+    } catch (error) {
+      toast.error("Couldn't add that", { description: (error as Error).message });
+    } finally {
+      setAdding(false);
+    }
+  };
+
+  const startEdit = (id: string, name: string) => {
+    setEditingId(id);
+    setEditName(name);
+  };
+
+  const saveEdit = async () => {
+    const id = editingId;
+    const original = clients.find((c) => c.id === id)?.name ?? "";
+    const name = editName.trim();
+    setEditingId(null);
+    if (!id || !name || name === original) return;
+    try {
+      await updateClient(id, name);
+      toast.success("Client renamed");
+    } catch (error) {
+      toast.error("Couldn't rename that", { description: (error as Error).message });
+    }
+  };
+
+  const confirmDelete = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    try {
+      await deleteClient(deleteTarget.id);
+      toast.success("Client removed");
+      setDeleteTarget(null);
+    } catch (error) {
+      toast.error("Couldn't remove that", { description: (error as Error).message });
+    } finally {
+      setDeleting(false);
+    }
+  };
+
   return (
-    <Card className="shadow-card">
-      <CardContent className="p-0">
-        <ul className="divide-y divide-border">
-          {clients.map((c) => (
-            <li
-              key={c.name}
-              className="grid gap-3 px-6 py-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center"
-            >
-              <div className="min-w-0">
-                <p className="truncate text-sm font-medium">{c.name}</p>
-                <div className="mt-1.5 flex flex-wrap gap-1.5">
-                  {c.projects.map((p) => (
-                    <span
-                      key={p.id}
-                      className="flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium"
-                      style={{
-                        backgroundColor: `color-mix(in oklab, ${p.color} 14%, transparent)`,
-                        color: p.color,
-                      }}
-                    >
-                      <ProjectDot color={p.color} />
-                      {p.name}
-                    </span>
-                  ))}
-                </div>
-              </div>
-              <div className="text-left sm:text-right">
-                <p className="text-sm font-medium tabular-nums">{formatHours(c.hours)}</p>
-                <p className="text-xs text-muted-foreground">
-                  {c.projects.length} {c.projects.length === 1 ? "project" : "projects"} ·{" "}
-                  {c.internal ? "Internal" : "Client"}
-                </p>
-              </div>
-            </li>
-          ))}
-        </ul>
-      </CardContent>
-    </Card>
+    <div className="grid gap-4">
+      <Card className="min-w-0 shadow-card">
+        <CardContent className="p-0">
+          {clients.length === 0 ? (
+            <p className="px-6 py-8 text-center text-sm text-muted-foreground">
+              No clients yet — add one below.
+            </p>
+          ) : (
+            <ul className="divide-y divide-border">
+              {clients.map((c) => (
+                <li
+                  key={c.id}
+                  className="grid gap-3 px-6 py-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center"
+                >
+                  <div className="min-w-0">
+                    {editingId === c.id ? (
+                      <Input
+                        autoFocus
+                        value={editName}
+                        onChange={(e) => setEditName(e.target.value)}
+                        onBlur={() => void saveEdit()}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") void saveEdit();
+                          if (e.key === "Escape") setEditingId(null);
+                        }}
+                        className="h-8 max-w-xs"
+                      />
+                    ) : (
+                      <p className="truncate text-sm font-medium">{c.name}</p>
+                    )}
+                    {c.projects.length > 0 && (
+                      <div className="mt-1.5 flex flex-wrap gap-1.5">
+                        {c.projects.map((p) => (
+                          <span
+                            key={p.id}
+                            className="flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium"
+                            style={{
+                              backgroundColor: `color-mix(in oklab, ${p.color} 14%, transparent)`,
+                              color: p.color,
+                            }}
+                          >
+                            <ProjectDot color={p.color} />
+                            {p.name}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex shrink-0 items-center gap-3">
+                    <div className="text-left sm:text-right">
+                      <p className="text-sm font-medium tabular-nums">{formatHours(c.hours)}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {c.projects.length} {c.projects.length === 1 ? "project" : "projects"}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        aria-label={`Rename ${c.name}`}
+                        onClick={() => startEdit(c.id, c.name)}
+                      >
+                        <Pencil className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        aria-label={`Remove ${c.name}`}
+                        onClick={() =>
+                          setDeleteTarget({
+                            id: c.id,
+                            name: c.name,
+                            projectCount: c.projects.length,
+                          })
+                        }
+                      >
+                        <Trash2 className="h-4 w-4 text-destructive" />
+                      </Button>
+                    </div>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </CardContent>
+      </Card>
+
+      <div className="flex gap-2">
+        <Input
+          placeholder="New client name"
+          value={newName}
+          onChange={(e) => setNewName(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && void add()}
+        />
+        <Button disabled={adding || !newName.trim()} onClick={() => void add()}>
+          Add client
+        </Button>
+      </div>
+
+      <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove {deleteTarget?.name}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {deleteTarget && deleteTarget.projectCount > 0
+                ? `${deleteTarget.projectCount} project${deleteTarget.projectCount === 1 ? "" : "s"} currently ${
+                    deleteTarget.projectCount === 1 ? "uses" : "use"
+                  } this client — they'll show as having no client afterward. Nothing else is affected.`
+                : "This client isn't attached to any projects, so nothing else is affected."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleting}>Keep it</AlertDialogCancel>
+            <AlertDialogAction disabled={deleting} onClick={() => void confirmDelete()}>
+              Remove client
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </div>
   );
 }
 
