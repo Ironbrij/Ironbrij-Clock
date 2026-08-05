@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { Trash2 } from "lucide-react";
+import { Pencil, Trash2 } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -561,10 +561,13 @@ function AdminTab() {
 }
 
 function TaskCategoriesCard() {
-  const { taskCategories, createTaskCategory, deleteTaskCategory } = useWorkspace();
+  const { taskCategories, createTaskCategory, updateTaskCategory, deleteTaskCategory } =
+    useWorkspace();
   const [newName, setNewName] = useState("");
   const [adding, setAdding] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editName, setEditName] = useState("");
 
   const add = async () => {
     const name = newName.trim();
@@ -578,6 +581,25 @@ function TaskCategoriesCard() {
       toast.error("Couldn't add that", { description: (error as Error).message });
     } finally {
       setAdding(false);
+    }
+  };
+
+  const startEdit = (id: string, currentName: string) => {
+    setEditingId(id);
+    setEditName(currentName);
+  };
+
+  const saveEdit = async () => {
+    const id = editingId;
+    const original = taskCategories.find((t) => t.id === id)?.name ?? "";
+    const name = editName.trim();
+    setEditingId(null);
+    if (!id || !name || name === original) return;
+    try {
+      await updateTaskCategory(id, name);
+      toast.success("Task category renamed");
+    } catch (error) {
+      toast.error("Couldn't rename that", { description: (error as Error).message });
     }
   };
 
@@ -606,16 +628,40 @@ function TaskCategoriesCard() {
         <ul className="divide-y divide-border rounded-xl border border-border">
           {taskCategories.map((t) => (
             <li key={t.id} className="flex items-center justify-between gap-4 px-4 py-2.5">
-              <span className="text-sm">{t.name}</span>
-              <Button
-                size="icon"
-                variant="ghost"
-                aria-label={`Remove ${t.name}`}
-                disabled={deletingId === t.id}
-                onClick={() => void remove(t.id)}
-              >
-                <Trash2 className="h-4 w-4" />
-              </Button>
+              {editingId === t.id ? (
+                <Input
+                  autoFocus
+                  value={editName}
+                  onChange={(e) => setEditName(e.target.value)}
+                  onBlur={() => void saveEdit()}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") void saveEdit();
+                    if (e.key === "Escape") setEditingId(null);
+                  }}
+                  className="h-8"
+                />
+              ) : (
+                <span className="text-sm">{t.name}</span>
+              )}
+              <div className="flex shrink-0 items-center gap-1">
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  aria-label={`Rename ${t.name}`}
+                  onClick={() => startEdit(t.id, t.name)}
+                >
+                  <Pencil className="h-4 w-4" />
+                </Button>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  aria-label={`Remove ${t.name}`}
+                  disabled={deletingId === t.id}
+                  onClick={() => void remove(t.id)}
+                >
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+              </div>
             </li>
           ))}
           {taskCategories.length === 0 && (
