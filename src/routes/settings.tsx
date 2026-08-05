@@ -134,12 +134,13 @@ function ProfileTab() {
   const { currentUser, updateProfile } = useWorkspace();
   const [fullName, setFullName] = useState(currentUser.name);
   const [jobTitle, setJobTitle] = useState(currentUser.title);
-  const [timezone, setTimezone] = useState(timezones[0]);
+  const [timezone, setTimezone] = useState(currentUser.timezone);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     setFullName(currentUser.name);
     setJobTitle(currentUser.title);
+    setTimezone(currentUser.timezone);
   }, [currentUser]);
 
   return (
@@ -215,7 +216,6 @@ function UsersTab() {
     teams,
     currentUser,
     approveMember,
-    removeMember,
     removeUser,
     resendInvite,
     updateMemberRole,
@@ -223,9 +223,12 @@ function UsersTab() {
     removeMemberFromTeam,
   } = useWorkspace();
   const [busyId, setBusyId] = useState<string | null>(null);
-  const [removeTarget, setRemoveTarget] = useState<{ id: string; name: string; role: Role } | null>(
-    null,
-  );
+  const [removeTarget, setRemoveTarget] = useState<{
+    id: string;
+    name: string;
+    role: Role;
+    pending: boolean;
+  } | null>(null);
   const [confirmText, setConfirmText] = useState("");
   const [removing, setRemoving] = useState(false);
 
@@ -247,14 +250,21 @@ function UsersTab() {
     setRemoving(true);
     try {
       await removeUser(removeTarget.id);
-      toast.success(`${removeTarget.name} removed`, {
-        description:
-          "They can no longer sign in. Their past time entries and timesheets are unchanged.",
-      });
+      toast.success(
+        removeTarget.pending ? `${removeTarget.name} rejected` : `${removeTarget.name} removed`,
+        {
+          description: removeTarget.pending
+            ? "They can no longer sign in. They'd need a fresh invite to try again."
+            : "They can no longer sign in. Their past time entries and timesheets are unchanged.",
+        },
+      );
       setRemoveTarget(null);
       setConfirmText("");
     } catch (error) {
-      toast.error("Couldn't remove that person", { description: (error as Error).message });
+      toast.error(
+        removeTarget.pending ? "Couldn't reject that signup" : "Couldn't remove that person",
+        { description: (error as Error).message },
+      );
     } finally {
       setRemoving(false);
     }
@@ -406,13 +416,14 @@ function UsersTab() {
                             size="sm"
                             variant="outline"
                             className="text-destructive"
-                            onClick={() => {
-                              void removeMember(m.id)
-                                .then(() => toast.success(`${m.name} removed`))
-                                .catch((e: Error) =>
-                                  toast.error("Remove failed", { description: e.message }),
-                                );
-                            }}
+                            onClick={() =>
+                              setRemoveTarget({
+                                id: m.id,
+                                name: m.name,
+                                role: m.role,
+                                pending: true,
+                              })
+                            }
                           >
                             Reject
                           </Button>
@@ -476,7 +487,12 @@ function UsersTab() {
                             variant="ghost"
                             aria-label={`Remove ${m.name}`}
                             onClick={() =>
-                              setRemoveTarget({ id: m.id, name: m.name, role: m.role })
+                              setRemoveTarget({
+                                id: m.id,
+                                name: m.name,
+                                role: m.role,
+                                pending: false,
+                              })
                             }
                           >
                             <Trash2 className="h-4 w-4 text-destructive" />
@@ -503,11 +519,13 @@ function UsersTab() {
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Remove {removeTarget?.name}?</AlertDialogTitle>
+            <AlertDialogTitle>
+              {removeTarget?.pending ? "Reject" : "Remove"} {removeTarget?.name}?
+            </AlertDialogTitle>
             <AlertDialogDescription>
-              They'll immediately lose the ability to sign in — this can't be undone from here;
-              they'd need a fresh invite to come back. Their past time entries, timesheets, and
-              reports stay exactly as they are; nothing historical is deleted.
+              {removeTarget?.pending
+                ? "They won't be able to sign in — they'd need a fresh invite to try again. Nothing else in the workspace is affected."
+                : "They'll immediately lose the ability to sign in — this can't be undone from here; they'd need a fresh invite to come back. Their past time entries, timesheets, and reports stay exactly as they are; nothing historical is deleted."}
             </AlertDialogDescription>
           </AlertDialogHeader>
           {removeTarget?.role === "Admin" && (
@@ -537,7 +555,7 @@ function UsersTab() {
               }
               onClick={() => void confirmRemove()}
             >
-              Remove access
+              {removeTarget?.pending ? "Reject" : "Remove access"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
