@@ -71,7 +71,7 @@ function ProjectsPage() {
   const {
     projects,
     teams,
-    members,
+    activeMembers,
     memberById,
     canManage,
     createProject,
@@ -215,7 +215,7 @@ function ProjectsPage() {
         project={editing}
         clientNames={clientNames}
         teams={teams}
-        people={members}
+        people={activeMembers}
         tags={tags}
         onSubmit={(input) => {
           if (editing) {
