@@ -264,6 +264,24 @@ export type Database = {
           },
         ]
       }
+      task_categories: {
+        Row: {
+          created_at: string
+          id: string
+          name: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          name: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          name?: string
+        }
+        Relationships: []
+      }
       teams: {
         Row: {
           color: string
