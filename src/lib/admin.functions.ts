@@ -9,8 +9,6 @@ const inviteSchema = z.object({
   redirectTo: z.string().url().optional(),
 });
 
-const allowedDomains = ["ironbrij.com", "ironbrij.com.au", "gmail.com"];
-
 export const inviteMembers = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: unknown) => inviteSchema.parse(input))
@@ -22,12 +20,11 @@ export const inviteMembers = createServerFn({ method: "POST" })
     if (roleError) throw new Error(roleError.message);
     if (!isAdmin) throw new Error("Only admins can invite people");
 
-    const emails = data.emails
-      .map((e) => e.trim().toLowerCase())
-      .filter((e) => allowedDomains.includes(e.split("@")[1] ?? ""));
-    if (emails.length === 0) {
-      throw new Error(`Invites are limited to ${allowedDomains.map((d) => "@" + d).join(" and ")} addresses`);
-    }
+    // No domain restriction here on purpose — an admin explicitly typing
+    // this exact address IS the security control (paired with the
+    // "Before User Created" hook, which blocks anyone who tries to sign
+    // up on their own without having been invited first).
+    const emails = data.emails.map((e) => e.trim().toLowerCase());
 
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
     const failures: string[] = [];
@@ -58,7 +55,8 @@ export const inviteMembers = createServerFn({ method: "POST" })
       invited += 1;
     }
 
-    if (invited === 0) throw new Error("No invites could be sent — those addresses may already exist.");
+    if (invited === 0)
+      throw new Error("No invites could be sent — those addresses may already exist.");
     return { invited, failures };
   });
 
@@ -83,9 +81,7 @@ export const resendInvite = createServerFn({ method: "POST" })
     const { data: users, error: listError } = await supabaseAdmin.auth.admin.listUsers();
     if (listError) throw new Error(listError.message);
 
-    const existing = users.users.find(
-      (u) => u.email?.toLowerCase() === data.email.toLowerCase(),
-    );
+    const existing = users.users.find((u) => u.email?.toLowerCase() === data.email.toLowerCase());
     if (!existing) {
       throw new Error("No account found for that email — invite them first.");
     }
