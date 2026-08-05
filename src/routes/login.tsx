@@ -7,21 +7,23 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { supabase } from "@/integrations/supabase/client";
-import { allowedEmailDomains, isAllowedEmail, useWorkspace } from "@/lib/workspace-store";
+import { useWorkspace } from "@/lib/workspace-store";
 
 export const Route = createFileRoute("/login")({
   head: () => ({
     meta: [
       { title: "Sign in — Ironbrij Time" },
-      { name: "description", content: "Sign in to Ironbrij Time, the internal time tracking workspace for Ironbrij teams." },
+      {
+        name: "description",
+        content:
+          "Sign in to Ironbrij Time, the internal time tracking workspace for Ironbrij teams.",
+      },
       { property: "og:title", content: "Sign in — Ironbrij Time" },
       { property: "og:description", content: "Internal time tracking for Ironbrij teams." },
     ],
   }),
   component: Login,
 });
-
-const domainHint = allowedEmailDomains.map((d) => "@" + d).join(" or ");
 
 function Login() {
   const navigate = useNavigate();
@@ -34,11 +36,25 @@ function Login() {
     if (session) navigate({ to: "/", replace: true });
   }, [session, navigate]);
 
-  const signInWithPassword = async () => {
-    if (!isAllowedEmail(email)) {
-      toast.error("Ironbrij accounts only", { description: `Use your ${domainHint} email address.` });
-      return;
+  // Google sign-in redirects away and back through Supabase's own
+  // callback. If the "Before User Created" hook rejected an uninvited
+  // signup, Supabase sends the reason back as an error in the URL
+  // (search params on some flows, a hash fragment on others) rather than
+  // as a normal JS error we could catch inline — so it has to be picked
+  // up here, once the page remounts after the redirect.
+  useEffect(() => {
+    const raw = window.location.hash.startsWith("#")
+      ? window.location.hash.slice(1)
+      : window.location.search;
+    const params = new URLSearchParams(raw);
+    const description = params.get("error_description") || params.get("error");
+    if (description) {
+      toast.error("Couldn't sign you in", { description: description.replace(/\+/g, " ") });
+      window.history.replaceState({}, "", window.location.pathname);
     }
+  }, []);
+
+  const signInWithPassword = async () => {
     setBusy("password");
     const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
     setBusy(null);
@@ -61,8 +77,9 @@ function Login() {
     }
     // Nothing else runs here on success — the browser leaves for Google and
     // comes back through Supabase's own callback, remounting this component
-    // with a session already set. Domain restriction is enforced globally in
-    // workspace-store.tsx's onAuthStateChange, so it applies here too.
+    // with a session already set (or an error in the URL — see the effect
+    // above). Whether the account is actually allowed to exist at all is
+    // now enforced server-side, before it's ever created.
   };
 
   return (
@@ -124,10 +141,22 @@ function Login() {
                 <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
                 <svg viewBox="0 0 24 24" className="h-4 w-4" aria-hidden="true">
-                  <path fill="#4285F4" d="M23.5 12.3c0-.8-.1-1.6-.2-2.3H12v4.5h6.5a5.6 5.6 0 0 1-2.4 3.7v3h3.9c2.3-2.1 3.5-5.2 3.5-8.9Z" />
-                  <path fill="#34A853" d="M12 24c3.2 0 5.9-1.1 7.9-2.9l-3.9-3c-1.1.7-2.4 1.2-4 1.2-3.1 0-5.7-2.1-6.6-4.9H1.4v3.1A12 12 0 0 0 12 24Z" />
-                  <path fill="#FBBC05" d="M5.4 14.4a7.2 7.2 0 0 1 0-4.6V6.7H1.4a12 12 0 0 0 0 10.7l4-3Z" />
-                  <path fill="#EA4335" d="M12 4.8c1.8 0 3.3.6 4.6 1.8l3.4-3.4A12 12 0 0 0 1.4 6.7l4 3.1C6.3 6.9 8.9 4.8 12 4.8Z" />
+                  <path
+                    fill="#4285F4"
+                    d="M23.5 12.3c0-.8-.1-1.6-.2-2.3H12v4.5h6.5a5.6 5.6 0 0 1-2.4 3.7v3h3.9c2.3-2.1 3.5-5.2 3.5-8.9Z"
+                  />
+                  <path
+                    fill="#34A853"
+                    d="M12 24c3.2 0 5.9-1.1 7.9-2.9l-3.9-3c-1.1.7-2.4 1.2-4 1.2-3.1 0-5.7-2.1-6.6-4.9H1.4v3.1A12 12 0 0 0 12 24Z"
+                  />
+                  <path
+                    fill="#FBBC05"
+                    d="M5.4 14.4a7.2 7.2 0 0 1 0-4.6V6.7H1.4a12 12 0 0 0 0 10.7l4-3Z"
+                  />
+                  <path
+                    fill="#EA4335"
+                    d="M12 4.8c1.8 0 3.3.6 4.6 1.8l3.4-3.4A12 12 0 0 0 1.4 6.7l4 3.1C6.3 6.9 8.9 4.8 12 4.8Z"
+                  />
                 </svg>
               )}
               Sign in with Google
@@ -135,8 +164,8 @@ function Login() {
           </CardContent>
         </Card>
         <p className="mt-6 text-center text-xs text-muted-foreground">
-          Internal tool for Ironbrij staff — accounts are created by invite only. Trouble getting in? Ping People
-          &amp; Culture.
+          Internal tool for Ironbrij staff — accounts are created by invite only. Trouble getting
+          in? Ping People &amp; Culture.
         </p>
       </div>
     </main>
