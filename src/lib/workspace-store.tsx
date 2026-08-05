@@ -234,6 +234,17 @@ type WorkspaceContextValue = {
     from: string,
     to: string,
   ) => Promise<{ userId: string; clientId: string | null; minutes: number }[]>;
+  /** Entries carrying a given tag — relies entirely on time_entries' own RLS (self/admin/manager-shares-team) for who can see what, same as everywhere else. */
+  entriesForTag: (tagId: string) => Promise<
+    {
+      id: string;
+      userId: string;
+      projectId: string | null;
+      description: string;
+      date: string;
+      minutes: number;
+    }[]
+  >;
 
   invitePeople: (input: { emails: string[]; teamId: string; role: Role }) => Promise<number>;
   resendInvite: (email: string) => Promise<void>;
@@ -804,6 +815,23 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
           userId: r.user_id,
           clientId: r.client_id,
           minutes: r.minutes,
+        }));
+      },
+      entriesForTag: async (tagId) => {
+        const { data, error } = await supabase
+          .from("time_entries")
+          .select("id, user_id, project_id, description, entry_date, duration_minutes")
+          .contains("tag_ids", [tagId])
+          .order("entry_date", { ascending: false })
+          .limit(200);
+        throwIf(error);
+        return (data ?? []).map((e) => ({
+          id: e.id,
+          userId: e.user_id,
+          projectId: e.project_id,
+          description: e.description,
+          date: e.entry_date,
+          minutes: e.duration_minutes ?? 0,
         }));
       },
 
