@@ -1,0 +1,12 @@
+-- Backs "remove a user" from Settings. The actual access revocation
+-- happens by deleting their auth.users row (see admin.functions.ts) —
+-- that's Supabase's own recommended mechanism for fully revoking access,
+-- and it's safe here specifically because profiles.id has no foreign key
+-- back to auth.users, so deleting the auth user never cascades into
+-- profiles, time_entries, timesheets, or anything else historical.
+--
+-- is_active is purely cosmetic/filtering: it hides someone from active
+-- rosters and "assign this person" pickers going forward, while their
+-- name stays correct on every entry, timesheet, and report they're
+-- already attached to.
+ALTER TABLE public.profiles ADD COLUMN is_active boolean NOT NULL DEFAULT true;
