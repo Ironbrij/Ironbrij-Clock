@@ -186,6 +186,7 @@ type WorkspaceContextValue = {
   tags: WorkspaceTag[];
   taskCategories: WorkspaceTaskCategory[];
   createTaskCategory: (name: string) => Promise<void>;
+  updateTaskCategory: (id: string, name: string) => Promise<void>;
   deleteTaskCategory: (id: string) => Promise<void>;
   settings: WorkspaceSettings;
   entries: WorkspaceEntry[];
@@ -825,6 +826,14 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
 
       createTaskCategory: async (name) => {
         const { error } = await supabase.from("task_categories").insert({ name: name.trim() });
+        throwIf(error);
+        invalidate("task_categories");
+      },
+      updateTaskCategory: async (id, name) => {
+        const { error } = await supabase
+          .from("task_categories")
+          .update({ name: name.trim() })
+          .eq("id", id);
         throwIf(error);
         invalidate("task_categories");
       },
