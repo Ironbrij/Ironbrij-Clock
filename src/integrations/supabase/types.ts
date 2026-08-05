@@ -448,6 +448,13 @@ export type Database = {
           week_minutes: number
         }[]
       }
+      project_hours_range: {
+        Args: { _from: string; _to: string }
+        Returns: {
+          minutes: number
+          project_id: string
+        }[]
+      }
       review_timesheet: {
         Args: {
           _note?: string
