@@ -15,7 +15,7 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { currencies, timezones, useWorkspace } from "@/lib/workspace-store";
+import { currencies, timezones, useWorkspace, type Role } from "@/lib/workspace-store";
 import { toast } from "sonner";
 import { useEffect, useRef, useState } from "react";
 
@@ -37,6 +37,8 @@ export const Route = createFileRoute("/settings")({
   }),
   component: SettingsPage,
 });
+
+const roles: Role[] = ["Admin", "Manager", "Member"];
 
 const notifications = [
   {
@@ -196,12 +198,73 @@ function ProfileTab() {
   );
 }
 function UsersTab() {
-  const { members, approveMember, removeMember, teams } = useWorkspace();
+  const { members, teams, approveMember, removeMember, updateMemberRole, moveMember } =
+    useWorkspace();
+  const [busyId, setBusyId] = useState<string | null>(null);
 
   const pendingMembers = members.filter((m) => m.pending);
   const approvedMembers = members.filter((m) => !m.pending);
 
   const teamName = (teamId: string) => teams.find((t) => t.id === teamId)?.name ?? "No team";
+
+  const changeRole = (m: { id: string; name: string }, role: Role) => {
+    setBusyId(m.id);
+    void updateMemberRole(m.id, role)
+      .then(() => toast.success(`${m.name} is now ${role === "Admin" ? "an" : "a"} ${role}`))
+      .catch((e: Error) => toast.error("Couldn't update role", { description: e.message }))
+      .finally(() => setBusyId(null));
+  };
+
+  const changeTeam = (m: { id: string; name: string }, teamId: string) => {
+    setBusyId(m.id);
+    void moveMember(m.id, teamId)
+      .then(() => toast.success(`${m.name} moved to ${teamName(teamId)}`))
+      .catch((e: Error) => toast.error("Couldn't move member", { description: e.message }))
+      .finally(() => setBusyId(null));
+  };
+
+  const RoleCell = ({ m }: { m: { id: string; name: string; role: Role } }) => (
+    <Select
+      value={m.role}
+      onValueChange={(v) => changeRole(m, v as Role)}
+      disabled={busyId === m.id}
+    >
+      <SelectTrigger className="h-8 w-28">
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        {roles.map((r) => (
+          <SelectItem key={r} value={r}>
+            {r}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+
+  const TeamCell = ({ m }: { m: { id: string; name: string; teamId: string } }) => (
+    <Select
+      value={m.teamId || "unassigned"}
+      onValueChange={(v) => changeTeam(m, v)}
+      disabled={busyId === m.id}
+    >
+      <SelectTrigger className="h-8 w-40">
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        {!m.teamId && (
+          <SelectItem value="unassigned" disabled>
+            Unassigned
+          </SelectItem>
+        )}
+        {teams.map((t) => (
+          <SelectItem key={t.id} value={t.id}>
+            {t.name}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
 
   return (
     <div className="grid max-w-4xl gap-6">
@@ -242,9 +305,11 @@ function UsersTab() {
                         {m.name}
                       </td>
                       <td className="px-3 py-2.5 text-muted-foreground">{m.email ?? "—"}</td>
-                      <td className="px-3 py-2.5">{m.role}</td>
-                      <td className="px-3 py-2.5 text-muted-foreground">
-                        {m.teamId ? teamName(m.teamId) : "Unassigned"}
+                      <td className="px-3 py-2.5">
+                        <RoleCell m={m} />
+                      </td>
+                      <td className="px-3 py-2.5">
+                        <TeamCell m={m} />
                       </td>
                       <td className="px-3 py-2.5 text-right">
                         <div className="flex items-center justify-end gap-2">
@@ -320,9 +385,11 @@ function UsersTab() {
                         {m.name}
                       </td>
                       <td className="px-3 py-2.5 text-muted-foreground">{m.email ?? "—"}</td>
-                      <td className="px-3 py-2.5">{m.role}</td>
-                      <td className="px-3 py-2.5 text-muted-foreground">
-                        {m.teamId ? teamName(m.teamId) : "Unassigned"}
+                      <td className="px-3 py-2.5">
+                        <RoleCell m={m} />
+                      </td>
+                      <td className="px-3 py-2.5">
+                        <TeamCell m={m} />
                       </td>
                     </tr>
                   ))}
