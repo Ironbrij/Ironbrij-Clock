@@ -63,6 +63,56 @@ export const inviteMembers = createServerFn({ method: "POST" })
     return { invited, failures: failures.map((f) => f.email) };
   });
 
+const removeSchema = z.object({
+  userId: z.string().uuid(),
+});
+
+export const removeUserAccess = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) => removeSchema.parse(input))
+  .handler(async ({ data, context }) => {
+    const { data: isAdmin, error: roleError } = await context.supabase.rpc("has_role", {
+      _user_id: context.userId,
+      _role: "admin",
+    });
+    if (roleError) throw new Error(roleError.message);
+    if (!isAdmin) throw new Error("Only admins can remove people");
+    if (data.userId === context.userId) throw new Error("You can't remove your own account.");
+
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+
+    // Guard against locking the workspace out entirely — never remove the
+    // last remaining active admin.
+    const { count: activeAdmins, error: countError } = await supabaseAdmin
+      .from("profiles")
+      .select("id", { count: "exact", head: true })
+      .eq("role", "admin")
+      .eq("is_active", true)
+      .neq("id", data.userId);
+    if (countError) throw new Error(countError.message);
+    const { data: target } = await supabaseAdmin
+      .from("profiles")
+      .select("role")
+      .eq("id", data.userId)
+      .maybeSingle();
+    if (target?.role === "admin" && (activeAdmins ?? 0) === 0) {
+      throw new Error("Can't remove the last remaining admin.");
+    }
+
+    // Revoking access via deleteUser() — not a soft flag — is Supabase's
+    // own recommended way to fully block sign-in and invalidate refresh
+    // tokens. Safe here specifically because profiles.id has no foreign
+    // key back to auth.users, so this never cascades into their profile,
+    // time entries, or timesheets.
+    const { error: deleteError } = await supabaseAdmin.auth.admin.deleteUser(data.userId);
+    if (deleteError) throw new Error(deleteError.message);
+
+    await supabaseAdmin.from("team_members").delete().eq("user_id", data.userId);
+    await supabaseAdmin.from("profiles").update({ is_active: false }).eq("id", data.userId);
+
+    return { removed: true };
+  });
+
 const resendSchema = z.object({
   email: z.string().email(),
 });
