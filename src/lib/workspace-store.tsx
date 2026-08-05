@@ -135,14 +135,6 @@ export const timezones = [
 
 export const currencies = ["AUD", "USD", "PHP", "NZD", "GBP", "EUR"];
 
-export const allowedEmailDomains = ["ironbrij.com", "ironbrij.com.au", "gmail.com"];
-
-export function isAllowedEmail(email: string | undefined | null) {
-  if (!email) return false;
-  const domain = email.split("@")[1]?.toLowerCase();
-  return !!domain && allowedEmailDomains.includes(domain);
-}
-
 export function initialsFrom(input: string) {
   const clean = input
     .replace(/@.*$/, "")
@@ -287,12 +279,6 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const { data: sub } = supabase.auth.onAuthStateChange((_event, next) => {
-      if (next && !isAllowedEmail(next.user.email)) {
-        supabase.auth.signOut();
-        setSession(null);
-        setAuthLoading(false);
-        return;
-      }
       setSession(next);
       setAuthLoading(false);
       qc.invalidateQueries();
