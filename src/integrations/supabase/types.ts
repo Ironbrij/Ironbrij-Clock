@@ -398,28 +398,34 @@ export type Database = {
       }
       workspace_settings: {
         Row: {
+          allow_manual_entry: boolean
           company_name: string
           currency: string
           id: boolean
           logo_url: string | null
+          require_descriptions: boolean
           timezone: string
           updated_at: string
           weekly_hours: number
         }
         Insert: {
+          allow_manual_entry?: boolean
           company_name?: string
           currency?: string
           id?: boolean
           logo_url?: string | null
+          require_descriptions?: boolean
           timezone?: string
           updated_at?: string
           weekly_hours?: number
         }
         Update: {
+          allow_manual_entry?: boolean
           company_name?: string
           currency?: string
           id?: boolean
           logo_url?: string | null
+          require_descriptions?: boolean
           timezone?: string
           updated_at?: string
           weekly_hours?: number
