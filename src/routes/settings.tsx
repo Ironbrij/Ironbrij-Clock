@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { Trash2 } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -532,6 +533,8 @@ function AdminTab() {
         </CardContent>
       </Card>
 
+      <TaskCategoriesCard />
+
       <Card className="border-destructive/40 shadow-card">
         <CardContent className="flex flex-col gap-4 p-6">
           <div>
@@ -554,5 +557,85 @@ function AdminTab() {
         </CardContent>
       </Card>
     </div>
+  );
+}
+
+function TaskCategoriesCard() {
+  const { taskCategories, createTaskCategory, deleteTaskCategory } = useWorkspace();
+  const [newName, setNewName] = useState("");
+  const [adding, setAdding] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  const add = async () => {
+    const name = newName.trim();
+    if (!name) return;
+    setAdding(true);
+    try {
+      await createTaskCategory(name);
+      setNewName("");
+      toast.success("Task category added");
+    } catch (error) {
+      toast.error("Couldn't add that", { description: (error as Error).message });
+    } finally {
+      setAdding(false);
+    }
+  };
+
+  const remove = async (id: string) => {
+    setDeletingId(id);
+    try {
+      await deleteTaskCategory(id);
+      toast.success("Task category removed");
+    } catch (error) {
+      toast.error("Couldn't remove that", { description: (error as Error).message });
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
+  return (
+    <Card className="max-w-2xl shadow-card">
+      <CardContent className="flex flex-col gap-4 p-6">
+        <div>
+          <h3 className="text-sm font-semibold">Task categories</h3>
+          <p className="mt-1 text-sm text-muted-foreground">
+            The options people pick from when logging time. Removing one doesn't touch entries
+            already logged against it — it just stops appearing as a choice going forward.
+          </p>
+        </div>
+        <ul className="divide-y divide-border rounded-xl border border-border">
+          {taskCategories.map((t) => (
+            <li key={t.id} className="flex items-center justify-between gap-4 px-4 py-2.5">
+              <span className="text-sm">{t.name}</span>
+              <Button
+                size="icon"
+                variant="ghost"
+                aria-label={`Remove ${t.name}`}
+                disabled={deletingId === t.id}
+                onClick={() => void remove(t.id)}
+              >
+                <Trash2 className="h-4 w-4" />
+              </Button>
+            </li>
+          ))}
+          {taskCategories.length === 0 && (
+            <li className="px-4 py-6 text-center text-sm text-muted-foreground">
+              No task categories yet — add one below.
+            </li>
+          )}
+        </ul>
+        <div className="flex gap-2">
+          <Input
+            placeholder="New category name"
+            value={newName}
+            onChange={(e) => setNewName(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && void add()}
+          />
+          <Button disabled={adding || !newName.trim()} onClick={() => void add()}>
+            Add
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
