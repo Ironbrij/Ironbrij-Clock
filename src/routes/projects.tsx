@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
-import { Archive, Pencil, Plus, Trash2 } from "lucide-react";
+import { Archive, ArchiveRestore, Pencil, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell, ProjectDot } from "@/components/app-shell";
 import { ColorDotPicker } from "@/components/color-dot-picker";
@@ -69,7 +69,7 @@ export const Route = createFileRoute("/projects")({
 function ProjectsPage() {
   const [tab, setTab] = useState("projects");
   const {
-    projects,
+    projects: allProjects,
     teams,
     activeMembers,
     memberById,
@@ -77,6 +77,8 @@ function ProjectsPage() {
     createProject,
     updateProject,
     archiveProject,
+    unarchiveProject,
+    deleteProject,
     clients: realClients,
     createClient,
     updateClient,
@@ -85,6 +87,12 @@ function ProjectsPage() {
     updateTag,
     deleteTag,
   } = useWorkspace();
+  // Archived projects are only relevant to the people who manage them —
+  // everyone else just sees the active roster, not a dimmed-out history.
+  const projects = useMemo(
+    () => (canManage ? allProjects : allProjects.filter((p) => !p.archived)),
+    [allProjects, canManage],
+  );
   const clientGroups = useWorkspaceClients();
   const tags = useWorkspaceTags();
   const clientNames = useMemo(() => {
@@ -95,9 +103,13 @@ function ProjectsPage() {
   const [formOpen, setFormOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [archivingId, setArchivingId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [deleteConfirmText, setDeleteConfirmText] = useState("");
+  const [deleting, setDeleting] = useState(false);
 
   const editing = projects.find((p) => p.id === editingId) ?? null;
   const archiving = projects.find((p) => p.id === archivingId) ?? null;
+  const projectToDelete = projects.find((p) => p.id === deletingId) ?? null;
 
   return (
     <AppShell
@@ -264,6 +276,23 @@ function ProjectsPage() {
           setFormOpen(false);
           setArchivingId(editing?.id ?? null);
         }}
+        onUnarchive={() => {
+          if (!editing) return;
+          setFormOpen(false);
+          void unarchiveProject(editing.id)
+            .then(() =>
+              toast.success("Project unarchived", {
+                description: `${editing.name} is active again.`,
+              }),
+            )
+            .catch((error: Error) =>
+              toast.error("Couldn't unarchive", { description: error.message }),
+            );
+        }}
+        onDelete={() => {
+          setFormOpen(false);
+          setDeletingId(editing?.id ?? null);
+        }}
       />
 
       <AlertDialog open={!!archiving} onOpenChange={(o) => !o && setArchivingId(null)}>
@@ -298,6 +327,70 @@ function ProjectsPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <AlertDialog
+        open={!!projectToDelete}
+        onOpenChange={(o) => {
+          if (!o) {
+            setDeletingId(null);
+            setDeleteConfirmText("");
+          }
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Permanently delete {projectToDelete?.name}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This can't be undone. Any time entries already logged against it are kept, not deleted
+              — they'll just show as having no project from now on, which will change how past
+              reports for this project read. Type the project name to confirm.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="grid gap-2">
+            <Label
+              htmlFor="confirm-delete-project"
+              className="text-sm font-medium text-destructive"
+            >
+              Project name
+            </Label>
+            <Input
+              id="confirm-delete-project"
+              autoFocus
+              value={deleteConfirmText}
+              onChange={(e) => setDeleteConfirmText(e.target.value)}
+              placeholder={projectToDelete?.name}
+            />
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleting}>Keep it</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={
+                deleting ||
+                !projectToDelete ||
+                deleteConfirmText.trim().toLowerCase() !== projectToDelete.name.trim().toLowerCase()
+              }
+              onClick={async () => {
+                if (!projectToDelete) return;
+                setDeleting(true);
+                try {
+                  await deleteProject(projectToDelete.id);
+                  toast.success("Project deleted", {
+                    description: `${projectToDelete.name} has been permanently removed.`,
+                  });
+                  setDeletingId(null);
+                  setDeleteConfirmText("");
+                } catch (error) {
+                  toast.error("Couldn't delete that", { description: (error as Error).message });
+                } finally {
+                  setDeleting(false);
+                }
+              }}
+            >
+              Delete permanently
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </AppShell>
   );
 }
@@ -312,6 +405,8 @@ function ProjectFormDialog({
   tags,
   onSubmit,
   onArchive,
+  onUnarchive,
+  onDelete,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -322,6 +417,8 @@ function ProjectFormDialog({
   tags: WorkspaceTag[];
   onSubmit: (input: ProjectInput) => void;
   onArchive: () => void;
+  onUnarchive: () => void;
+  onDelete: () => void;
 }) {
   const [name, setName] = useState("");
   const [client, setClient] = useState("");
@@ -431,13 +528,22 @@ function ProjectFormDialog({
           </div>
         </div>
         <DialogFooter className="sm:justify-between">
-          {project && !project.archived ? (
+          {project && !project.archived && (
             <Button variant="outline" className="gap-2 text-destructive" onClick={onArchive}>
               <Archive className="h-4 w-4" /> Archive project
             </Button>
-          ) : (
-            <span />
           )}
+          {project && project.archived && (
+            <div className="flex gap-2">
+              <Button variant="outline" className="gap-2" onClick={onUnarchive}>
+                <ArchiveRestore className="h-4 w-4" /> Unarchive
+              </Button>
+              <Button variant="outline" className="gap-2 text-destructive" onClick={onDelete}>
+                <Trash2 className="h-4 w-4" /> Delete permanently
+              </Button>
+            </div>
+          )}
+          {!project && <span />}
           <div className="flex gap-2">
             <Button variant="outline" onClick={() => onOpenChange(false)}>
               Cancel
