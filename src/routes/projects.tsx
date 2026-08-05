@@ -38,7 +38,8 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { formatHours } from "@/lib/mock-data";
+import { formatHours, formatMinutes } from "@/lib/mock-data";
+import { formatDayLong, fromDateKey } from "@/lib/time-utils";
 import {
   dotColors,
   NO_CLIENT,
@@ -773,6 +774,7 @@ function TagsTab({
   const [editingTag, setEditingTag] = useState<WorkspaceTag | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<WorkspaceTag | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [viewingTag, setViewingTag] = useState<WorkspaceTag | null>(null);
 
   const confirmDelete = async () => {
     if (!deleteTarget) return;
@@ -811,7 +813,11 @@ function TagsTab({
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
           {tags.map((t) => (
-            <Card key={t.id} className="min-w-0 shadow-card">
+            <Card
+              key={t.id}
+              className="min-w-0 cursor-pointer shadow-card transition-shadow hover:shadow-elevated"
+              onClick={() => setViewingTag(t)}
+            >
               <CardContent className="flex items-center justify-between gap-3 p-5">
                 <span
                   className="flex min-w-0 items-center gap-2 rounded-full px-2.5 py-1 text-sm font-medium"
@@ -829,7 +835,8 @@ function TagsTab({
                     size="icon"
                     variant="ghost"
                     aria-label={`Edit ${t.name}`}
-                    onClick={() => {
+                    onClick={(e) => {
+                      e.stopPropagation();
                       setEditingTag(t);
                       setFormOpen(true);
                     }}
@@ -840,7 +847,10 @@ function TagsTab({
                     size="icon"
                     variant="ghost"
                     aria-label={`Delete ${t.name}`}
-                    onClick={() => setDeleteTarget(t)}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setDeleteTarget(t);
+                    }}
                   >
                     <Trash2 className="h-4 w-4 text-destructive" />
                   </Button>
@@ -858,6 +868,8 @@ function TagsTab({
         createTag={createTag}
         updateTag={updateTag}
       />
+
+      <TagEntriesDialog tag={viewingTag} onOpenChange={(open) => !open && setViewingTag(null)} />
 
       <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
         <AlertDialogContent>
@@ -952,6 +964,89 @@ function TagFormDialog({
             {tag ? "Save changes" : "Add tag"}
           </Button>
         </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function TagEntriesDialog({
+  tag,
+  onOpenChange,
+}: {
+  tag: WorkspaceTag | null;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const { entriesForTag, projectById, memberById, currentUser } = useWorkspace();
+  const [entries, setEntries] = useState<Awaited<ReturnType<typeof entriesForTag>> | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!tag) {
+      setEntries(null);
+      return;
+    }
+    let cancelled = false;
+    setLoading(true);
+    entriesForTag(tag.id)
+      .then((data) => {
+        if (!cancelled) setEntries(data);
+      })
+      .catch((error: Error) => toast.error("Couldn't load entries", { description: error.message }))
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [tag, entriesForTag]);
+
+  return (
+    <Dialog open={!!tag} onOpenChange={onOpenChange}>
+      <DialogContent className="max-h-[80vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            {tag && <ProjectDot color={tag.color} />}
+            {tag?.name}
+          </DialogTitle>
+          <DialogDescription>
+            {loading
+              ? "Loading…"
+              : `${entries?.length ?? 0} ${entries?.length === 1 ? "entry" : "entries"}${
+                  (entries?.length ?? 0) >= 200 ? " (showing the most recent 200)" : ""
+                }. Only entries you're allowed to see are shown — the same rule as everywhere else in the app.`}
+          </DialogDescription>
+        </DialogHeader>
+        {loading ? (
+          <p className="py-8 text-center text-sm text-muted-foreground">Loading…</p>
+        ) : !entries || entries.length === 0 ? (
+          <p className="py-8 text-center text-sm text-muted-foreground">
+            No entries carry this tag yet — at least none you have access to see.
+          </p>
+        ) : (
+          <ul className="divide-y divide-border">
+            {entries.map((e) => {
+              const project = projectById(e.projectId);
+              const member = memberById(e.userId);
+              return (
+                <li key={e.id} className="flex items-center gap-3 py-3">
+                  <ProjectDot color={project?.color ?? "var(--muted-foreground)"} />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-medium">
+                      {e.description || "No description"}
+                    </p>
+                    <p className="truncate text-xs text-muted-foreground">
+                      {project?.name ?? "No project"} · {formatDayLong(fromDateKey(e.date))}
+                      {member && member.id !== currentUser.id ? ` · ${member.name}` : ""}
+                    </p>
+                  </div>
+                  <span className="shrink-0 text-sm font-medium tabular-nums">
+                    {formatMinutes(e.minutes)}
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+        )}
       </DialogContent>
     </Dialog>
   );
