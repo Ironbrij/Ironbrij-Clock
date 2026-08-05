@@ -64,6 +64,7 @@ export type Database = {
           email: string | null
           full_name: string
           id: string
+          is_active: boolean
           is_pending: boolean
           job_title: string | null
           role: Database["public"]["Enums"]["app_role"]
@@ -75,6 +76,7 @@ export type Database = {
           email?: string | null
           full_name?: string
           id: string
+          is_active?: boolean
           is_pending?: boolean
           job_title?: string | null
           role?: Database["public"]["Enums"]["app_role"]
@@ -86,6 +88,7 @@ export type Database = {
           email?: string | null
           full_name?: string
           id?: string
+          is_active?: boolean
           is_pending?: boolean
           job_title?: string | null
           role?: Database["public"]["Enums"]["app_role"]
