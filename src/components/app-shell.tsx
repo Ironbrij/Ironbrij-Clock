@@ -170,7 +170,7 @@ export function AppShell({
             <ThemeToggle />
           </div>
         </header>
-        <div className="flex-1 px-5 py-6 sm:px-8 sm:py-8">
+        <div className="min-w-0 flex-1 px-5 py-6 sm:px-8 sm:py-8">
           <div className="mx-auto w-full max-w-6xl">{children}</div>
         </div>
         <nav className="sticky bottom-0 flex items-center justify-around border-t border-border bg-background px-2 py-2 lg:hidden">
