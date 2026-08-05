@@ -338,7 +338,7 @@ function UsersTab() {
 
   return (
     <div className="grid max-w-4xl gap-6">
-      <Card className="shadow-card">
+      <Card className="min-w-0 shadow-card">
         <CardContent className="p-6">
           <div className="mb-4">
             <h2 className="text-base font-semibold">Pending approval</h2>
@@ -438,7 +438,7 @@ function UsersTab() {
         </CardContent>
       </Card>
 
-      <Card className="shadow-card">
+      <Card className="min-w-0 shadow-card">
         <CardContent className="p-6">
           <div className="mb-4">
             <h2 className="text-base font-semibold">Approved members</h2>
