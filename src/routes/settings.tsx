@@ -22,17 +22,32 @@ export const Route = createFileRoute("/settings")({
   head: () => ({
     meta: [
       { title: "Settings — Ironbrij Time" },
-      { name: "description", content: "Manage your Ironbrij Time profile, notification preferences and workspace-level admin settings." },
+      {
+        name: "description",
+        content:
+          "Manage your Ironbrij Time profile, notification preferences and workspace-level admin settings.",
+      },
       { property: "og:title", content: "Settings — Ironbrij Time" },
-      { property: "og:description", content: "Profile, notifications and workspace admin settings." },
+      {
+        property: "og:description",
+        content: "Profile, notifications and workspace admin settings.",
+      },
     ],
   }),
   component: SettingsPage,
 });
 
 const notifications = [
-  { label: "Daily reminder to log time", hint: "A gentle nudge at 5:00 pm if today looks empty.", on: true },
-  { label: "Weekly timesheet summary", hint: "Monday morning recap of last week's hours.", on: true },
+  {
+    label: "Daily reminder to log time",
+    hint: "A gentle nudge at 5:00 pm if today looks empty.",
+    on: true,
+  },
+  {
+    label: "Weekly timesheet summary",
+    hint: "Monday morning recap of last week's hours.",
+    on: true,
+  },
   { label: "Timer still running", hint: "We'll ping you if a timer runs past 4 hours.", on: true },
   { label: "Project assignments", hint: "When someone adds you to a project.", on: false },
   { label: "Report exports ready", hint: "When a large export finishes processing.", on: false },
@@ -59,7 +74,10 @@ function SettingsPage() {
             <CardContent className="p-0">
               <ul className="divide-y divide-border">
                 {notifications.map((n) => (
-                  <li key={n.label} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 px-6 py-4">
+                  <li
+                    key={n.label}
+                    className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 px-6 py-4"
+                  >
                     <div className="min-w-0">
                       <p className="text-sm font-medium">{n.label}</p>
                       <p className="text-xs text-muted-foreground">{n.hint}</p>
@@ -79,7 +97,9 @@ function SettingsPage() {
         )}
 
         <TabsContent value="admin" className="mt-6">
-          {isAdmin ? <AdminTab /> : (
+          {isAdmin ? (
+            <AdminTab />
+          ) : (
             <Card className="max-w-2xl shadow-card">
               <CardContent className="px-6 py-14 text-center">
                 <p className="text-sm font-medium">Workspace settings are admin-only</p>
@@ -90,7 +110,6 @@ function SettingsPage() {
             </Card>
           )}
         </TabsContent>
-
       </Tabs>
     </AppShell>
   );
@@ -118,7 +137,9 @@ function ProfileTab() {
             </AvatarFallback>
           </Avatar>
           <div>
-            <Button variant="outline" size="sm">Change avatar</Button>
+            <Button variant="outline" size="sm">
+              Change avatar
+            </Button>
             <p className="mt-2 text-xs text-muted-foreground">PNG or JPG, up to 2 MB.</p>
           </div>
         </div>
@@ -139,10 +160,14 @@ function ProfileTab() {
         <div className="grid gap-2">
           <Label htmlFor="tz">Timezone</Label>
           <Select value={timezone} onValueChange={setTimezone}>
-            <SelectTrigger id="tz"><SelectValue /></SelectTrigger>
+            <SelectTrigger id="tz">
+              <SelectValue />
+            </SelectTrigger>
             <SelectContent>
               {timezones.map((tz) => (
-                <SelectItem key={tz} value={tz}>{tz}</SelectItem>
+                <SelectItem key={tz} value={tz}>
+                  {tz}
+                </SelectItem>
               ))}
             </SelectContent>
           </Select>
@@ -153,8 +178,12 @@ function ProfileTab() {
             onClick={() => {
               setSaving(true);
               updateProfile({ full_name: fullName.trim(), job_title: jobTitle.trim(), timezone })
-                .then(() => toast.success("Profile saved", { description: "Your details are up to date." }))
-                .catch((error: Error) => toast.error("Couldn't save", { description: error.message }))
+                .then(() =>
+                  toast.success("Profile saved", { description: "Your details are up to date." }),
+                )
+                .catch((error: Error) =>
+                  toast.error("Couldn't save", { description: error.message }),
+                )
                 .finally(() => setSaving(false));
             }}
           >
@@ -180,7 +209,8 @@ function UsersTab() {
           <div className="mb-4">
             <h2 className="text-base font-semibold">Pending approval</h2>
             <p className="text-sm text-muted-foreground">
-              People who've signed in but haven't been approved yet. They can see a waiting screen until you approve them.
+              People who've signed in but haven't been approved yet. They can see a waiting screen
+              until you approve them.
             </p>
           </div>
           {pendingMembers.length === 0 ? (
@@ -204,13 +234,17 @@ function UsersTab() {
                     <tr key={m.id} className="hover:bg-accent/40 transition-colors">
                       <td className="px-3 py-2.5 font-medium flex items-center gap-2">
                         <Avatar className="h-7 w-7 shrink-0">
-                          <AvatarFallback className="bg-secondary text-xs">{m.initials}</AvatarFallback>
+                          <AvatarFallback className="bg-secondary text-xs">
+                            {m.initials}
+                          </AvatarFallback>
                         </Avatar>
                         {m.name}
                       </td>
                       <td className="px-3 py-2.5 text-muted-foreground">{m.email ?? "—"}</td>
                       <td className="px-3 py-2.5">{m.role}</td>
-                      <td className="px-3 py-2.5 text-muted-foreground">{m.teamId ? teamName(m.teamId) : "Unassigned"}</td>
+                      <td className="px-3 py-2.5 text-muted-foreground">
+                        {m.teamId ? teamName(m.teamId) : "Unassigned"}
+                      </td>
                       <td className="px-3 py-2.5 text-right">
                         <div className="flex items-center justify-end gap-2">
                           <Button
@@ -218,7 +252,9 @@ function UsersTab() {
                             onClick={() => {
                               void approveMember(m.id)
                                 .then(() => toast.success(`${m.name} approved`))
-                                .catch((e: Error) => toast.error("Approval failed", { description: e.message }));
+                                .catch((e: Error) =>
+                                  toast.error("Approval failed", { description: e.message }),
+                                );
                             }}
                           >
                             Approve
@@ -230,7 +266,9 @@ function UsersTab() {
                             onClick={() => {
                               void removeMember(m.id)
                                 .then(() => toast.success(`${m.name} removed`))
-                                .catch((e: Error) => toast.error("Remove failed", { description: e.message }));
+                                .catch((e: Error) =>
+                                  toast.error("Remove failed", { description: e.message }),
+                                );
                             }}
                           >
                             Reject
@@ -274,13 +312,17 @@ function UsersTab() {
                     <tr key={m.id} className="hover:bg-accent/40 transition-colors">
                       <td className="px-3 py-2.5 font-medium flex items-center gap-2">
                         <Avatar className="h-7 w-7 shrink-0">
-                          <AvatarFallback className="bg-secondary text-xs">{m.initials}</AvatarFallback>
+                          <AvatarFallback className="bg-secondary text-xs">
+                            {m.initials}
+                          </AvatarFallback>
                         </Avatar>
                         {m.name}
                       </td>
                       <td className="px-3 py-2.5 text-muted-foreground">{m.email ?? "—"}</td>
                       <td className="px-3 py-2.5">{m.role}</td>
-                      <td className="px-3 py-2.5 text-muted-foreground">{m.teamId ? teamName(m.teamId) : "Unassigned"}</td>
+                      <td className="px-3 py-2.5 text-muted-foreground">
+                        {m.teamId ? teamName(m.teamId) : "Unassigned"}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -300,6 +342,8 @@ function AdminTab() {
   const [weeklyHours, setWeeklyHours] = useState(String(settings.weeklyHours));
   const [currency, setCurrency] = useState(settings.currency);
   const [logo, setLogo] = useState<string | null>(settings.logoDataUrl);
+  const [requireDescriptions, setRequireDescriptions] = useState(settings.requireDescriptions);
+  const [allowManualEntry, setAllowManualEntry] = useState(settings.allowManualEntry);
   const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -308,6 +352,8 @@ function AdminTab() {
     setWeeklyHours(String(settings.weeklyHours));
     setCurrency(settings.currency);
     setLogo(settings.logoDataUrl);
+    setRequireDescriptions(settings.requireDescriptions);
+    setAllowManualEntry(settings.allowManualEntry);
   }, [settings]);
 
   const onPickLogo = (file: File | undefined) => {
@@ -325,7 +371,11 @@ function AdminTab() {
         <CardContent className="flex flex-col gap-6 p-6">
           <div className="grid gap-2">
             <Label htmlFor="company">Company name</Label>
-            <Input id="company" value={companyName} onChange={(e) => setCompanyName(e.target.value)} />
+            <Input
+              id="company"
+              value={companyName}
+              onChange={(e) => setCompanyName(e.target.value)}
+            />
           </div>
 
           <div className="grid gap-2">
@@ -333,7 +383,11 @@ function AdminTab() {
             <div className="flex items-center gap-4">
               <div className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-border bg-muted">
                 {logo ? (
-                  <img src={logo} alt="Workspace logo preview" className="h-full w-full object-contain" />
+                  <img
+                    src={logo}
+                    alt="Workspace logo preview"
+                    className="h-full w-full object-contain"
+                  />
                 ) : (
                   <span className="text-xs text-muted-foreground">No logo</span>
                 )}
@@ -365,10 +419,14 @@ function AdminTab() {
             <div className="grid gap-2">
               <Label htmlFor="ws-tz">Default timezone</Label>
               <Select value={timezone} onValueChange={setTimezone}>
-                <SelectTrigger id="ws-tz"><SelectValue /></SelectTrigger>
+                <SelectTrigger id="ws-tz">
+                  <SelectValue />
+                </SelectTrigger>
                 <SelectContent>
                   {timezones.map((tz) => (
-                    <SelectItem key={tz} value={tz}>{tz}</SelectItem>
+                    <SelectItem key={tz} value={tz}>
+                      {tz}
+                    </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
@@ -376,14 +434,20 @@ function AdminTab() {
             <div className="grid gap-2">
               <Label htmlFor="ws-currency">Default currency</Label>
               <Select value={currency} onValueChange={setCurrency}>
-                <SelectTrigger id="ws-currency"><SelectValue /></SelectTrigger>
+                <SelectTrigger id="ws-currency">
+                  <SelectValue />
+                </SelectTrigger>
                 <SelectContent>
                   {currencies.map((c) => (
-                    <SelectItem key={c} value={c}>{c}</SelectItem>
+                    <SelectItem key={c} value={c}>
+                      {c}
+                    </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
-              <p className="text-xs text-muted-foreground">Used for billable rates in Reports and Invoices.</p>
+              <p className="text-xs text-muted-foreground">
+                Used for billable rates in Reports and Invoices.
+              </p>
             </div>
           </div>
 
@@ -407,19 +471,37 @@ function AdminTab() {
           </div>
 
           <ul className="divide-y divide-border rounded-xl border border-border">
-            {[
-              ["Require descriptions on entries", "Entries can't be saved without a short note.", true],
-              ["Lock timesheets after approval", "Managers approve weekly; staff can't edit after.", false],
-              ["Allow manual time entry", "Staff can add time without running the timer.", true],
-            ].map(([label, hint, on]) => (
-              <li key={label as string} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 px-4 py-3">
-                <div className="min-w-0">
-                  <p className="text-sm font-medium">{label as string}</p>
-                  <p className="text-xs text-muted-foreground">{hint as string}</p>
-                </div>
-                <Switch defaultChecked={on as boolean} />
-              </li>
-            ))}
+            <li className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 px-4 py-3">
+              <div className="min-w-0">
+                <p className="text-sm font-medium">Require descriptions on entries</p>
+                <p className="text-xs text-muted-foreground">
+                  Entries can't be saved without a short note.
+                </p>
+              </div>
+              <Switch checked={requireDescriptions} onCheckedChange={setRequireDescriptions} />
+            </li>
+            <li className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 px-4 py-3">
+              <div className="min-w-0">
+                <p className="text-sm font-medium">Allow manual time entry</p>
+                <p className="text-xs text-muted-foreground">
+                  Staff can add time without running the timer. Turn off to require the live timer
+                  only.
+                </p>
+              </div>
+              <Switch checked={allowManualEntry} onCheckedChange={setAllowManualEntry} />
+            </li>
+            <li className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 px-4 py-3">
+              <div className="min-w-0">
+                <p className="text-sm font-medium">Lock timesheets after approval</p>
+                <p className="text-xs text-muted-foreground">
+                  Always on — once a manager approves a week, staff can't edit it. Admins can still
+                  override if something needs correcting.
+                </p>
+              </div>
+              <span className="shrink-0 rounded-full bg-secondary px-2.5 py-1 text-xs font-medium text-secondary-foreground">
+                Automatic
+              </span>
+            </li>
           </ul>
 
           <div>
@@ -431,6 +513,8 @@ function AdminTab() {
                   weeklyHours: Number(weeklyHours) || settings.weeklyHours,
                   currency,
                   logoDataUrl: logo,
+                  requireDescriptions,
+                  allowManualEntry,
                 })
                   .then(() =>
                     toast.success("Workspace settings saved", {
