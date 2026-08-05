@@ -188,6 +188,9 @@ type WorkspaceContextValue = {
   teams: Team[];
   projects: WorkspaceProject[];
   tags: WorkspaceTag[];
+  createTag: (name: string, color: string) => Promise<void>;
+  updateTag: (id: string, name: string, color: string) => Promise<void>;
+  deleteTag: (id: string) => Promise<void>;
   taskCategories: WorkspaceTaskCategory[];
   createTaskCategory: (name: string) => Promise<void>;
   updateTaskCategory: (id: string, name: string) => Promise<void>;
@@ -894,6 +897,25 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         const { error } = await supabase.from("clients").delete().eq("id", id);
         throwIf(error);
         invalidate("clients", "projects");
+      },
+
+      createTag: async (name, color) => {
+        const { error } = await supabase.from("tags").insert({ name: name.trim(), color });
+        throwIf(error);
+        invalidate("tags");
+      },
+      updateTag: async (id, name, color) => {
+        const { error } = await supabase
+          .from("tags")
+          .update({ name: name.trim(), color })
+          .eq("id", id);
+        throwIf(error);
+        invalidate("tags");
+      },
+      deleteTag: async (id) => {
+        const { error } = await supabase.from("tags").delete().eq("id", id);
+        throwIf(error);
+        invalidate("tags", "projects", "tag_usage");
       },
 
       createProject: async (input) => {
