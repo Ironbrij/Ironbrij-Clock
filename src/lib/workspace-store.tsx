@@ -10,7 +10,16 @@ import {
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { Session } from "@supabase/supabase-js";
 import { supabase } from "@/integrations/supabase/client";
-import { dayIndexOf, fromDateKey, startOfWeek, toDateKey } from "@/lib/time-utils";
+import type { Database } from "@/integrations/supabase/types";
+import {
+  combineDateAndTime,
+  dayIndexOf,
+  fromDateKey,
+  startOfWeek,
+  toDateKey,
+} from "@/lib/time-utils";
+
+type TimeEntryUpdate = Database["public"]["Tables"]["time_entries"]["Update"];
 
 export type Role = "Admin" | "Manager" | "Member";
 type DbRole = "admin" | "manager" | "member";
@@ -224,7 +233,26 @@ type WorkspaceContextValue = {
 
   startTimer: (input: { projectId: string; task: string; description: string }) => Promise<void>;
   stopTimer: (entryId: string) => Promise<void>;
-  updateEntry: (entryId: string, patch: { description?: string }) => Promise<void>;
+  createEntry: (input: {
+    projectId: string;
+    task: string;
+    description: string;
+    date: string;
+    startTime: string;
+    endTime: string;
+  }) => Promise<void>;
+  updateEntry: (
+    entryId: string,
+    patch: {
+      projectId?: string;
+      task?: string;
+      description?: string;
+      date?: string;
+      startTime?: string;
+      endTime?: string;
+    },
+  ) => Promise<void>;
+  deleteEntry: (entryId: string) => Promise<void>;
   refreshAll: () => void;
 };
 
@@ -847,9 +875,67 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         invalidate("time_entries", "project_hours", "tag_usage");
       },
       updateEntry: async (entryId, patch) => {
-        const { error } = await supabase.from("time_entries").update(patch).eq("id", entryId);
+        const dbPatch: TimeEntryUpdate = {};
+        if (patch.projectId !== undefined) dbPatch.project_id = patch.projectId;
+        if (patch.task !== undefined) dbPatch.task = patch.task;
+        if (patch.description !== undefined) dbPatch.description = patch.description;
+
+        if (
+          patch.date !== undefined ||
+          patch.startTime !== undefined ||
+          patch.endTime !== undefined
+        ) {
+          const existing = entries.find((e) => e.id === entryId);
+          if (!existing) throw new Error("Entry not found.");
+          const date = patch.date ?? existing.date;
+          const existingStart = new Date(existing.startTime);
+          const existingEnd = existing.endTime ? new Date(existing.endTime) : existingStart;
+          const pad = (n: number) => String(n).padStart(2, "0");
+          const startTime =
+            patch.startTime ??
+            `${pad(existingStart.getHours())}:${pad(existingStart.getMinutes())}`;
+          const endTime =
+            patch.endTime ?? `${pad(existingEnd.getHours())}:${pad(existingEnd.getMinutes())}`;
+          const start = combineDateAndTime(date, startTime);
+          const end = combineDateAndTime(date, endTime);
+          const minutes = Math.round((end.getTime() - start.getTime()) / 60000);
+          if (minutes <= 0) throw new Error("End time must be after start time.");
+          dbPatch.entry_date = date;
+          dbPatch.start_time = start.toISOString();
+          dbPatch.end_time = end.toISOString();
+          dbPatch.duration_minutes = minutes;
+        }
+
+        const { error } = await supabase.from("time_entries").update(dbPatch).eq("id", entryId);
         throwIf(error);
-        invalidate("time_entries");
+        invalidate("time_entries", "project_hours", "tag_usage");
+      },
+      createEntry: async (input) => {
+        if (!uid) return;
+        const project = projects.find((p) => p.id === input.projectId);
+        const start = combineDateAndTime(input.date, input.startTime);
+        const end = combineDateAndTime(input.date, input.endTime);
+        const minutes = Math.round((end.getTime() - start.getTime()) / 60000);
+        if (minutes <= 0) throw new Error("End time must be after start time.");
+        const { error } = await supabase.from("time_entries").insert({
+          user_id: uid,
+          project_id: input.projectId,
+          task: input.task,
+          description: input.description,
+          start_time: start.toISOString(),
+          end_time: end.toISOString(),
+          entry_date: input.date,
+          duration_minutes: minutes,
+          is_billable: project?.billable ?? true,
+          tag_ids: project?.tagIds ?? [],
+        });
+        throwIf(error);
+        invalidate("time_entries", "project_hours", "tag_usage");
+      },
+      deleteEntry: async (entryId) => {
+        const { error } = await supabase.from("time_entries").delete().eq("id", entryId);
+        throwIf(error);
+        invalidate("time_entries", "project_hours", "tag_usage");
       },
 
       submitTimesheet: async (weekStart) => {
