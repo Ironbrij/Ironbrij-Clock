@@ -467,6 +467,14 @@ export type Database = {
           user_id: string
         }[]
       }
+      employee_client_hours_range: {
+        Args: { _from: string; _to: string }
+        Returns: {
+          client_id: string | null
+          minutes: number
+          user_id: string
+        }[]
+      }
       has_role: {
         Args: {
           _role: Database["public"]["Enums"]["app_role"]
