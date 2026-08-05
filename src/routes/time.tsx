@@ -768,7 +768,7 @@ function CalendarView() {
         </Tabs>
       </div>
 
-      <Card className="shadow-card">
+      <Card className="min-w-0 shadow-card">
         <CardContent className="overflow-x-auto p-4">
           <div className="min-w-[720px]">
             <div className="grid grid-cols-7 gap-2 pb-2 text-xs uppercase tracking-wide text-muted-foreground">
