@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
-import { ChevronRight, MoreHorizontal, Pencil, Plus, UserPlus } from "lucide-react";
+import { ChevronRight, MoreHorizontal, Pencil, Plus, UserMinus, UserPlus } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell } from "@/components/app-shell";
 import { ColorDotPicker } from "@/components/color-dot-picker";
@@ -31,13 +31,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
   DropdownMenuSeparator,
-  DropdownMenuSub,
-  DropdownMenuSubContent,
-  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
@@ -90,10 +84,6 @@ function TeamsPage() {
     isAdmin,
     canManage,
     invitePeople,
-    resendInvite,
-    updateMemberRole,
-    approveMember,
-    moveMember,
     removeMember,
     createTeam,
     updateTeam,
@@ -256,22 +246,6 @@ function TeamsPage() {
                               Pending
                             </Badge>
                           )}
-                          {m.pending && isAdmin && (
-                            <Button
-                              size="sm"
-                              variant="secondary"
-                              className="h-6 px-2 text-[11px]"
-                              onClick={() =>
-                                run(approveMember(m.id), () =>
-                                  toast.success(`${m.name} approved`, {
-                                    description: "They now have full dashboard access.",
-                                  }),
-                                )
-                              }
-                            >
-                              Approve
-                            </Button>
-                          )}
                         </p>
                         <p className="truncate text-xs text-muted-foreground">
                           {m.email ?? m.title}
@@ -280,84 +254,20 @@ function TeamsPage() {
                     </div>
                     <div className="flex shrink-0 items-center gap-1.5">
                       <Badge variant={m.role === "Admin" ? "default" : "secondary"}>{m.role}</Badge>
-                      {isAdmin && (
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-8 w-8"
-                              aria-label={`Manage ${m.name}`}
-                            >
-                              <MoreHorizontal className="h-4 w-4" />
-                            </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end" className="w-52">
-                            <DropdownMenuLabel>Edit role</DropdownMenuLabel>
-                            <DropdownMenuRadioGroup
-                              value={m.role}
-                              onValueChange={(v) => {
-                                run(updateMemberRole(m.id, v as Role), () =>
-                                  toast.success(
-                                    `${m.name} is now ${v === "Admin" ? "an" : "a"} ${v}`,
-                                  ),
-                                );
-                              }}
-                            >
-                              {roles.map((r) => (
-                                <DropdownMenuRadioItem key={r} value={r}>
-                                  {r}
-                                </DropdownMenuRadioItem>
-                              ))}
-                            </DropdownMenuRadioGroup>
-                            <DropdownMenuSeparator />
-                            <DropdownMenuSub>
-                              <DropdownMenuSubTrigger>Move to another team</DropdownMenuSubTrigger>
-                              <DropdownMenuSubContent className="max-h-64 overflow-y-auto">
-                                {teams
-                                  .filter((t) => t.id !== m.teamId)
-                                  .map((t) => (
-                                    <DropdownMenuItem
-                                      key={t.id}
-                                      onSelect={() => {
-                                        run(moveMember(m.id, t.id), () =>
-                                          toast.success(`${m.name} moved to ${t.name}`),
-                                        );
-                                      }}
-                                    >
-                                      <span
-                                        className="h-2.5 w-2.5 rounded-full"
-                                        style={{ backgroundColor: t.color }}
-                                      />
-                                      {t.name}
-                                    </DropdownMenuItem>
-                                  ))}
-                              </DropdownMenuSubContent>
-                            </DropdownMenuSub>
-                            <DropdownMenuSeparator />
-                            {m.pending && m.email && (
-                              <DropdownMenuItem
-                                onSelect={() => {
-                                  run(resendInvite(m.email!), () =>
-                                    toast.success(`Invite resent to ${m.email}`),
-                                  );
-                                }}
-                              >
-                                Resend invite
-                              </DropdownMenuItem>
-                            )}
-                            <DropdownMenuItem
-                              className="text-destructive focus:text-destructive"
-                              onSelect={() => {
-                                run(removeMember(m.id), () =>
-                                  toast.success(`${m.name} removed from ${team?.name ?? "team"}`),
-                                );
-                              }}
-                            >
-                              Remove from team
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
+                      {canManage && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8"
+                          aria-label={`Remove ${m.name} from ${team?.name ?? "this team"}`}
+                          onClick={() => {
+                            run(removeMember(m.id), () =>
+                              toast.success(`${m.name} removed from ${team?.name ?? "team"}`),
+                            );
+                          }}
+                        >
+                          <UserMinus className="h-4 w-4 text-muted-foreground" />
+                        </Button>
                       )}
                     </div>
                   </li>
