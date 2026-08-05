@@ -93,6 +93,7 @@ function Reports() {
   const [view, setView] = useState<"project" | "employee">("project");
   const [preset, setPreset] = useState<RangePreset>("this_month");
   const [teamFilter, setTeamFilter] = useState("all");
+  const [clientFilter, setClientFilter] = useState("all");
 
   const [projSortKey, setProjSortKey] = useState<ProjectSortKey>("hours");
   const [projAsc, setProjAsc] = useState(false);
@@ -102,16 +103,21 @@ function Reports() {
   const [empSortKey, setEmpSortKey] = useState<EmployeeSortKey>("hours");
   const [empAsc, setEmpAsc] = useState(false);
   const [employeeMinutes, setEmployeeMinutes] = useState<Record<string, number> | null>(null);
+  const [employeeClientMinutes, setEmployeeClientMinutes] = useState<Record<string, number> | null>(
+    null,
+  );
   const [loadingEmployee, setLoadingEmployee] = useState(true);
 
   const {
     projects,
     teams,
+    clients,
     members,
     settings,
     canManage,
     projectHoursForRange,
     employeeHoursForRange,
+    employeeClientHoursForRange,
   } = useWorkspace();
 
   const { from, to } = useMemo(() => computeRange(preset), [preset]);
@@ -147,14 +153,19 @@ function Reports() {
     }
     let cancelled = false;
     setLoadingEmployee(true);
-    employeeHoursForRange(from, to)
-      .then((data) => {
+    Promise.all([employeeHoursForRange(from, to), employeeClientHoursForRange(from, to)])
+      .then(([totals, byClient]) => {
         if (cancelled) return;
         const map: Record<string, number> = {};
-        data.forEach((r) => {
+        totals.forEach((r) => {
           map[r.userId] = r.minutes;
         });
         setEmployeeMinutes(map);
+        const clientMap: Record<string, number> = {};
+        byClient.forEach((r) => {
+          clientMap[`${r.userId}::${r.clientId ?? "none"}`] = r.minutes;
+        });
+        setEmployeeClientMinutes(clientMap);
       })
       .catch((error: Error) => toast.error("Couldn't load report", { description: error.message }))
       .finally(() => {
@@ -163,15 +174,20 @@ function Reports() {
     return () => {
       cancelled = true;
     };
-  }, [from, to, canManage, employeeHoursForRange]);
+  }, [from, to, canManage, employeeHoursForRange, employeeClientHoursForRange]);
 
-  const projectRows = (
-    teamFilter === "all" ? projects : projects.filter((p) => p.teamId === teamFilter)
-  ).map((p) => ({
-    ...p,
-    hours: (projectMinutes?.[p.id] ?? 0) / 60,
-    team: teams.find((t) => t.id === p.teamId)?.name ?? "",
-  }));
+  const projectRows = projects
+    .filter((p) => teamFilter === "all" || p.teamId === teamFilter)
+    .filter((p) => {
+      if (clientFilter === "all") return true;
+      if (clientFilter === "none") return p.clientId === null;
+      return p.clientId === clientFilter;
+    })
+    .map((p) => ({
+      ...p,
+      hours: (projectMinutes?.[p.id] ?? 0) / 60,
+      team: teams.find((t) => t.id === p.teamId)?.name ?? "",
+    }));
 
   const sortedProjects = [...projectRows].sort((a, b) => {
     const dir = projAsc ? 1 : -1;
@@ -194,14 +210,21 @@ function Reports() {
     .filter((m) => !m.pending)
     .filter((m) => teamFilter === "all" || m.teamIds.includes(teamFilter))
     .map((m) => {
-      const hours = (employeeMinutes?.[m.id] ?? 0) / 60;
+      const totalHours = (employeeMinutes?.[m.id] ?? 0) / 60;
+      const hours =
+        clientFilter === "all"
+          ? totalHours
+          : (employeeClientMinutes?.[`${m.id}::${clientFilter}`] ?? 0) / 60;
       const memberTeams = m.teamIds
         .map((id) => teams.find((t) => t.id === id))
         .filter((t): t is (typeof teams)[number] => !!t);
       return {
         ...m,
         hours,
-        overtime: Math.max(0, hours - expectedHours),
+        // Overtime always reflects real total workload, even when a client
+        // filter narrows which hours are shown — "overtime for one client"
+        // isn't a meaningful figure on its own.
+        overtime: Math.max(0, totalHours - expectedHours),
         team: memberTeams.length ? memberTeams.map((t) => t.name).join(", ") : "",
         teamColor: memberTeams[0]?.color ?? "var(--muted-foreground)",
       };
@@ -237,13 +260,19 @@ function Reports() {
   };
 
   const exportCsv = () => {
+    const clientLabel =
+      clientFilter === "all"
+        ? "all-clients"
+        : clientFilter === "none"
+          ? "no-client"
+          : (clients.find((c) => c.id === clientFilter)?.name.replace(/\s+/g, "-") ?? "client");
     if (view === "project") {
-      downloadCsv(`ironbrij-hours-by-project_${from}_to_${to}.csv`, [
+      downloadCsv(`ironbrij-hours-by-project_${clientLabel}_${from}_to_${to}.csv`, [
         ["Project", "Team", "Hours", "Date range"],
         ...sortedProjects.map((r) => [r.name, r.team, r.hours.toFixed(2), `${from} to ${to}`]),
       ]);
     } else {
-      downloadCsv(`ironbrij-hours-by-employee_${from}_to_${to}.csv`, [
+      downloadCsv(`ironbrij-hours-by-employee_${clientLabel}_${from}_to_${to}.csv`, [
         ["Employee", "Team", "Hours", "Overtime", "Date range"],
         ...sortedEmployees.map((r) => [
           r.name,
@@ -289,6 +318,20 @@ function Reports() {
             {teams.map((t) => (
               <SelectItem key={t.id} value={t.id}>
                 {t.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Select value={clientFilter} onValueChange={setClientFilter}>
+          <SelectTrigger className="w-48">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All clients</SelectItem>
+            <SelectItem value="none">No client</SelectItem>
+            {clients.map((c) => (
+              <SelectItem key={c.id} value={c.id}>
+                {c.name}
               </SelectItem>
             ))}
           </SelectContent>
@@ -407,7 +450,15 @@ function Reports() {
             <CardHeader>
               <CardTitle className="text-base">
                 Hours by employee · {presetLabels[preset]}
+                {clientFilter !== "all" &&
+                  ` · ${clientFilter === "none" ? "No client" : (clients.find((c) => c.id === clientFilter)?.name ?? "")}`}
               </CardTitle>
+              {clientFilter !== "all" && (
+                <p className="text-xs text-muted-foreground">
+                  Hours shown are just for this client. Overtime still reflects each person's full
+                  workload across everything, not only this slice.
+                </p>
+              )}
             </CardHeader>
             <CardContent className="h-72 pl-0">
               <ResponsiveContainer width="100%" height="100%">
