@@ -124,6 +124,40 @@ function RootShell({ children }: { children: ReactNode }) {
 function RootComponent() {
   const { queryClient } = Route.useRouteContext();
 
+  // A new deploy can ship while someone still has this tab open — each JS
+  // chunk is built with a content hash in its filename, so once a newer
+  // build replaces the old files, any lazy-loaded chunk this tab still
+  // references (like admin.functions.ts, which several admin actions load
+  // on demand) simply no longer exists on the server. Rather than leaving
+  // that as a dead-end error, reload once to pick up the current build.
+  // The timestamp guard stops this from looping if reloading genuinely
+  // doesn't help.
+  useEffect(() => {
+    const isChunkLoadError = (message: unknown) =>
+      typeof message === "string" &&
+      (message.includes("Failed to fetch dynamically imported module") ||
+        message.includes("error loading dynamically imported module") ||
+        message.includes("Importing a module script failed"));
+
+    const handlePossibleChunkError = (event: PromiseRejectionEvent | ErrorEvent) => {
+      const message =
+        "reason" in event ? (event.reason?.message ?? String(event.reason)) : event.message;
+      if (!isChunkLoadError(message)) return;
+      const key = "ironbrij-chunk-reload-at";
+      const last = Number(sessionStorage.getItem(key) ?? 0);
+      if (Date.now() - last < 10_000) return;
+      sessionStorage.setItem(key, String(Date.now()));
+      window.location.reload();
+    };
+
+    window.addEventListener("unhandledrejection", handlePossibleChunkError);
+    window.addEventListener("error", handlePossibleChunkError);
+    return () => {
+      window.removeEventListener("unhandledrejection", handlePossibleChunkError);
+      window.removeEventListener("error", handlePossibleChunkError);
+    };
+  }, []);
+
   return (
     <QueryClientProvider client={queryClient}>
       <WorkspaceProvider>
