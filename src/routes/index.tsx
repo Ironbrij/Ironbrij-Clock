@@ -11,9 +11,16 @@ export const Route = createFileRoute("/")({
   head: () => ({
     meta: [
       { title: "Dashboard — Ironbrij Time" },
-      { name: "description", content: "Your Ironbrij overview: hours tracked today and this week, daily breakdown and top projects." },
+      {
+        name: "description",
+        content:
+          "Your Ironbrij overview: hours tracked today and this week, daily breakdown and top projects.",
+      },
       { property: "og:title", content: "Dashboard — Ironbrij Time" },
-      { property: "og:description", content: "Hours tracked today and this week across Ironbrij projects." },
+      {
+        property: "og:description",
+        content: "Hours tracked today and this week across Ironbrij projects.",
+      },
     ],
   }),
   component: Dashboard,
@@ -27,11 +34,11 @@ function greeting() {
 }
 
 function Dashboard() {
-  const { settings, currentUser, entries, projects, isAdmin, members } = useWorkspace();
+  const { settings, currentUser, entries, projects, isAdmin, activeMembers } = useWorkspace();
   const weekStart = useThisWeekStart();
   const dailyGoal = settings.weeklyHours / 5;
 
-  const pendingCount = isAdmin ? members.filter((m) => m.pending).length : 0;
+  const pendingCount = isAdmin ? activeMembers.filter((m) => m.pending).length : 0;
 
   const todayKey = toDateKey(new Date());
   const todayEntries = entries.filter((e) => e.date === todayKey);
@@ -101,9 +108,17 @@ function Dashboard() {
           value={formatMinutes(todayMinutes)}
           hint={`Goal ${formatHours(dailyGoal)} · ${todayEntries.length} entries`}
         />
-        <StatCard label="This week" value={formatHours(weekTotal)} hint={`Across ${activeProjects} projects`} />
+        <StatCard
+          label="This week"
+          value={formatHours(weekTotal)}
+          hint={`Across ${activeProjects} projects`}
+        />
         <StatCard label="Daily average" value={formatHours(weekTotal / 5)} hint="Mon – Fri" />
-        <StatCard label="Billable share" value={`${billableShare}%`} hint="Of hours logged this week" />
+        <StatCard
+          label="Billable share"
+          value={`${billableShare}%`}
+          hint="Of hours logged this week"
+        />
       </div>
 
       <div className="mt-6 grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
@@ -118,7 +133,9 @@ function Dashboard() {
                   <div className="flex h-full w-full items-end">
                     <div
                       className="w-full rounded-t-md bg-primary/85"
-                      style={{ height: `${maxDay ? Math.max((t / maxDay) * 100, t > 0 ? 4 : 0) : 0}%` }}
+                      style={{
+                        height: `${maxDay ? Math.max((t / maxDay) * 100, t > 0 ? 4 : 0) : 0}%`,
+                      }}
                     />
                   </div>
                   <span className="pt-2 text-xs text-muted-foreground">{weekdayNames[i]}</span>
