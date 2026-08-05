@@ -219,7 +219,10 @@ function UsersTab() {
     moveMember,
   } = useWorkspace();
   const [busyId, setBusyId] = useState<string | null>(null);
-  const [removeTarget, setRemoveTarget] = useState<{ id: string; name: string } | null>(null);
+  const [removeTarget, setRemoveTarget] = useState<{ id: string; name: string; role: Role } | null>(
+    null,
+  );
+  const [confirmText, setConfirmText] = useState("");
   const [removing, setRemoving] = useState(false);
 
   const pendingMembers = activeMembers.filter((m) => m.pending);
@@ -253,6 +256,7 @@ function UsersTab() {
           "They can no longer sign in. Their past time entries and timesheets are unchanged.",
       });
       setRemoveTarget(null);
+      setConfirmText("");
     } catch (error) {
       toast.error("Couldn't remove that person", { description: (error as Error).message });
     } finally {
@@ -435,7 +439,9 @@ function UsersTab() {
                             size="icon"
                             variant="ghost"
                             aria-label={`Remove ${m.name}`}
-                            onClick={() => setRemoveTarget({ id: m.id, name: m.name })}
+                            onClick={() =>
+                              setRemoveTarget({ id: m.id, name: m.name, role: m.role })
+                            }
                           >
                             <Trash2 className="h-4 w-4 text-destructive" />
                           </Button>
@@ -450,7 +456,15 @@ function UsersTab() {
         </CardContent>
       </Card>
 
-      <AlertDialog open={!!removeTarget} onOpenChange={(open) => !open && setRemoveTarget(null)}>
+      <AlertDialog
+        open={!!removeTarget}
+        onOpenChange={(open) => {
+          if (!open) {
+            setRemoveTarget(null);
+            setConfirmText("");
+          }
+        }}
+      >
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Remove {removeTarget?.name}?</AlertDialogTitle>
@@ -460,9 +474,33 @@ function UsersTab() {
               reports stay exactly as they are; nothing historical is deleted.
             </AlertDialogDescription>
           </AlertDialogHeader>
+          {removeTarget?.role === "Admin" && (
+            <div className="grid gap-2">
+              <Label
+                htmlFor="confirm-remove-admin"
+                className="text-sm font-medium text-destructive"
+              >
+                {removeTarget.name} is an admin. Type their name to confirm.
+              </Label>
+              <Input
+                id="confirm-remove-admin"
+                autoFocus
+                value={confirmText}
+                onChange={(e) => setConfirmText(e.target.value)}
+                placeholder={removeTarget.name}
+              />
+            </div>
+          )}
           <AlertDialogFooter>
             <AlertDialogCancel disabled={removing}>Keep them</AlertDialogCancel>
-            <AlertDialogAction disabled={removing} onClick={() => void confirmRemove()}>
+            <AlertDialogAction
+              disabled={
+                removing ||
+                (removeTarget?.role === "Admin" &&
+                  confirmText.trim().toLowerCase() !== removeTarget.name.trim().toLowerCase())
+              }
+              onClick={() => void confirmRemove()}
+            >
               Remove access
             </AlertDialogAction>
           </AlertDialogFooter>
