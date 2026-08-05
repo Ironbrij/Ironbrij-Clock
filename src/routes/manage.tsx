@@ -94,7 +94,7 @@ function ManagePage() {
   return (
     <AppShell title="Manage" subtitle="Workspace operations, gathered in one hub.">
       <Tabs value={tab} onValueChange={setTab}>
-        <TabsList className="flex-wrap">
+        <TabsList className="h-auto flex-wrap justify-start gap-1">
           {sections.map((s) => (
             <TabsTrigger key={s.id} value={s.id}>
               {s.label}
