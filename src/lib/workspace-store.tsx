@@ -208,6 +208,11 @@ type WorkspaceContextValue = {
   teamMemberCount: (teamId: string) => number;
   memberById: (id: string) => WorkspaceMember | undefined;
   projectById: (id: string | null) => WorkspaceProject | undefined;
+  /** Hours by project for an arbitrary date range, for the Reports page — not part of the eagerly-loaded state. */
+  projectHoursForRange: (
+    from: string,
+    to: string,
+  ) => Promise<{ projectId: string; minutes: number }[]>;
 
   invitePeople: (input: { emails: string[]; teamId: string; role: Role }) => Promise<number>;
   resendInvite: (email: string) => Promise<void>;
@@ -714,6 +719,11 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       teamMemberCount: (teamId) => membersByTeam(teamId).length,
       memberById: (id) => members.find((m) => m.id === id),
       projectById: (id) => (id ? projects.find((p) => p.id === id) : undefined),
+      projectHoursForRange: async (from, to) => {
+        const { data, error } = await supabase.rpc("project_hours_range", { _from: from, _to: to });
+        throwIf(error);
+        return (data ?? []).map((r) => ({ projectId: r.project_id, minutes: r.minutes }));
+      },
 
       invitePeople: async ({ emails, teamId, role }) => {
         const { inviteMembers } = await import("@/lib/admin.functions");
