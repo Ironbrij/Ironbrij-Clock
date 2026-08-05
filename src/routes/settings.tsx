@@ -1,6 +1,16 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { Pencil, Trash2 } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -198,12 +208,22 @@ function ProfileTab() {
   );
 }
 function UsersTab() {
-  const { members, teams, approveMember, removeMember, updateMemberRole, moveMember } =
-    useWorkspace();
+  const {
+    activeMembers,
+    teams,
+    currentUser,
+    approveMember,
+    removeMember,
+    removeUser,
+    updateMemberRole,
+    moveMember,
+  } = useWorkspace();
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [removeTarget, setRemoveTarget] = useState<{ id: string; name: string } | null>(null);
+  const [removing, setRemoving] = useState(false);
 
-  const pendingMembers = members.filter((m) => m.pending);
-  const approvedMembers = members.filter((m) => !m.pending);
+  const pendingMembers = activeMembers.filter((m) => m.pending);
+  const approvedMembers = activeMembers.filter((m) => !m.pending);
 
   const teamName = (teamId: string) => teams.find((t) => t.id === teamId)?.name ?? "No team";
 
@@ -221,6 +241,23 @@ function UsersTab() {
       .then(() => toast.success(`${m.name} moved to ${teamName(teamId)}`))
       .catch((e: Error) => toast.error("Couldn't move member", { description: e.message }))
       .finally(() => setBusyId(null));
+  };
+
+  const confirmRemove = async () => {
+    if (!removeTarget) return;
+    setRemoving(true);
+    try {
+      await removeUser(removeTarget.id);
+      toast.success(`${removeTarget.name} removed`, {
+        description:
+          "They can no longer sign in. Their past time entries and timesheets are unchanged.",
+      });
+      setRemoveTarget(null);
+    } catch (error) {
+      toast.error("Couldn't remove that person", { description: (error as Error).message });
+    } finally {
+      setRemoving(false);
+    }
   };
 
   const RoleCell = ({ m }: { m: { id: string; name: string; role: Role } }) => (
@@ -371,6 +408,7 @@ function UsersTab() {
                     <th className="px-3 py-2">Email</th>
                     <th className="px-3 py-2">Role</th>
                     <th className="px-3 py-2">Team</th>
+                    <th className="px-3 py-2 text-right">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y">
@@ -391,6 +429,18 @@ function UsersTab() {
                       <td className="px-3 py-2.5">
                         <TeamCell m={m} />
                       </td>
+                      <td className="px-3 py-2.5 text-right">
+                        {m.id !== currentUser.id && (
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            aria-label={`Remove ${m.name}`}
+                            onClick={() => setRemoveTarget({ id: m.id, name: m.name })}
+                          >
+                            <Trash2 className="h-4 w-4 text-destructive" />
+                          </Button>
+                        )}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -399,6 +449,25 @@ function UsersTab() {
           )}
         </CardContent>
       </Card>
+
+      <AlertDialog open={!!removeTarget} onOpenChange={(open) => !open && setRemoveTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove {removeTarget?.name}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              They'll immediately lose the ability to sign in — this can't be undone from here;
+              they'd need a fresh invite to come back. Their past time entries, timesheets, and
+              reports stay exactly as they are; nothing historical is deleted.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={removing}>Keep them</AlertDialogCancel>
+            <AlertDialogAction disabled={removing} onClick={() => void confirmRemove()}>
+              Remove access
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
