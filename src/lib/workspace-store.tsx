@@ -213,6 +213,11 @@ type WorkspaceContextValue = {
     from: string,
     to: string,
   ) => Promise<{ projectId: string; minutes: number }[]>;
+  /** Hours by employee for an arbitrary date range — scoped server-side to self/admin/manager's-team, unlike the project version. */
+  employeeHoursForRange: (
+    from: string,
+    to: string,
+  ) => Promise<{ userId: string; minutes: number }[]>;
 
   invitePeople: (input: { emails: string[]; teamId: string; role: Role }) => Promise<number>;
   resendInvite: (email: string) => Promise<void>;
@@ -723,6 +728,14 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         const { data, error } = await supabase.rpc("project_hours_range", { _from: from, _to: to });
         throwIf(error);
         return (data ?? []).map((r) => ({ projectId: r.project_id, minutes: r.minutes }));
+      },
+      employeeHoursForRange: async (from, to) => {
+        const { data, error } = await supabase.rpc("employee_hours_range", {
+          _from: from,
+          _to: to,
+        });
+        throwIf(error);
+        return (data ?? []).map((r) => ({ userId: r.user_id, minutes: r.minutes }));
       },
 
       invitePeople: async ({ emails, teamId, role }) => {
