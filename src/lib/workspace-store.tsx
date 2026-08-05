@@ -81,6 +81,8 @@ export type WorkspaceSettings = {
   timezone: string;
   weeklyHours: number;
   currency: string;
+  requireDescriptions: boolean;
+  allowManualEntry: boolean;
 };
 
 export type WorkspaceEntry = {
@@ -420,7 +422,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("workspace_settings")
-        .select("company_name, logo_url, timezone, weekly_hours, currency")
+        .select(
+          "company_name, logo_url, timezone, weekly_hours, currency, require_descriptions, allow_manual_entry",
+        )
         .maybeSingle();
       if (error) throw error;
       return data;
@@ -577,6 +581,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       timezone: s?.timezone ?? "Australia/Sydney",
       weeklyHours: Number(s?.weekly_hours ?? 37.5),
       currency: s?.currency ?? "AUD",
+      requireDescriptions: s?.require_descriptions ?? false,
+      allowManualEntry: s?.allow_manual_entry ?? true,
     };
   }, [settingsQ.data]);
 
@@ -854,6 +860,10 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         if (patch.timezone !== undefined) row["timezone"] = patch.timezone;
         if (patch.weeklyHours !== undefined) row["weekly_hours"] = patch.weeklyHours;
         if (patch.currency !== undefined) row["currency"] = patch.currency;
+        if (patch.requireDescriptions !== undefined)
+          row["require_descriptions"] = patch.requireDescriptions;
+        if (patch.allowManualEntry !== undefined)
+          row["allow_manual_entry"] = patch.allowManualEntry;
         const { error } = await supabase.from("workspace_settings").upsert(row as never);
         throwIf(error);
         invalidate("workspace_settings");
