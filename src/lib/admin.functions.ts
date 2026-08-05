@@ -27,15 +27,16 @@ export const inviteMembers = createServerFn({ method: "POST" })
     const emails = data.emails.map((e) => e.trim().toLowerCase());
 
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-    const failures: string[] = [];
+    const failures: { email: string; reason: string }[] = [];
     let invited = 0;
 
     for (const email of emails) {
       const { data: created, error } = await supabaseAdmin.auth.admin.inviteUserByEmail(email, {
         redirectTo: data.redirectTo,
+        data: { invited_by_admin: true },
       });
       if (error || !created?.user) {
-        failures.push(email);
+        failures.push({ email, reason: error?.message ?? "Unknown error" });
         continue;
       }
       const userId = created.user.id;
@@ -55,9 +56,11 @@ export const inviteMembers = createServerFn({ method: "POST" })
       invited += 1;
     }
 
-    if (invited === 0)
-      throw new Error("No invites could be sent — those addresses may already exist.");
-    return { invited, failures };
+    if (invited === 0) {
+      const reasons = failures.map((f) => `${f.email}: ${f.reason}`).join("; ");
+      throw new Error(`No invites could be sent — ${reasons}`);
+    }
+    return { invited, failures: failures.map((f) => f.email) };
   });
 
 const resendSchema = z.object({
