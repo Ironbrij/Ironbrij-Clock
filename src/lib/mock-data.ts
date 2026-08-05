@@ -3,15 +3,6 @@
 
 export type Role = "Admin" | "Manager" | "Member";
 
-export const tasks = [
-  "Development",
-  "Design",
-  "Client call",
-  "Research",
-  "QA & testing",
-  "Admin",
-];
-
 export const weekdays = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
 export type TimeOffBalance = { id: string; label: string; used: number; total: number };
@@ -32,11 +23,46 @@ export type TimeOffRequest = {
 };
 
 export const timeOffHistory: TimeOffRequest[] = [
-  { id: "r1", type: "Vacation", range: "4 – 8 August 2026", days: 5, status: "Pending", note: "Family trip up the coast" },
-  { id: "r2", type: "Sick leave", range: "12 June 2026", days: 1, status: "Approved", note: "Migraine" },
-  { id: "r3", type: "Personal", range: "22 May 2026", days: 1, status: "Approved", note: "House move" },
-  { id: "r4", type: "Vacation", range: "7 – 11 April 2026", days: 5, status: "Approved", note: "Easter break" },
-  { id: "r5", type: "Vacation", range: "3 March 2026", days: 1, status: "Declined", note: "Clashed with client launch" },
+  {
+    id: "r1",
+    type: "Vacation",
+    range: "4 – 8 August 2026",
+    days: 5,
+    status: "Pending",
+    note: "Family trip up the coast",
+  },
+  {
+    id: "r2",
+    type: "Sick leave",
+    range: "12 June 2026",
+    days: 1,
+    status: "Approved",
+    note: "Migraine",
+  },
+  {
+    id: "r3",
+    type: "Personal",
+    range: "22 May 2026",
+    days: 1,
+    status: "Approved",
+    note: "House move",
+  },
+  {
+    id: "r4",
+    type: "Vacation",
+    range: "7 – 11 April 2026",
+    days: 5,
+    status: "Approved",
+    note: "Easter break",
+  },
+  {
+    id: "r5",
+    type: "Vacation",
+    range: "3 March 2026",
+    days: 1,
+    status: "Declined",
+    note: "Clashed with client launch",
+  },
 ];
 
 export function formatHours(hours: number) {
