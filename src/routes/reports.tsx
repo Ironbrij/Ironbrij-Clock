@@ -195,12 +195,15 @@ function Reports() {
     .filter((m) => teamFilter === "all" || m.teamIds.includes(teamFilter))
     .map((m) => {
       const hours = (employeeMinutes?.[m.id] ?? 0) / 60;
+      const memberTeams = m.teamIds
+        .map((id) => teams.find((t) => t.id === id))
+        .filter((t): t is (typeof teams)[number] => !!t);
       return {
         ...m,
         hours,
         overtime: Math.max(0, hours - expectedHours),
-        team: teams.find((t) => t.id === m.teamId)?.name ?? "",
-        teamColor: teams.find((t) => t.id === m.teamId)?.color ?? "var(--muted-foreground)",
+        team: memberTeams.length ? memberTeams.map((t) => t.name).join(", ") : "",
+        teamColor: memberTeams[0]?.color ?? "var(--muted-foreground)",
       };
     });
 
