@@ -433,6 +433,13 @@ export type Database = {
     Functions: {
       approve_member: { Args: { _user_id: string }; Returns: undefined }
       can_manage: { Args: { _user_id: string }; Returns: boolean }
+      employee_hours_range: {
+        Args: { _from: string; _to: string }
+        Returns: {
+          minutes: number
+          user_id: string
+        }[]
+      }
       has_role: {
         Args: {
           _role: Database["public"]["Enums"]["app_role"]
