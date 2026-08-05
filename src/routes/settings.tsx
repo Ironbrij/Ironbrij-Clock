@@ -354,18 +354,20 @@ function UsersTab() {
                       </td>
                       <td className="px-3 py-2.5 text-right">
                         <div className="flex items-center justify-end gap-2">
-                          <Button
-                            size="sm"
-                            onClick={() => {
-                              void approveMember(m.id)
-                                .then(() => toast.success(`${m.name} approved`))
-                                .catch((e: Error) =>
-                                  toast.error("Approval failed", { description: e.message }),
-                                );
-                            }}
-                          >
-                            Approve
-                          </Button>
+                          {m.id !== currentUser.id && (
+                            <Button
+                              size="sm"
+                              onClick={() => {
+                                void approveMember(m.id)
+                                  .then(() => toast.success(`${m.name} approved`))
+                                  .catch((e: Error) =>
+                                    toast.error("Approval failed", { description: e.message }),
+                                  );
+                              }}
+                            >
+                              Approve
+                            </Button>
+                          )}
                           <Button
                             size="sm"
                             variant="outline"
