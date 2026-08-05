@@ -53,7 +53,7 @@ export function AppShell({
 }) {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const navigate = useNavigate();
-  const { session, authLoading, currentUser, isAdmin, members, signOut } = useWorkspace();
+  const { session, authLoading, currentUser, isAdmin, activeMembers, signOut } = useWorkspace();
   const [moreOpen, setMoreOpen] = useState(false);
 
   useEffect(() => {
@@ -94,7 +94,7 @@ export function AppShell({
     );
   }
 
-  const pendingCount = isAdmin ? members.filter((m) => m.pending).length : 0;
+  const pendingCount = isAdmin ? activeMembers.filter((m) => m.pending).length : 0;
 
   return (
     <div className="flex min-h-screen w-full bg-background">
