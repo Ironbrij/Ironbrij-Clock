@@ -28,7 +28,10 @@ import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
+  SelectSeparator,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
@@ -41,6 +44,7 @@ import {
   formatDayLong,
   formatWeekRange,
   fromDateKey,
+  orderByRecency,
   startOfWeek,
   toDateKey,
   weekdayNames,
@@ -102,9 +106,10 @@ function TimePage() {
 }
 
 function TimerBar() {
-  const { projects, runningEntry, startTimer, stopTimer, settings, taskCategories } =
+  const { projects, entries, runningEntry, startTimer, stopTimer, settings, taskCategories } =
     useWorkspace();
   const active = projects.filter((p) => !p.archived);
+  const { recent: recentProjects, rest: otherProjects } = orderByRecency(active, entries);
   const [project, setProject] = useState("");
   const [task, setTask] = useState("");
   const [description, setDescription] = useState("");
@@ -112,7 +117,10 @@ function TimerBar() {
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    if (!project && active[0]) setProject(active[0].id);
+    if (!project && active.length) setProject((recentProjects[0] ?? active[0]).id);
+    // Only meant to pick a sensible starting project once, not re-run every
+    // time entries/recency shifts under someone mid-selection.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active, project]);
 
   useEffect(() => {
@@ -220,7 +228,21 @@ function TimerBar() {
               <SelectValue placeholder="Project" />
             </SelectTrigger>
             <SelectContent>
-              {active.map((p) => (
+              {recentProjects.length > 0 && (
+                <SelectGroup>
+                  <SelectLabel>Recent</SelectLabel>
+                  {recentProjects.map((p) => (
+                    <SelectItem key={p.id} value={p.id}>
+                      <span className="flex items-center gap-2">
+                        <ProjectDot color={p.color} />
+                        {p.name}
+                      </span>
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+              )}
+              {recentProjects.length > 0 && otherProjects.length > 0 && <SelectSeparator />}
+              {otherProjects.map((p) => (
                 <SelectItem key={p.id} value={p.id}>
                   <span className="flex items-center gap-2">
                     <ProjectDot color={p.color} />
@@ -464,8 +486,9 @@ function EntryFormDialog({
   onOpenChange: (open: boolean) => void;
   entry: WorkspaceEntry | null;
 }) {
-  const { projects, createEntry, updateEntry, settings, taskCategories } = useWorkspace();
+  const { projects, entries, createEntry, updateEntry, settings, taskCategories } = useWorkspace();
   const active = projects.filter((p) => !p.archived);
+  const { recent: recentProjects, rest: otherProjects } = orderByRecency(active, entries);
   const defaultTask = taskCategories[0]?.name ?? "";
   const [values, setValues] = useState<EntryFormValues>(() => toFormValues(entry, defaultTask));
   const [busy, setBusy] = useState(false);
@@ -542,7 +565,21 @@ function EntryFormDialog({
                   <SelectValue placeholder="Project" />
                 </SelectTrigger>
                 <SelectContent>
-                  {active.map((p) => (
+                  {recentProjects.length > 0 && (
+                    <SelectGroup>
+                      <SelectLabel>Recent</SelectLabel>
+                      {recentProjects.map((p) => (
+                        <SelectItem key={p.id} value={p.id}>
+                          <span className="flex items-center gap-2">
+                            <ProjectDot color={p.color} />
+                            {p.name}
+                          </span>
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  )}
+                  {recentProjects.length > 0 && otherProjects.length > 0 && <SelectSeparator />}
+                  {otherProjects.map((p) => (
                     <SelectItem key={p.id} value={p.id}>
                       <span className="flex items-center gap-2">
                         <ProjectDot color={p.color} />
