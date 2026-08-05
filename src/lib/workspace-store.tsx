@@ -224,7 +224,9 @@ type WorkspaceContextValue = {
   resendInvite: (email: string) => Promise<void>;
   updateMemberRole: (memberId: string, role: Role) => Promise<void>;
   approveMember: (memberId: string) => Promise<void>;
-  moveMember: (memberId: string, teamId: string) => Promise<void>;
+  addMemberToTeam: (memberId: string, teamId: string) => Promise<void>;
+  removeMemberFromTeam: (memberId: string, teamId: string) => Promise<void>;
+  /** Removes every team assignment at once — used for rejecting a pending signup, not day-to-day team management. */
   removeMember: (memberId: string) => Promise<void>;
   /** Fully revokes access (deletes the auth account) — different from removeMember, which only drops a team assignment. */
   removeUser: (memberId: string) => Promise<void>;
@@ -799,11 +801,19 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         throwIf(error);
         invalidate("profiles");
       },
-      moveMember: async (memberId, teamId) => {
-        await supabase.from("team_members").delete().eq("user_id", memberId);
+      addMemberToTeam: async (memberId, teamId) => {
         const { error } = await supabase
           .from("team_members")
-          .insert({ user_id: memberId, team_id: teamId });
+          .upsert({ user_id: memberId, team_id: teamId }, { onConflict: "user_id,team_id" });
+        throwIf(error);
+        invalidate("team_members");
+      },
+      removeMemberFromTeam: async (memberId, teamId) => {
+        const { error } = await supabase
+          .from("team_members")
+          .delete()
+          .eq("user_id", memberId)
+          .eq("team_id", teamId);
         throwIf(error);
         invalidate("team_members");
       },
