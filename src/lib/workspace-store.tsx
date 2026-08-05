@@ -229,6 +229,11 @@ type WorkspaceContextValue = {
     from: string,
     to: string,
   ) => Promise<{ userId: string; minutes: number }[]>;
+  /** Hours by employee, broken down per client, for the Reports client filter. clientId is null for entries with no client attached. */
+  employeeClientHoursForRange: (
+    from: string,
+    to: string,
+  ) => Promise<{ userId: string; clientId: string | null; minutes: number }[]>;
 
   invitePeople: (input: { emails: string[]; teamId: string; role: Role }) => Promise<number>;
   resendInvite: (email: string) => Promise<void>;
@@ -788,6 +793,18 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         });
         throwIf(error);
         return (data ?? []).map((r) => ({ userId: r.user_id, minutes: r.minutes }));
+      },
+      employeeClientHoursForRange: async (from, to) => {
+        const { data, error } = await supabase.rpc("employee_client_hours_range", {
+          _from: from,
+          _to: to,
+        });
+        throwIf(error);
+        return (data ?? []).map((r) => ({
+          userId: r.user_id,
+          clientId: r.client_id,
+          minutes: r.minutes,
+        }));
       },
 
       invitePeople: async ({ emails, teamId, role }) => {
