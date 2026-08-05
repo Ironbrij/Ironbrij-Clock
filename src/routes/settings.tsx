@@ -215,6 +215,7 @@ function UsersTab() {
     approveMember,
     removeMember,
     removeUser,
+    resendInvite,
     updateMemberRole,
     moveMember,
   } = useWorkspace();
@@ -366,6 +367,21 @@ function UsersTab() {
                               }}
                             >
                               Approve
+                            </Button>
+                          )}
+                          {m.email && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => {
+                                void resendInvite(m.email!)
+                                  .then(() => toast.success(`Invite resent to ${m.email}`))
+                                  .catch((e: Error) =>
+                                    toast.error("Couldn't resend that", { description: e.message }),
+                                  );
+                              }}
+                            >
+                              Resend invite
                             </Button>
                           )}
                           <Button
