@@ -1,4 +1,4 @@
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
 import {
   BarChart3,
@@ -8,6 +8,7 @@ import {
   LayoutDashboard,
   Loader2,
   LogOut,
+  MoreHorizontal,
   Plane,
   Settings,
   SlidersHorizontal,
@@ -16,6 +17,7 @@ import {
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
 import { useWorkspace } from "@/lib/workspace-store";
 
@@ -31,6 +33,13 @@ const nav = [
   { to: "/settings", label: "Settings", icon: Settings },
 ] as const;
 
+// Mobile only — the desktop sidebar has room for all of nav. These three
+// are what everyone, regardless of role, actually opens day to day;
+// everything else sits one tap behind "More" instead of competing for
+// space in a row of 9 icons.
+const mobilePrimaryNav = nav.filter((item) => ["/time", "/timesheet", "/"].includes(item.to));
+const mobileOverflowNav = nav.filter((item) => !["/time", "/timesheet", "/"].includes(item.to));
+
 export function AppShell({
   title,
   subtitle,
@@ -45,6 +54,7 @@ export function AppShell({
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const navigate = useNavigate();
   const { session, authLoading, currentUser, isAdmin, members, signOut } = useWorkspace();
+  const [moreOpen, setMoreOpen] = useState(false);
 
   useEffect(() => {
     if (!authLoading && !session) navigate({ to: "/login", replace: true });
@@ -164,7 +174,7 @@ export function AppShell({
           <div className="mx-auto w-full max-w-6xl">{children}</div>
         </div>
         <nav className="sticky bottom-0 flex items-center justify-around border-t border-border bg-background px-2 py-2 lg:hidden">
-          {nav.map((item) => (
+          {mobilePrimaryNav.map((item) => (
             <Link
               key={item.to}
               to={item.to}
@@ -176,7 +186,52 @@ export function AppShell({
               {item.label}
             </Link>
           ))}
+          <button
+            type="button"
+            onClick={() => setMoreOpen(true)}
+            className={cn(
+              "relative flex flex-col items-center gap-1 rounded-md px-2 py-1 text-[10px] text-muted-foreground",
+              mobileOverflowNav.some((item) => pathname === item.to) && "text-primary",
+            )}
+          >
+            <MoreHorizontal className="h-4 w-4" />
+            More
+            {pendingCount > 0 && (
+              <span className="absolute right-1 top-0 h-2 w-2 rounded-full bg-destructive" />
+            )}
+          </button>
         </nav>
+
+        <Sheet open={moreOpen} onOpenChange={setMoreOpen}>
+          <SheetContent side="bottom" className="rounded-t-2xl lg:hidden">
+            <SheetHeader>
+              <SheetTitle className="text-left">More</SheetTitle>
+            </SheetHeader>
+            <div className="mt-2 grid grid-cols-3 gap-2 pb-4">
+              {mobileOverflowNav.map((item) => {
+                const showBadge = item.to === "/settings" && pendingCount > 0;
+                return (
+                  <Link
+                    key={item.to}
+                    to={item.to}
+                    onClick={() => setMoreOpen(false)}
+                    className="relative flex flex-col items-center gap-1.5 rounded-xl border border-border px-2 py-3 text-xs text-foreground transition-colors hover:bg-accent [&.active]:border-primary [&.active]:text-primary"
+                    activeProps={{ className: "active" }}
+                    activeOptions={{ exact: true }}
+                  >
+                    <item.icon className="h-5 w-5" />
+                    {item.label}
+                    {showBadge && (
+                      <span className="absolute right-2 top-2 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-destructive px-1 text-[10px] font-bold text-destructive-foreground">
+                        {pendingCount}
+                      </span>
+                    )}
+                  </Link>
+                );
+              })}
+            </div>
+          </SheetContent>
+        </Sheet>
       </div>
     </div>
   );
