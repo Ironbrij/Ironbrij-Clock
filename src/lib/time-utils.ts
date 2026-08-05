@@ -25,6 +25,13 @@ export function fromDateKey(dateKey: string) {
   return new Date(y, (m ?? 1) - 1, d ?? 1);
 }
 
+export function combineDateAndTime(dateKey: string, time: string) {
+  const date = fromDateKey(dateKey);
+  const [h, m] = time.split(":").map(Number);
+  date.setHours(h ?? 0, m ?? 0, 0, 0);
+  return date;
+}
+
 export function dayIndexOf(dateKey: string, weekStart: Date) {
   const [y, m, d] = dateKey.split("-").map(Number);
   const date = new Date(y, (m ?? 1) - 1, d ?? 1);
