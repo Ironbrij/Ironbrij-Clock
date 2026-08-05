@@ -84,6 +84,7 @@ function TeamsPage() {
   const {
     teams,
     members,
+    activeMembers,
     membersByTeam,
     teamMemberCount,
     isAdmin,
@@ -387,7 +388,7 @@ function TeamsPage() {
         open={teamFormOpen}
         onOpenChange={setTeamFormOpen}
         team={editingTeam}
-        people={members}
+        people={activeMembers}
         onSubmit={({ name, color, memberIds }) => {
           if (editingTeam) {
             run(updateTeam(editingTeam.id, { name, color }), () =>
