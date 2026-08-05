@@ -76,6 +76,7 @@ export type WorkspaceProject = {
 };
 
 export type WorkspaceTag = { id: string; name: string; color: string; entryCount: number };
+export type WorkspaceClient = { id: string; name: string };
 export type WorkspaceTaskCategory = { id: string; name: string };
 
 export type WorkspaceSettings = {
@@ -191,6 +192,11 @@ type WorkspaceContextValue = {
   createTaskCategory: (name: string) => Promise<void>;
   updateTaskCategory: (id: string, name: string) => Promise<void>;
   deleteTaskCategory: (id: string) => Promise<void>;
+  /** The real clients table — every client, whether or not a project currently uses it. Distinct from useWorkspaceClients(), which groups by project usage for display. */
+  clients: WorkspaceClient[];
+  createClient: (name: string) => Promise<void>;
+  updateClient: (id: string, name: string) => Promise<void>;
+  deleteClient: (id: string) => Promise<void>;
   settings: WorkspaceSettings;
   entries: WorkspaceEntry[];
   runningEntry: WorkspaceEntry | null;
@@ -574,6 +580,11 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     [taskCategoriesQ.data],
   );
 
+  const clients = useMemo<WorkspaceClient[]>(
+    () => (clientsQ.data ?? []).map((c) => ({ id: c.id, name: c.name })),
+    [clientsQ.data],
+  );
+
   const projects = useMemo<WorkspaceProject[]>(() => {
     const clients = clientsQ.data ?? [];
     const pm = projectMembersQ.data ?? [];
@@ -748,6 +759,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       projects,
       tags,
       taskCategories,
+      clients,
       settings,
       entries,
       runningEntry,
@@ -866,6 +878,22 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         const { error } = await supabase.from("task_categories").delete().eq("id", id);
         throwIf(error);
         invalidate("task_categories");
+      },
+
+      createClient: async (name) => {
+        const { error } = await supabase.from("clients").insert({ name: name.trim() });
+        throwIf(error);
+        invalidate("clients");
+      },
+      updateClient: async (id, name) => {
+        const { error } = await supabase.from("clients").update({ name: name.trim() }).eq("id", id);
+        throwIf(error);
+        invalidate("clients");
+      },
+      deleteClient: async (id) => {
+        const { error } = await supabase.from("clients").delete().eq("id", id);
+        throwIf(error);
+        invalidate("clients", "projects");
       },
 
       createProject: async (input) => {
@@ -1055,6 +1083,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     projects,
     tags,
     taskCategories,
+    clients,
     settings,
     entries,
     runningEntry,
