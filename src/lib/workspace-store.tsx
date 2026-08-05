@@ -57,6 +57,7 @@ export type WorkspaceMember = {
   email?: string;
   pending?: boolean;
   active: boolean;
+  timezone: string;
 };
 
 export type WorkspaceProject = {
@@ -226,9 +227,7 @@ type WorkspaceContextValue = {
   approveMember: (memberId: string) => Promise<void>;
   addMemberToTeam: (memberId: string, teamId: string) => Promise<void>;
   removeMemberFromTeam: (memberId: string, teamId: string) => Promise<void>;
-  /** Removes every team assignment at once — used for rejecting a pending signup, not day-to-day team management. */
-  removeMember: (memberId: string) => Promise<void>;
-  /** Fully revokes access (deletes the auth account) — different from removeMember, which only drops a team assignment. */
+  /** Fully revokes access (deletes the auth account) — used for both rejecting a pending signup and removing an active member. */
   removeUser: (memberId: string) => Promise<void>;
 
   createTeam: (input: { name: string; color: string; memberIds: string[] }) => Promise<void>;
@@ -282,6 +281,7 @@ const emptyUser: WorkspaceMember = {
   teamId: "",
   teamIds: [],
   active: true,
+  timezone: "Australia/Sydney",
 };
 
 export function WorkspaceProvider({ children }: { children: ReactNode }) {
@@ -549,6 +549,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         email: p.email ?? undefined,
         pending: p.is_pending ?? false,
         active: p.is_active ?? true,
+        timezone: p.timezone ?? "Australia/Sydney",
       };
     });
   }, [profilesQ.data, teamMembersQ.data]);
@@ -814,11 +815,6 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
           .delete()
           .eq("user_id", memberId)
           .eq("team_id", teamId);
-        throwIf(error);
-        invalidate("team_members");
-      },
-      removeMember: async (memberId) => {
-        const { error } = await supabase.from("team_members").delete().eq("user_id", memberId);
         throwIf(error);
         invalidate("team_members");
       },
