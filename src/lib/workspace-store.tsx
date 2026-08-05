@@ -74,6 +74,7 @@ export type WorkspaceProject = {
 };
 
 export type WorkspaceTag = { id: string; name: string; color: string; entryCount: number };
+export type WorkspaceTaskCategory = { id: string; name: string };
 
 export type WorkspaceSettings = {
   companyName: string;
@@ -183,6 +184,9 @@ type WorkspaceContextValue = {
   teams: Team[];
   projects: WorkspaceProject[];
   tags: WorkspaceTag[];
+  taskCategories: WorkspaceTaskCategory[];
+  createTaskCategory: (name: string) => Promise<void>;
+  deleteTaskCategory: (id: string) => Promise<void>;
   settings: WorkspaceSettings;
   entries: WorkspaceEntry[];
   runningEntry: WorkspaceEntry | null;
@@ -344,6 +348,19 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     enabled,
     queryFn: async () => {
       const { data, error } = await supabase.from("tags").select("id, name, color").order("name");
+      if (error) throw error;
+      return data;
+    },
+  });
+
+  const taskCategoriesQ = useQuery({
+    queryKey: ["task_categories"],
+    enabled,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("task_categories")
+        .select("id, name")
+        .order("created_at");
       if (error) throw error;
       return data;
     },
@@ -535,6 +552,11 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     }));
   }, [tagsQ.data, tagUsageQ.data]);
 
+  const taskCategories = useMemo<WorkspaceTaskCategory[]>(
+    () => (taskCategoriesQ.data ?? []).map((t) => ({ id: t.id, name: t.name })),
+    [taskCategoriesQ.data],
+  );
+
   const projects = useMemo<WorkspaceProject[]>(() => {
     const clients = clientsQ.data ?? [];
     const pm = projectMembersQ.data ?? [];
@@ -683,7 +705,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       projectsQ.isLoading ||
       tagsQ.isLoading ||
       settingsQ.isLoading ||
-      timesheetsQ.isLoading);
+      timesheetsQ.isLoading ||
+      taskCategoriesQ.isLoading);
 
   const value = useMemo<WorkspaceContextValue>(() => {
     const throwIf = (error: { message: string } | null) => {
@@ -706,6 +729,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       teams,
       projects,
       tags,
+      taskCategories,
       settings,
       entries,
       runningEntry,
@@ -797,6 +821,17 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         const { error } = await supabase.from("teams").delete().eq("id", teamId);
         throwIf(error);
         invalidate("teams", "team_members", "projects");
+      },
+
+      createTaskCategory: async (name) => {
+        const { error } = await supabase.from("task_categories").insert({ name: name.trim() });
+        throwIf(error);
+        invalidate("task_categories");
+      },
+      deleteTaskCategory: async (id) => {
+        const { error } = await supabase.from("task_categories").delete().eq("id", id);
+        throwIf(error);
+        invalidate("task_categories");
       },
 
       createProject: async (input) => {
@@ -984,6 +1019,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     teams,
     projects,
     tags,
+    taskCategories,
     settings,
     entries,
     runningEntry,
