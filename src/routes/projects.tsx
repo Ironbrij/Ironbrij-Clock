@@ -81,6 +81,9 @@ function ProjectsPage() {
     createClient,
     updateClient,
     deleteClient,
+    createTag,
+    updateTag,
+    deleteTag,
   } = useWorkspace();
   const clientGroups = useWorkspaceClients();
   const tags = useWorkspaceTags();
@@ -138,7 +141,9 @@ function ProjectsPage() {
           deleteClient={deleteClient}
         />
       )}
-      {tab === "tags" && <TagsTab tags={tags} />}
+      {tab === "tags" && (
+        <TagsTab tags={tags} createTag={createTag} updateTag={updateTag} deleteTag={deleteTag} />
+      )}
       {tab === "projects" && (
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
           {projects.map((p) => {
@@ -647,28 +652,201 @@ function ClientsTab({
   );
 }
 
-function TagsTab({ tags }: { tags: WorkspaceTag[] }) {
+function TagsTab({
+  tags,
+  createTag,
+  updateTag,
+  deleteTag,
+}: {
+  tags: WorkspaceTag[];
+  createTag: (name: string, color: string) => Promise<void>;
+  updateTag: (id: string, name: string, color: string) => Promise<void>;
+  deleteTag: (id: string) => Promise<void>;
+}) {
+  const [formOpen, setFormOpen] = useState(false);
+  const [editingTag, setEditingTag] = useState<WorkspaceTag | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<WorkspaceTag | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
+  const confirmDelete = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    try {
+      await deleteTag(deleteTarget.id);
+      toast.success("Tag deleted");
+      setDeleteTarget(null);
+    } catch (error) {
+      toast.error("Couldn't delete that", { description: (error as Error).message });
+    } finally {
+      setDeleting(false);
+    }
+  };
+
   return (
-    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-      {tags.map((t) => (
-        <Card key={t.id} className="shadow-card">
-          <CardContent className="flex items-center justify-between gap-3 p-5">
-            <span
-              className="flex items-center gap-2 rounded-full px-2.5 py-1 text-sm font-medium"
-              style={{
-                backgroundColor: `color-mix(in oklab, ${t.color} 14%, transparent)`,
-                color: t.color,
-              }}
-            >
-              <ProjectDot color={t.color} />
-              {t.name}
-            </span>
-            <span className="shrink-0 text-sm text-muted-foreground tabular-nums">
-              {t.entryCount} entries
-            </span>
+    <div className="grid gap-4">
+      <div className="flex justify-end">
+        <Button
+          className="gap-2"
+          onClick={() => {
+            setEditingTag(null);
+            setFormOpen(true);
+          }}
+        >
+          <Plus className="h-4 w-4" /> New tag
+        </Button>
+      </div>
+
+      {tags.length === 0 ? (
+        <Card className="shadow-card">
+          <CardContent className="px-6 py-10 text-center text-sm text-muted-foreground">
+            No tags yet — add one to start categorizing projects.
           </CardContent>
         </Card>
-      ))}
+      ) : (
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+          {tags.map((t) => (
+            <Card key={t.id} className="min-w-0 shadow-card">
+              <CardContent className="flex items-center justify-between gap-3 p-5">
+                <span
+                  className="flex min-w-0 items-center gap-2 rounded-full px-2.5 py-1 text-sm font-medium"
+                  style={{
+                    backgroundColor: `color-mix(in oklab, ${t.color} 14%, transparent)`,
+                    color: t.color,
+                  }}
+                >
+                  <ProjectDot color={t.color} />
+                  <span className="truncate">{t.name}</span>
+                </span>
+                <div className="flex shrink-0 items-center gap-1">
+                  <span className="text-sm text-muted-foreground tabular-nums">{t.entryCount}</span>
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    aria-label={`Edit ${t.name}`}
+                    onClick={() => {
+                      setEditingTag(t);
+                      setFormOpen(true);
+                    }}
+                  >
+                    <Pencil className="h-4 w-4" />
+                  </Button>
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    aria-label={`Delete ${t.name}`}
+                    onClick={() => setDeleteTarget(t)}
+                  >
+                    <Trash2 className="h-4 w-4 text-destructive" />
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      )}
+
+      <TagFormDialog
+        open={formOpen}
+        onOpenChange={setFormOpen}
+        tag={editingTag}
+        createTag={createTag}
+        updateTag={updateTag}
+      />
+
+      <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete {deleteTarget?.name}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              It'll be removed from any projects using it, and won't appear as a choice going
+              forward. Past time entries keep their own history regardless — nothing about them
+              changes.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleting}>Keep it</AlertDialogCancel>
+            <AlertDialogAction disabled={deleting} onClick={() => void confirmDelete()}>
+              Delete tag
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
+  );
+}
+
+function TagFormDialog({
+  open,
+  onOpenChange,
+  tag,
+  createTag,
+  updateTag,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  tag: WorkspaceTag | null;
+  createTag: (name: string, color: string) => Promise<void>;
+  updateTag: (id: string, name: string, color: string) => Promise<void>;
+}) {
+  const [name, setName] = useState("");
+  const [color, setColor] = useState(dotColors[0]);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (open) {
+      setName(tag?.name ?? "");
+      setColor(tag?.color ?? dotColors[0]);
+    }
+  }, [open, tag]);
+
+  const submit = async () => {
+    const trimmed = name.trim();
+    if (!trimmed) {
+      toast.error("Give it a name first");
+      return;
+    }
+    setSaving(true);
+    try {
+      if (tag) {
+        await updateTag(tag.id, trimmed, color);
+        toast.success("Tag updated");
+      } else {
+        await createTag(trimmed, color);
+        toast.success("Tag added");
+      }
+      onOpenChange(false);
+    } catch (error) {
+      toast.error("Couldn't save that", { description: (error as Error).message });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>{tag ? "Edit tag" : "New tag"}</DialogTitle>
+        </DialogHeader>
+        <div className="grid gap-4 py-2">
+          <div className="grid gap-2">
+            <Label htmlFor="tag-name">Name</Label>
+            <Input id="tag-name" value={name} onChange={(e) => setName(e.target.value)} />
+          </div>
+          <div className="grid gap-2">
+            <Label>Colour</Label>
+            <ColorDotPicker value={color} onChange={setColor} />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button disabled={saving} onClick={() => void submit()}>
+            {tag ? "Save changes" : "Add tag"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
