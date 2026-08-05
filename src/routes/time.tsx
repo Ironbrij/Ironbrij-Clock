@@ -71,6 +71,7 @@ const pad = (n: number) => n.toString().padStart(2, "0");
 function TimePage() {
   const [view, setView] = useState("list");
   const [addOpen, setAddOpen] = useState(false);
+  const { settings } = useWorkspace();
 
   return (
     <AppShell title="Time" subtitle="One place to start the clock and see where your hours went.">
@@ -83,10 +84,12 @@ function TimePage() {
             <TabsTrigger value="calendar">Calendar</TabsTrigger>
           </TabsList>
         </Tabs>
-        <Button variant="outline" size="sm" className="gap-2" onClick={() => setAddOpen(true)}>
-          <Plus className="h-4 w-4" />
-          Add manual entry
-        </Button>
+        {settings.allowManualEntry && (
+          <Button variant="outline" size="sm" className="gap-2" onClick={() => setAddOpen(true)}>
+            <Plus className="h-4 w-4" />
+            Add manual entry
+          </Button>
+        )}
       </div>
       <div className="mt-4">
         {view === "list" && <ListView />}
@@ -99,7 +102,7 @@ function TimePage() {
 }
 
 function TimerBar() {
-  const { projects, runningEntry, startTimer, stopTimer } = useWorkspace();
+  const { projects, runningEntry, startTimer, stopTimer, settings } = useWorkspace();
   const active = projects.filter((p) => !p.archived);
   const [project, setProject] = useState("");
   const [task, setTask] = useState(tasks[0]);
@@ -145,6 +148,12 @@ function TimerBar() {
           toast.error("Pick a project first");
           return;
         }
+        if (settings.requireDescriptions && !description.trim()) {
+          toast.error("Add a description first", {
+            description: "Your admin has made descriptions required.",
+          });
+          return;
+        }
         await startTimer({ projectId: project, task, description });
         toast.success("Timer running", { description: "We'll keep counting until you stop." });
       }
@@ -153,7 +162,15 @@ function TimerBar() {
     } finally {
       setBusy(false);
     }
-  }, [runningEntry, project, task, description, startTimer, stopTimer]);
+  }, [
+    runningEntry,
+    project,
+    task,
+    description,
+    startTimer,
+    stopTimer,
+    settings.requireDescriptions,
+  ]);
 
   // Space bar starts/stops the timer — as long as focus isn't in a text
   // field or on another interactive control (inputs, selects, buttons,
@@ -442,7 +459,7 @@ function EntryFormDialog({
   onOpenChange: (open: boolean) => void;
   entry: WorkspaceEntry | null;
 }) {
-  const { projects, createEntry, updateEntry } = useWorkspace();
+  const { projects, createEntry, updateEntry, settings } = useWorkspace();
   const active = projects.filter((p) => !p.archived);
   const [values, setValues] = useState<EntryFormValues>(() => toFormValues(entry));
   const [busy, setBusy] = useState(false);
@@ -458,6 +475,12 @@ function EntryFormDialog({
     }
     if (!values.startTime || !values.endTime) {
       toast.error("Add a start and end time");
+      return;
+    }
+    if (settings.requireDescriptions && !values.description.trim()) {
+      toast.error("Add a description first", {
+        description: "Your admin has made descriptions required.",
+      });
       return;
     }
     setBusy(true);
