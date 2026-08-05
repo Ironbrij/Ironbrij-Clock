@@ -84,7 +84,7 @@ function TeamsPage() {
     isAdmin,
     canManage,
     invitePeople,
-    removeMember,
+    removeMemberFromTeam,
     createTeam,
     updateTeam,
     deleteTeam,
@@ -261,8 +261,9 @@ function TeamsPage() {
                           className="h-8 w-8"
                           aria-label={`Remove ${m.name} from ${team?.name ?? "this team"}`}
                           onClick={() => {
-                            run(removeMember(m.id), () =>
-                              toast.success(`${m.name} removed from ${team?.name ?? "team"}`),
+                            if (!team) return;
+                            run(removeMemberFromTeam(m.id, team.id), () =>
+                              toast.success(`${m.name} removed from ${team.name}`),
                             );
                           }}
                         >
@@ -461,7 +462,7 @@ function TeamFormDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
   team: { id: string; name: string; color: string } | null;
-  people: { id: string; name: string; title: string; teamId: string }[];
+  people: { id: string; name: string; title: string; teamId: string; teamIds: string[] }[];
   onSubmit: (input: { name: string; color: string; memberIds: string[] }) => void;
 }) {
   const { teams } = useWorkspace();
@@ -509,7 +510,14 @@ function TeamFormDialog({
                 options={people.map((p) => ({
                   id: p.id,
                   label: p.name,
-                  hint: `${p.title} · ${teams.find((t) => t.id === p.teamId)?.name ?? "No team"}`,
+                  hint: `${p.title} · ${
+                    p.teamIds.length
+                      ? p.teamIds
+                          .map((id) => teams.find((t) => t.id === id)?.name)
+                          .filter(Boolean)
+                          .join(", ")
+                      : "No team"
+                  }`,
                 }))}
                 selected={memberIds}
                 onToggle={(id) =>
