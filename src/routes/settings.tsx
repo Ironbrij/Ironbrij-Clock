@@ -16,6 +16,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { MultiSelectList } from "@/components/multi-select-list";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   Select,
   SelectContent,
@@ -217,7 +219,8 @@ function UsersTab() {
     removeUser,
     resendInvite,
     updateMemberRole,
-    moveMember,
+    addMemberToTeam,
+    removeMemberFromTeam,
   } = useWorkspace();
   const [busyId, setBusyId] = useState<string | null>(null);
   const [removeTarget, setRemoveTarget] = useState<{ id: string; name: string; role: Role } | null>(
@@ -236,14 +239,6 @@ function UsersTab() {
     void updateMemberRole(m.id, role)
       .then(() => toast.success(`${m.name} is now ${role === "Admin" ? "an" : "a"} ${role}`))
       .catch((e: Error) => toast.error("Couldn't update role", { description: e.message }))
-      .finally(() => setBusyId(null));
-  };
-
-  const changeTeam = (m: { id: string; name: string }, teamId: string) => {
-    setBusyId(m.id);
-    void moveMember(m.id, teamId)
-      .then(() => toast.success(`${m.name} moved to ${teamName(teamId)}`))
-      .catch((e: Error) => toast.error("Couldn't move member", { description: e.message }))
       .finally(() => setBusyId(null));
   };
 
@@ -284,29 +279,52 @@ function UsersTab() {
     </Select>
   );
 
-  const TeamCell = ({ m }: { m: { id: string; name: string; teamId: string } }) => (
-    <Select
-      value={m.teamId || "unassigned"}
-      onValueChange={(v) => changeTeam(m, v)}
-      disabled={busyId === m.id}
-    >
-      <SelectTrigger className="h-8 w-40">
-        <SelectValue />
-      </SelectTrigger>
-      <SelectContent>
-        {!m.teamId && (
-          <SelectItem value="unassigned" disabled>
-            Unassigned
-          </SelectItem>
-        )}
-        {teams.map((t) => (
-          <SelectItem key={t.id} value={t.id}>
-            {t.name}
-          </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
-  );
+  const TeamCell = ({ m }: { m: { id: string; name: string; teamIds: string[] } }) => {
+    const toggleTeam = (teamId: string) => {
+      const removing = m.teamIds.includes(teamId);
+      setBusyId(m.id);
+      void (removing ? removeMemberFromTeam(m.id, teamId) : addMemberToTeam(m.id, teamId))
+        .then(() =>
+          toast.success(
+            removing
+              ? `${m.name} removed from ${teamName(teamId)}`
+              : `${m.name} added to ${teamName(teamId)}`,
+          ),
+        )
+        .catch((e: Error) => toast.error("Couldn't update teams", { description: e.message }))
+        .finally(() => setBusyId(null));
+    };
+
+    const label =
+      m.teamIds.length === 0
+        ? "Unassigned"
+        : m.teamIds.length === 1
+          ? teamName(m.teamIds[0])
+          : `${m.teamIds.length} teams`;
+
+    return (
+      <Popover>
+        <PopoverTrigger asChild>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={busyId === m.id}
+            className="h-8 min-w-[9rem] justify-start font-normal"
+          >
+            {label}
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent align="start" className="w-64 p-2">
+          <MultiSelectList
+            options={teams.map((t) => ({ id: t.id, label: t.name, color: t.color }))}
+            selected={m.teamIds}
+            onToggle={toggleTeam}
+            height="h-52"
+          />
+        </PopoverContent>
+      </Popover>
+    );
+  };
 
   return (
     <div className="grid max-w-4xl gap-6">
