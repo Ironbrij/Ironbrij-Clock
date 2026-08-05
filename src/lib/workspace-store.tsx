@@ -56,6 +56,7 @@ export type WorkspaceMember = {
   teamIds: string[];
   email?: string;
   pending?: boolean;
+  active: boolean;
 };
 
 export type WorkspaceProject = {
@@ -181,6 +182,7 @@ type WorkspaceContextValue = {
   canManage: boolean;
 
   members: WorkspaceMember[];
+  activeMembers: WorkspaceMember[];
   teams: Team[];
   projects: WorkspaceProject[];
   tags: WorkspaceTag[];
@@ -224,6 +226,8 @@ type WorkspaceContextValue = {
   approveMember: (memberId: string) => Promise<void>;
   moveMember: (memberId: string, teamId: string) => Promise<void>;
   removeMember: (memberId: string) => Promise<void>;
+  /** Fully revokes access (deletes the auth account) — different from removeMember, which only drops a team assignment. */
+  removeUser: (memberId: string) => Promise<void>;
 
   createTeam: (input: { name: string; color: string; memberIds: string[] }) => Promise<void>;
   updateTeam: (teamId: string, input: { name: string; color: string }) => Promise<void>;
@@ -275,6 +279,7 @@ const emptyUser: WorkspaceMember = {
   title: "",
   teamId: "",
   teamIds: [],
+  active: true,
 };
 
 export function WorkspaceProvider({ children }: { children: ReactNode }) {
@@ -304,7 +309,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("profiles")
-        .select("id, email, full_name, avatar_url, job_title, timezone, role, is_pending")
+        .select(
+          "id, email, full_name, avatar_url, job_title, timezone, role, is_pending, is_active",
+        )
         .order("full_name");
       if (error) throw error;
       return data;
@@ -539,9 +546,15 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         teamIds,
         email: p.email ?? undefined,
         pending: p.is_pending ?? false,
+        active: p.is_active ?? true,
       };
     });
   }, [profilesQ.data, teamMembersQ.data]);
+
+  // For rosters and "assign this person" pickers — memberById/reports
+  // still use the full `members` list on purpose, so a removed person's
+  // name stays correct on anything historical they're already attached to.
+  const activeMembers = useMemo(() => members.filter((m) => m.active), [members]);
 
   const tags = useMemo<WorkspaceTag[]>(() => {
     const usage = tagUsageQ.data ?? [];
@@ -727,6 +740,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       isAdmin: currentUser.role === "Admin",
       canManage: currentUser.role === "Admin" || currentUser.role === "Manager",
       members,
+      activeMembers,
       teams,
       projects,
       tags,
@@ -797,6 +811,11 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         const { error } = await supabase.from("team_members").delete().eq("user_id", memberId);
         throwIf(error);
         invalidate("team_members");
+      },
+      removeUser: async (memberId) => {
+        const { removeUserAccess } = await import("@/lib/admin.functions");
+        await removeUserAccess({ data: { userId: memberId } });
+        invalidate("profiles", "team_members");
       },
 
       createTeam: async ({ name, color, memberIds }) => {
@@ -1025,6 +1044,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     loading,
     currentUser,
     members,
+    activeMembers,
     teams,
     projects,
     tags,
