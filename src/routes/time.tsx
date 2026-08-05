@@ -34,7 +34,7 @@ import {
 } from "@/components/ui/select";
 import { TimesheetGrid } from "@/components/timesheet-grid";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { formatHours, formatMinutes, tasks } from "@/lib/mock-data";
+import { formatHours, formatMinutes } from "@/lib/mock-data";
 import {
   addDays,
   formatClock,
@@ -102,10 +102,11 @@ function TimePage() {
 }
 
 function TimerBar() {
-  const { projects, runningEntry, startTimer, stopTimer, settings } = useWorkspace();
+  const { projects, runningEntry, startTimer, stopTimer, settings, taskCategories } =
+    useWorkspace();
   const active = projects.filter((p) => !p.archived);
   const [project, setProject] = useState("");
-  const [task, setTask] = useState(tasks[0]);
+  const [task, setTask] = useState("");
   const [description, setDescription] = useState("");
   const [seconds, setSeconds] = useState(0);
   const [busy, setBusy] = useState(false);
@@ -115,12 +116,16 @@ function TimerBar() {
   }, [active, project]);
 
   useEffect(() => {
+    if (!task && taskCategories[0]) setTask(taskCategories[0].name);
+  }, [taskCategories, task]);
+
+  useEffect(() => {
     if (!runningEntry) {
       setSeconds(0);
       return;
     }
     setProject(runningEntry.projectId ?? "");
-    setTask(runningEntry.task || tasks[0]);
+    setTask(runningEntry.task || taskCategories[0]?.name || "");
     setDescription(runningEntry.description);
     const tick = () =>
       setSeconds(
@@ -129,7 +134,7 @@ function TimerBar() {
     tick();
     const interval = setInterval(tick, 1000);
     return () => clearInterval(interval);
-  }, [runningEntry]);
+  }, [runningEntry, taskCategories]);
 
   const running = !!runningEntry;
   const h = Math.floor(seconds / 3600);
@@ -230,9 +235,9 @@ function TimerBar() {
               <SelectValue placeholder="Task" />
             </SelectTrigger>
             <SelectContent>
-              {tasks.map((t) => (
-                <SelectItem key={t} value={t}>
-                  {t}
+              {taskCategories.map((t) => (
+                <SelectItem key={t.id} value={t.name}>
+                  {t.name}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -426,11 +431,11 @@ type EntryFormValues = {
   endTime: string;
 };
 
-function toFormValues(entry: WorkspaceEntry | null): EntryFormValues {
+function toFormValues(entry: WorkspaceEntry | null, defaultTask: string): EntryFormValues {
   if (!entry) {
     return {
       projectId: "",
-      task: tasks[0],
+      task: defaultTask,
       description: "",
       date: toDateKey(new Date()),
       startTime: "",
@@ -441,7 +446,7 @@ function toFormValues(entry: WorkspaceEntry | null): EntryFormValues {
   const end = entry.endTime ? new Date(entry.endTime) : start;
   return {
     projectId: entry.projectId ?? "",
-    task: entry.task || tasks[0],
+    task: entry.task || defaultTask,
     description: entry.description,
     date: entry.date,
     startTime: `${pad(start.getHours())}:${pad(start.getMinutes())}`,
@@ -459,13 +464,18 @@ function EntryFormDialog({
   onOpenChange: (open: boolean) => void;
   entry: WorkspaceEntry | null;
 }) {
-  const { projects, createEntry, updateEntry, settings } = useWorkspace();
+  const { projects, createEntry, updateEntry, settings, taskCategories } = useWorkspace();
   const active = projects.filter((p) => !p.archived);
-  const [values, setValues] = useState<EntryFormValues>(() => toFormValues(entry));
+  const defaultTask = taskCategories[0]?.name ?? "";
+  const [values, setValues] = useState<EntryFormValues>(() => toFormValues(entry, defaultTask));
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    if (open) setValues(toFormValues(entry));
+    if (open) setValues(toFormValues(entry, defaultTask));
+    // defaultTask intentionally excluded — it should only affect the
+    // initial value when the dialog opens, not overwrite whatever the
+    // person has already picked while it's sitting open.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, entry]);
 
   const submit = async () => {
@@ -553,9 +563,9 @@ function EntryFormDialog({
                   <SelectValue placeholder="Task" />
                 </SelectTrigger>
                 <SelectContent>
-                  {tasks.map((t) => (
-                    <SelectItem key={t} value={t}>
-                      {t}
+                  {taskCategories.map((t) => (
+                    <SelectItem key={t.id} value={t.name}>
+                      {t.name}
                     </SelectItem>
                   ))}
                 </SelectContent>
