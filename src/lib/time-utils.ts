@@ -32,6 +32,29 @@ export function combineDateAndTime(dateKey: string, time: string) {
   return date;
 }
 
+/** Splits a list into "recently used" (by most recent matching entry) and everything else, for quick-access dropdowns. */
+export function orderByRecency<T extends { id: string }>(
+  items: T[],
+  entries: { projectId: string | null; startTime: string }[],
+  max = 5,
+): { recent: T[]; rest: T[] } {
+  const sorted = [...entries].sort((a, b) => b.startTime.localeCompare(a.startTime));
+  const recentIds: string[] = [];
+  const seen = new Set<string>();
+  for (const e of sorted) {
+    if (e.projectId && !seen.has(e.projectId)) {
+      seen.add(e.projectId);
+      recentIds.push(e.projectId);
+    }
+    if (recentIds.length >= max) break;
+  }
+  const byId = new Map(items.map((i) => [i.id, i]));
+  const recent = recentIds.map((id) => byId.get(id)).filter((i): i is T => !!i);
+  const recentSet = new Set(recent.map((i) => i.id));
+  const rest = items.filter((i) => !recentSet.has(i.id));
+  return { recent, rest };
+}
+
 export function dayIndexOf(dateKey: string, weekStart: Date) {
   const [y, m, d] = dateKey.split("-").map(Number);
   const date = new Date(y, (m ?? 1) - 1, d ?? 1);
