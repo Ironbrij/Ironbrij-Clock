@@ -45,6 +45,9 @@ import {
   type WorkspaceTaskCategory,
   type WorkspaceTimesheet,
 } from "@/lib/workspace/types";
+import { useSettingsData } from "@/lib/workspace/use-settings";
+import { useTagsData } from "@/lib/workspace/use-tags";
+import { useTaskCategoriesData } from "@/lib/workspace/use-task-categories";
 
 // Re-exported under the exact same names so every existing import from
 // "@/lib/workspace-store" throughout the app keeps working unchanged —
@@ -282,38 +285,15 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     },
   });
 
-  const tagsQ = useQuery({
-    queryKey: ["tags"],
-    enabled,
-    queryFn: async () => {
-      const { data, error } = await supabase.from("tags").select("id, name, color").order("name");
-      if (error) throw error;
-      return data;
-    },
-  });
+  const { tagsQ, tagUsageQ, tags, createTag, updateTag, deleteTag } = useTagsData(enabled);
 
-  const taskCategoriesQ = useQuery({
-    queryKey: ["task_categories"],
-    enabled,
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from("task_categories")
-        .select("id, name")
-        .order("created_at");
-      if (error) throw error;
-      return data;
-    },
-  });
-
-  const tagUsageQ = useQuery({
-    queryKey: ["tag_usage"],
-    enabled,
-    queryFn: async () => {
-      const { data, error } = await supabase.rpc("tag_usage");
-      if (error) throw error;
-      return data;
-    },
-  });
+  const {
+    taskCategoriesQ,
+    taskCategories,
+    createTaskCategory,
+    updateTaskCategory,
+    deleteTaskCategory,
+  } = useTaskCategoriesData(enabled);
 
   const projectsQ = useQuery({
     queryKey: ["projects"],
@@ -358,20 +338,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     },
   });
 
-  const settingsQ = useQuery({
-    queryKey: ["workspace_settings"],
-    enabled,
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from("workspace_settings")
-        .select(
-          "company_name, logo_url, timezone, weekly_hours, currency, require_descriptions, allow_manual_entry",
-        )
-        .maybeSingle();
-      if (error) throw error;
-      return data;
-    },
-  });
+  const { settingsQ, settings, updateSettings } = useSettingsData(enabled);
 
   const entriesQ = useQuery({
     queryKey: ["time_entries", uid],
@@ -488,21 +455,6 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   // name stays correct on anything historical they're already attached to.
   const activeMembers = useMemo(() => members.filter((m) => m.active), [members]);
 
-  const tags = useMemo<WorkspaceTag[]>(() => {
-    const usage = tagUsageQ.data ?? [];
-    return (tagsQ.data ?? []).map((t) => ({
-      id: t.id,
-      name: t.name,
-      color: t.color,
-      entryCount: usage.find((u) => u.tag_id === t.id)?.entry_count ?? 0,
-    }));
-  }, [tagsQ.data, tagUsageQ.data]);
-
-  const taskCategories = useMemo<WorkspaceTaskCategory[]>(
-    () => (taskCategoriesQ.data ?? []).map((t) => ({ id: t.id, name: t.name })),
-    [taskCategoriesQ.data],
-  );
-
   const clients = useMemo<WorkspaceClient[]>(
     () => (clientsQ.data ?? []).map((c) => ({ id: c.id, name: c.name })),
     [clientsQ.data],
@@ -531,19 +483,6 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       };
     });
   }, [projectsQ.data, clientsQ.data, projectMembersQ.data, projectTagsQ.data, projectHoursQ.data]);
-
-  const settings = useMemo<WorkspaceSettings>(() => {
-    const s = settingsQ.data;
-    return {
-      companyName: s?.company_name ?? "Ironbrij",
-      logoDataUrl: s?.logo_url ?? null,
-      timezone: s?.timezone ?? "Australia/Sydney",
-      weeklyHours: Number(s?.weekly_hours ?? 37.5),
-      currency: s?.currency ?? "AUD",
-      requireDescriptions: s?.require_descriptions ?? false,
-      allowManualEntry: s?.allow_manual_entry ?? true,
-    };
-  }, [settingsQ.data]);
 
   const entries = useMemo<WorkspaceEntry[]>(
     () =>
@@ -681,9 +620,16 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       teams,
       projects,
       tags,
+      createTag,
+      updateTag,
+      deleteTag,
       taskCategories,
+      createTaskCategory,
+      updateTaskCategory,
+      deleteTaskCategory,
       clients,
       settings,
+      updateSettings,
       entries,
       runningEntry,
       timesheets,
@@ -813,25 +759,6 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         invalidate("teams", "team_members", "projects");
       },
 
-      createTaskCategory: async (name) => {
-        const { error } = await supabase.from("task_categories").insert({ name: name.trim() });
-        throwIf(error);
-        invalidate("task_categories");
-      },
-      updateTaskCategory: async (id, name) => {
-        const { error } = await supabase
-          .from("task_categories")
-          .update({ name: name.trim() })
-          .eq("id", id);
-        throwIf(error);
-        invalidate("task_categories");
-      },
-      deleteTaskCategory: async (id) => {
-        const { error } = await supabase.from("task_categories").delete().eq("id", id);
-        throwIf(error);
-        invalidate("task_categories");
-      },
-
       createClient: async (name) => {
         const { error } = await supabase.from("clients").insert({ name: name.trim() });
         throwIf(error);
@@ -846,25 +773,6 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         const { error } = await supabase.from("clients").delete().eq("id", id);
         throwIf(error);
         invalidate("clients", "projects");
-      },
-
-      createTag: async (name, color) => {
-        const { error } = await supabase.from("tags").insert({ name: name.trim(), color });
-        throwIf(error);
-        invalidate("tags");
-      },
-      updateTag: async (id, name, color) => {
-        const { error } = await supabase
-          .from("tags")
-          .update({ name: name.trim(), color })
-          .eq("id", id);
-        throwIf(error);
-        invalidate("tags");
-      },
-      deleteTag: async (id) => {
-        const { error } = await supabase.from("tags").delete().eq("id", id);
-        throwIf(error);
-        invalidate("tags", "projects", "tag_usage");
       },
 
       createProject: async (input) => {
@@ -920,21 +828,6 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         invalidate("projects", "project_members", "project_tags", "time_entries", "project_hours");
       },
 
-      updateSettings: async (patch) => {
-        const row: Record<string, unknown> = { id: true };
-        if (patch.companyName !== undefined) row["company_name"] = patch.companyName;
-        if (patch.logoDataUrl !== undefined) row["logo_url"] = patch.logoDataUrl;
-        if (patch.timezone !== undefined) row["timezone"] = patch.timezone;
-        if (patch.weeklyHours !== undefined) row["weekly_hours"] = patch.weeklyHours;
-        if (patch.currency !== undefined) row["currency"] = patch.currency;
-        if (patch.requireDescriptions !== undefined)
-          row["require_descriptions"] = patch.requireDescriptions;
-        if (patch.allowManualEntry !== undefined)
-          row["allow_manual_entry"] = patch.allowManualEntry;
-        const { error } = await supabase.from("workspace_settings").upsert(row as never);
-        throwIf(error);
-        invalidate("workspace_settings");
-      },
       updateProfile: async (patch) => {
         if (!uid) return;
         const { error } = await supabase.from("profiles").update(patch).eq("id", uid);
@@ -1066,9 +959,16 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     teams,
     projects,
     tags,
+    createTag,
+    updateTag,
+    deleteTag,
     taskCategories,
+    createTaskCategory,
+    updateTaskCategory,
+    deleteTaskCategory,
     clients,
     settings,
+    updateSettings,
     entries,
     runningEntry,
     timesheets,
