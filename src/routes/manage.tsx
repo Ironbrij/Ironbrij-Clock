@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Activity,
   CalendarClock,
@@ -26,8 +26,12 @@ import { Label } from "@/components/ui/label";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { formatHours } from "@/lib/mock-data";
-import { formatWeekRange, fromDateKey } from "@/lib/time-utils";
-import { useWorkspace, type PendingApproval } from "@/lib/workspace-store";
+import { formatWeekRange, fromDateKey, startOfWeek, toDateKey } from "@/lib/time-utils";
+import {
+  useWorkspace,
+  type PendingApproval,
+  type WorkspaceActivityEvent,
+} from "@/lib/workspace-store";
 
 export const Route = createFileRoute("/manage")({
   head: () => ({
@@ -71,7 +75,7 @@ const sections: { id: string; label: string; icon: LucideIcon; description: stri
     id: "activity",
     label: "Activity",
     icon: Activity,
-    description: "A workspace audit and activity feed — coming soon.",
+    description: "Approvals, role changes, and team updates — grouped by week.",
   },
   {
     id: "kiosks",
@@ -105,6 +109,8 @@ function ManagePage() {
 
       {tab === "approvals" ? (
         <ApprovalsPanel />
+      ) : tab === "activity" ? (
+        <ActivityTab />
       ) : (
         <Card className="mt-4 shadow-card">
           <CardContent className="flex flex-col items-center gap-3 px-6 py-16 text-center">
@@ -215,6 +221,110 @@ function ApprovalsPanel() {
         onConfirm={reject}
       />
     </>
+  );
+}
+
+function describeActivityEvent(
+  e: WorkspaceActivityEvent,
+  nameOf: (id: string | null) => string,
+  teamName: (id: string) => string,
+) {
+  const actor = nameOf(e.actorId);
+  const target = nameOf(e.targetUserId);
+  const isSelf = !!e.actorId && e.actorId === e.targetUserId;
+  const week = (key: unknown) =>
+    typeof key === "string" ? formatWeekRange(fromDateKey(key)) : "an unknown week";
+
+  switch (e.action) {
+    case "member_approved":
+      return `${actor} approved ${target}`;
+    case "role_changed": {
+      const oldRole = String(e.metadata.old_role ?? "").replace(/^\w/, (c) => c.toUpperCase());
+      const newRole = String(e.metadata.new_role ?? "").replace(/^\w/, (c) => c.toUpperCase());
+      return `${actor} changed ${target}'s role from ${oldRole || "—"} to ${newRole || "—"}`;
+    }
+    case "timesheet_submitted":
+      return `${actor} submitted ${isSelf ? "their" : `${target}'s`} timesheet for ${week(e.metadata.week_start)}`;
+    case "timesheet_approved":
+      return `${actor} approved ${target}'s timesheet for ${week(e.metadata.week_start)}`;
+    case "timesheet_rejected": {
+      const note =
+        typeof e.metadata.note === "string" && e.metadata.note ? ` — "${e.metadata.note}"` : "";
+      return `${actor} sent back ${target}'s timesheet for ${week(e.metadata.week_start)}${note}`;
+    }
+    case "team_added": {
+      const tid = typeof e.metadata.team_id === "string" ? e.metadata.team_id : "";
+      return `${actor} added ${target} to ${teamName(tid)}`;
+    }
+    case "team_removed": {
+      const tid = typeof e.metadata.team_id === "string" ? e.metadata.team_id : "";
+      return `${actor} removed ${target} from ${teamName(tid)}`;
+    }
+    case "member_removed":
+      return `${actor} removed ${target}'s access`;
+    default:
+      return `${actor} — ${e.action}`;
+  }
+}
+
+function ActivityTab() {
+  const { activityLog, memberById, teams } = useWorkspace();
+
+  const nameOf = (id: string | null) => (id ? (memberById(id)?.name ?? "Someone") : "Someone");
+  const teamName = (id: string) => teams.find((t) => t.id === id)?.name ?? "a team";
+
+  const weeks = useMemo(() => {
+    const groups = new Map<string, WorkspaceActivityEvent[]>();
+    for (const e of activityLog) {
+      const key = toDateKey(startOfWeek(new Date(e.createdAt)));
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key)!.push(e);
+    }
+    return Array.from(groups.entries()).sort((a, b) => (a[0] < b[0] ? 1 : -1));
+  }, [activityLog]);
+
+  if (weeks.length === 0) {
+    return (
+      <Card className="mt-4 shadow-card">
+        <CardContent className="flex flex-col items-center gap-3 px-6 py-16 text-center">
+          <Activity className="h-10 w-10 text-muted-foreground/50" />
+          <h2 className="text-lg font-semibold">Nothing logged yet</h2>
+          <p className="max-w-md text-sm text-muted-foreground">
+            Approvals, role changes, and team updates will show up here, grouped by week, as they
+            happen.
+          </p>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <div className="mt-4 grid gap-4">
+      {weeks.map(([weekKey, events]) => (
+        <Card key={weekKey} className="shadow-card">
+          <CardContent className="p-0">
+            <div className="border-b border-border px-6 py-3">
+              <h3 className="text-sm font-semibold">{formatWeekRange(fromDateKey(weekKey))}</h3>
+            </div>
+            <ul className="divide-y divide-border">
+              {events.map((e) => (
+                <li key={e.id} className="flex items-start justify-between gap-4 px-6 py-3">
+                  <p className="text-sm">{describeActivityEvent(e, nameOf, teamName)}</p>
+                  <span className="shrink-0 text-xs text-muted-foreground">
+                    {new Date(e.createdAt).toLocaleString(undefined, {
+                      month: "short",
+                      day: "numeric",
+                      hour: "numeric",
+                      minute: "2-digit",
+                    })}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </CardContent>
+        </Card>
+      ))}
+    </div>
   );
 }
 
