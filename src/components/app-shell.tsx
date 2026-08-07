@@ -53,7 +53,15 @@ export function AppShell({
 }) {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const navigate = useNavigate();
-  const { session, authLoading, currentUser, isAdmin, activeMembers, signOut } = useWorkspace();
+  const {
+    session,
+    authLoading,
+    currentUser,
+    isAdmin,
+    activeMembers,
+    unseenActivityCount,
+    signOut,
+  } = useWorkspace();
   const [moreOpen, setMoreOpen] = useState(false);
 
   useEffect(() => {
@@ -112,7 +120,12 @@ export function AppShell({
         <nav className="flex flex-1 flex-col gap-1">
           {nav.map((item) => {
             const active = pathname === item.to;
-            const showBadge = item.to === "/settings" && pendingCount > 0;
+            const badgeCount =
+              item.to === "/settings"
+                ? pendingCount
+                : item.to === "/manage"
+                  ? unseenActivityCount
+                  : 0;
             return (
               <Link
                 key={item.to}
@@ -124,9 +137,9 @@ export function AppShell({
               >
                 <item.icon className="h-4 w-4 shrink-0" />
                 {item.label}
-                {showBadge && (
+                {badgeCount > 0 && (
                   <span className="ml-auto inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-destructive px-1.5 text-[11px] font-bold text-destructive-foreground">
-                    {pendingCount}
+                    {badgeCount}
                   </span>
                 )}
               </Link>
@@ -196,7 +209,7 @@ export function AppShell({
           >
             <MoreHorizontal className="h-4 w-4" />
             More
-            {pendingCount > 0 && (
+            {(pendingCount > 0 || unseenActivityCount > 0) && (
               <span className="absolute right-1 top-0 h-2 w-2 rounded-full bg-destructive" />
             )}
           </button>
@@ -209,7 +222,12 @@ export function AppShell({
             </SheetHeader>
             <div className="mt-2 grid grid-cols-3 gap-2 pb-4">
               {mobileOverflowNav.map((item) => {
-                const showBadge = item.to === "/settings" && pendingCount > 0;
+                const badgeCount =
+                  item.to === "/settings"
+                    ? pendingCount
+                    : item.to === "/manage"
+                      ? unseenActivityCount
+                      : 0;
                 return (
                   <Link
                     key={item.to}
@@ -221,9 +239,9 @@ export function AppShell({
                   >
                     <item.icon className="h-5 w-5" />
                     {item.label}
-                    {showBadge && (
+                    {badgeCount > 0 && (
                       <span className="absolute right-2 top-2 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-destructive px-1 text-[10px] font-bold text-destructive-foreground">
-                        {pendingCount}
+                        {badgeCount}
                       </span>
                     )}
                   </Link>
