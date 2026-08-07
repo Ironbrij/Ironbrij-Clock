@@ -465,18 +465,53 @@ function TeamFormDialog({
   people: { id: string; name: string; title: string; teamId: string; teamIds: string[] }[];
   onSubmit: (input: { name: string; color: string; memberIds: string[] }) => void;
 }) {
-  const { teams } = useWorkspace();
+  const { teams, addMemberToTeam, removeMemberFromTeam } = useWorkspace();
   const [name, setName] = useState(team?.name ?? "");
   const [color, setColor] = useState(team?.color ?? dotColors[0]);
   const [memberIds, setMemberIds] = useState<string[]>([]);
+  const [originalMemberIds, setOriginalMemberIds] = useState<string[]>([]);
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     if (open) {
       setName(team?.name ?? "");
       setColor(team?.color ?? dotColors[0]);
-      setMemberIds([]);
+      const current = team
+        ? people.filter((p) => p.teamIds.includes(team.id)).map((p) => p.id)
+        : [];
+      setMemberIds(current);
+      setOriginalMemberIds(current);
     }
+    // Only meant to seed the form when the dialog opens for a given team,
+    // not re-sync continuously while someone's mid-edit.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, team]);
+
+  const handleSubmit = async () => {
+    onSubmit({ name: name.trim(), color, memberIds });
+    if (team) {
+      const originalSet = new Set(originalMemberIds);
+      const nextSet = new Set(memberIds);
+      const toAdd = memberIds.filter((id) => !originalSet.has(id));
+      const toRemove = originalMemberIds.filter((id) => !nextSet.has(id));
+      if (toAdd.length || toRemove.length) {
+        setSaving(true);
+        try {
+          await Promise.all([
+            ...toAdd.map((id) => addMemberToTeam(id, team.id)),
+            ...toRemove.map((id) => removeMemberFromTeam(id, team.id)),
+          ]);
+        } catch (error) {
+          toast.error("Some membership changes didn't save", {
+            description: (error as Error).message,
+          });
+        } finally {
+          setSaving(false);
+        }
+      }
+    }
+    onOpenChange(false);
+  };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -503,46 +538,39 @@ function TeamFormDialog({
             <Label>Colour</Label>
             <ColorDotPicker value={color} onChange={setColor} />
           </div>
-          {!team && (
-            <div className="grid gap-2">
-              <Label>Add people (optional)</Label>
-              <MultiSelectList
-                options={people.map((p) => ({
-                  id: p.id,
-                  label: p.name,
-                  hint: `${p.title} · ${
-                    p.teamIds.length
-                      ? p.teamIds
-                          .map((id) => teams.find((t) => t.id === id)?.name)
-                          .filter(Boolean)
-                          .join(", ")
-                      : "No team"
-                  }`,
-                }))}
-                selected={memberIds}
-                onToggle={(id) =>
-                  setMemberIds((prev) =>
-                    prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
-                  )
-                }
-              />
-              <p className="text-xs text-muted-foreground">
-                People you pick move from their current team to this one.
-              </p>
-            </div>
-          )}
+          <div className="grid gap-2">
+            <Label>{team ? "People" : "Add people (optional)"}</Label>
+            <MultiSelectList
+              options={people.map((p) => ({
+                id: p.id,
+                label: p.name,
+                hint: `${p.title} · ${
+                  p.teamIds.length
+                    ? p.teamIds
+                        .map((id) => teams.find((t) => t.id === id)?.name)
+                        .filter(Boolean)
+                        .join(", ")
+                    : "No team"
+                }`,
+              }))}
+              selected={memberIds}
+              onToggle={(id) =>
+                setMemberIds((prev) =>
+                  prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
+                )
+              }
+            />
+            <p className="text-xs text-muted-foreground">
+              Checking someone adds them to this team — it won't remove them from any other team
+              they're already on.
+            </p>
+          </div>
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Button
-            disabled={!name.trim()}
-            onClick={() => {
-              onSubmit({ name: name.trim(), color, memberIds });
-              onOpenChange(false);
-            }}
-          >
+          <Button disabled={!name.trim() || saving} onClick={() => void handleSubmit()}>
             {team ? "Save team" : "Create team"}
           </Button>
         </DialogFooter>
