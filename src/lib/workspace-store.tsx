@@ -47,6 +47,7 @@ import {
 } from "@/lib/workspace/types";
 import { useClientsData } from "@/lib/workspace/use-clients";
 import { useSettingsData } from "@/lib/workspace/use-settings";
+import { useTeamsData } from "@/lib/workspace/use-teams";
 import { useTagsData } from "@/lib/workspace/use-tags";
 import { useTaskCategoriesData } from "@/lib/workspace/use-task-categories";
 
@@ -253,18 +254,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     },
   });
 
-  const teamsQ = useQuery({
-    queryKey: ["teams"],
-    enabled,
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from("teams")
-        .select("id, name, color")
-        .order("created_at");
-      if (error) throw error;
-      return data;
-    },
-  });
+  const { teamsQ, teams, createTeam, updateTeam, deleteTeam } = useTeamsData(enabled);
 
   const teamMembersQ = useQuery({
     queryKey: ["team_members"],
@@ -420,8 +410,6 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       })
       .then(() => qc.invalidateQueries({ queryKey: ["profiles"] }));
   }, [uid, session, profilesQ.data, profilesQ.isLoading, qc]);
-
-  const teams = useMemo<Team[]>(() => teamsQ.data ?? [], [teamsQ.data]);
 
   const members = useMemo<WorkspaceMember[]>(() => {
     const links = teamMembersQ.data ?? [];
@@ -602,6 +590,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       members,
       activeMembers,
       teams,
+      createTeam,
+      updateTeam,
+      deleteTeam,
       projects,
       tags,
       createTag,
@@ -719,31 +710,6 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         const { removeUserAccess } = await import("@/lib/admin.functions");
         await removeUserAccess({ data: { userId: memberId } });
         invalidate("profiles", "team_members");
-      },
-
-      createTeam: async ({ name, color, memberIds }) => {
-        const { data, error } = await supabase
-          .from("teams")
-          .insert({ name, color })
-          .select("id")
-          .single();
-        throwIf(error);
-        if (data && memberIds.length) {
-          await supabase
-            .from("team_members")
-            .insert(memberIds.map((user_id) => ({ user_id, team_id: data.id })));
-        }
-        invalidate("teams", "team_members");
-      },
-      updateTeam: async (teamId, input) => {
-        const { error } = await supabase.from("teams").update(input).eq("id", teamId);
-        throwIf(error);
-        invalidate("teams");
-      },
-      deleteTeam: async (teamId) => {
-        const { error } = await supabase.from("teams").delete().eq("id", teamId);
-        throwIf(error);
-        invalidate("teams", "team_members", "projects");
       },
 
       createProject: async (input) => {
@@ -928,6 +894,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     members,
     activeMembers,
     teams,
+    createTeam,
+    updateTeam,
+    deleteTeam,
     projects,
     tags,
     createTag,
