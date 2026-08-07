@@ -34,13 +34,13 @@ import { useEffect, useRef, useState } from "react";
 export const Route = createFileRoute("/settings")({
   head: () => ({
     meta: [
-      { title: "Settings — Ironbrij Time" },
+      { title: "Settings — IronTrack" },
       {
         name: "description",
         content:
-          "Manage your Ironbrij Time profile, notification preferences and workspace-level admin settings.",
+          "Manage your IronTrack profile, notification preferences and workspace-level admin settings.",
       },
-      { property: "og:title", content: "Settings — Ironbrij Time" },
+      { property: "og:title", content: "Settings — IronTrack" },
       {
         property: "og:description",
         content: "Profile, notifications and workspace admin settings.",
@@ -71,13 +71,13 @@ const notifications = [
 function SettingsPage() {
   const { isAdmin } = useWorkspace();
   return (
-    <AppShell title="Settings" subtitle="Make Ironbrij Time feel like yours.">
+    <AppShell title="Settings" subtitle="Make IronTrack feel like yours.">
       <Tabs defaultValue="profile">
         <TabsList>
           <TabsTrigger value="profile">Profile</TabsTrigger>
           <TabsTrigger value="notifications">Notifications</TabsTrigger>
           {isAdmin && <TabsTrigger value="users">Users</TabsTrigger>}
-          <TabsTrigger value="admin">Admin</TabsTrigger>
+          {isAdmin && <TabsTrigger value="admin">Admin</TabsTrigger>}
         </TabsList>
 
         <TabsContent value="profile" className="mt-6">
