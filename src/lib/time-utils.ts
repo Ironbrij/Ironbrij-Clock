@@ -55,6 +55,29 @@ export function orderByRecency<T extends { id: string }>(
   return { recent, rest };
 }
 
+/** Same idea as orderByRecency, but for lists matched by name instead of id — tasks are picked by name, not a stored reference. */
+export function orderByRecencyName<T extends { id: string; name: string }>(
+  items: T[],
+  entries: { task: string; startTime: string }[],
+  max = 5,
+): { recent: T[]; rest: T[] } {
+  const sorted = [...entries].sort((a, b) => b.startTime.localeCompare(a.startTime));
+  const recentNames: string[] = [];
+  const seen = new Set<string>();
+  for (const e of sorted) {
+    if (e.task && !seen.has(e.task)) {
+      seen.add(e.task);
+      recentNames.push(e.task);
+    }
+    if (recentNames.length >= max) break;
+  }
+  const byName = new Map(items.map((i) => [i.name, i]));
+  const recent = recentNames.map((n) => byName.get(n)).filter((i): i is T => !!i);
+  const recentSet = new Set(recent.map((i) => i.id));
+  const rest = items.filter((i) => !recentSet.has(i.id));
+  return { recent, rest };
+}
+
 export function dayIndexOf(dateKey: string, weekStart: Date) {
   const [y, m, d] = dateKey.split("-").map(Number);
   const date = new Date(y, (m ?? 1) - 1, d ?? 1);
