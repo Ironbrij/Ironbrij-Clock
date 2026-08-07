@@ -110,6 +110,12 @@ export const removeUserAccess = createServerFn({ method: "POST" })
     await supabaseAdmin.from("team_members").delete().eq("user_id", data.userId);
     await supabaseAdmin.from("profiles").update({ is_active: false }).eq("id", data.userId);
 
+    await supabaseAdmin.from("activity_log").insert({
+      actor_id: context.userId,
+      action: "member_removed",
+      target_user_id: data.userId,
+    });
+
     return { removed: true };
   });
 
