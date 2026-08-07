@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Activity,
   CalendarClock,
@@ -12,6 +12,7 @@ import {
 import { toast } from "sonner";
 import { AppShell } from "@/components/app-shell";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
@@ -28,6 +29,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { formatHours } from "@/lib/mock-data";
 import { formatWeekRange, fromDateKey, startOfWeek, toDateKey } from "@/lib/time-utils";
 import {
+  useThisWeekStart,
   useWorkspace,
   type PendingApproval,
   type WorkspaceActivityEvent,
@@ -92,16 +94,25 @@ const sections: { id: string; label: string; icon: LucideIcon; description: stri
 ];
 
 function ManagePage() {
+  const { unseenActivityCount, markActivitySeen } = useWorkspace();
   const [tab, setTab] = useState(sections[0].id);
   const active = sections.find((s) => s.id === tab)!;
 
+  const handleTabChange = (value: string) => {
+    setTab(value);
+    if (value === "activity") markActivitySeen();
+  };
+
   return (
     <AppShell title="Manage" subtitle="Workspace operations, gathered in one hub.">
-      <Tabs value={tab} onValueChange={setTab}>
+      <Tabs value={tab} onValueChange={handleTabChange}>
         <TabsList className="h-auto flex-wrap justify-start gap-1">
           {sections.map((s) => (
-            <TabsTrigger key={s.id} value={s.id}>
+            <TabsTrigger key={s.id} value={s.id} className="relative">
               {s.label}
+              {s.id === "activity" && unseenActivityCount > 0 && (
+                <span className="absolute -right-1 -top-1 h-2 w-2 rounded-full bg-destructive" />
+              )}
             </TabsTrigger>
           ))}
         </TabsList>
@@ -121,6 +132,83 @@ function ManagePage() {
         </Card>
       )}
     </AppShell>
+  );
+}
+
+function statusBadgeVariant(status: string): "default" | "secondary" | "destructive" | "outline" {
+  switch (status) {
+    case "Approved":
+      return "default";
+    case "Submitted":
+      return "secondary";
+    case "Rejected":
+      return "destructive";
+    default:
+      return "outline";
+  }
+}
+
+function WeekStatusPanel() {
+  const { activeMembers, currentUser, isAdmin, timesheets } = useWorkspace();
+  const weekStart = useThisWeekStart();
+  const weekKey = toDateKey(weekStart);
+
+  const relevantMembers = useMemo(() => {
+    const base = activeMembers.filter((m) => !m.pending && m.id !== currentUser.id);
+    return isAdmin
+      ? base
+      : base.filter((m) => m.teamIds.some((tid) => currentUser.teamIds.includes(tid)));
+  }, [activeMembers, currentUser, isAdmin]);
+
+  const statusFor = useCallback(
+    (userId: string) =>
+      timesheets.find((t) => t.userId === userId && t.weekStart === weekKey)?.status ??
+      "Not submitted",
+    [timesheets, weekKey],
+  );
+
+  const sorted = useMemo(() => {
+    const rank: Record<string, number> = {
+      "Not submitted": 0,
+      Rejected: 1,
+      Draft: 1,
+      Submitted: 2,
+      Approved: 3,
+    };
+    return [...relevantMembers].sort((a, b) => {
+      const diff = (rank[statusFor(a.id)] ?? 0) - (rank[statusFor(b.id)] ?? 0);
+      return diff !== 0 ? diff : a.name.localeCompare(b.name);
+    });
+  }, [relevantMembers, statusFor]);
+
+  if (relevantMembers.length === 0) return null;
+
+  return (
+    <Card className="mb-4 shadow-card">
+      <CardContent className="p-0">
+        <div className="border-b border-border px-6 py-3">
+          <h3 className="text-sm font-semibold">This week · {formatWeekRange(weekStart)}</h3>
+          <p className="text-xs text-muted-foreground">
+            Who's submitted their timesheet so far — not just what's waiting on you.
+          </p>
+        </div>
+        <ul className="divide-y divide-border">
+          {sorted.map((m) => (
+            <li key={m.id} className="flex items-center justify-between gap-4 px-6 py-2.5">
+              <div className="flex min-w-0 items-center gap-3">
+                <Avatar className="h-7 w-7 shrink-0">
+                  <AvatarFallback className="bg-secondary text-xs">{m.initials}</AvatarFallback>
+                </Avatar>
+                <span className="truncate text-sm">{m.name}</span>
+              </div>
+              <Badge variant={statusBadgeVariant(statusFor(m.id))} className="shrink-0">
+                {statusFor(m.id)}
+              </Badge>
+            </li>
+          ))}
+        </ul>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -158,21 +246,25 @@ function ApprovalsPanel() {
 
   if (pendingApprovals.length === 0) {
     return (
-      <Card className="mt-4 shadow-card">
-        <CardContent className="flex flex-col items-center gap-3 px-6 py-16 text-center">
-          <CheckCheck className="h-10 w-10 text-muted-foreground/50" />
-          <h2 className="text-lg font-semibold">All caught up</h2>
-          <p className="max-w-md text-sm text-muted-foreground">
-            Nothing's waiting on your review right now.
-          </p>
-        </CardContent>
-      </Card>
+      <div className="mt-4">
+        <WeekStatusPanel />
+        <Card className="shadow-card">
+          <CardContent className="flex flex-col items-center gap-3 px-6 py-16 text-center">
+            <CheckCheck className="h-10 w-10 text-muted-foreground/50" />
+            <h2 className="text-lg font-semibold">All caught up</h2>
+            <p className="max-w-md text-sm text-muted-foreground">
+              Nothing's waiting on your review right now.
+            </p>
+          </CardContent>
+        </Card>
+      </div>
     );
   }
 
   return (
-    <>
-      <Card className="mt-4 shadow-card">
+    <div className="mt-4">
+      <WeekStatusPanel />
+      <Card className="shadow-card">
         <CardContent className="p-0">
           <ul className="divide-y divide-border">
             {pendingApprovals.map((a) => {
@@ -220,7 +312,7 @@ function ApprovalsPanel() {
         onOpenChange={(open) => !open && setRejecting(null)}
         onConfirm={reject}
       />
-    </>
+    </div>
   );
 }
 
