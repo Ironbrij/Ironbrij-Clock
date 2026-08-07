@@ -91,6 +91,7 @@ type WorkspaceContextValue = {
   clients: WorkspaceClient[];
   createClient: (name: string) => Promise<void>;
   updateClient: (id: string, name: string) => Promise<void>;
+  setClientActive: (id: string, active: boolean) => Promise<void>;
   deleteClient: (id: string) => Promise<void>;
   settings: WorkspaceSettings;
   entries: WorkspaceEntry[];
@@ -248,8 +249,15 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
 
   const { teamsQ, teams, createTeam, updateTeam, deleteTeam } = useTeamsData(enabled);
 
-  const { clientsQ, clients, resolveClientId, createClient, updateClient, deleteClient } =
-    useClientsData(enabled);
+  const {
+    clientsQ,
+    clients,
+    resolveClientId,
+    createClient,
+    updateClient,
+    setClientActive,
+    deleteClient,
+  } = useClientsData(enabled);
 
   const { tagsQ, tagUsageQ, tags, createTag, updateTag, deleteTag } = useTagsData(enabled);
 
@@ -350,6 +358,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       clients,
       createClient,
       updateClient,
+      setClientActive,
       deleteClient,
       settings,
       updateSettings,
@@ -430,6 +439,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     clients,
     createClient,
     updateClient,
+    setClientActive,
     deleteClient,
     settings,
     updateSettings,
