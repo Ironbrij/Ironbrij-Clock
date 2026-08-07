@@ -46,6 +46,7 @@ import {
   type WorkspaceTimesheet,
 } from "@/lib/workspace/types";
 import { useClientsData } from "@/lib/workspace/use-clients";
+import { useProjectsData } from "@/lib/workspace/use-projects";
 import { useSettingsData } from "@/lib/workspace/use-settings";
 import { useTeamsData } from "@/lib/workspace/use-teams";
 import { useTagsData } from "@/lib/workspace/use-tags";
@@ -279,48 +280,19 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     deleteTaskCategory,
   } = useTaskCategoriesData(enabled);
 
-  const projectsQ = useQuery({
-    queryKey: ["projects"],
-    enabled,
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from("projects")
-        .select("id, name, client_id, team_id, color, is_billable, is_archived")
-        .order("created_at");
-      if (error) throw error;
-      return data;
-    },
-  });
-
-  const projectMembersQ = useQuery({
-    queryKey: ["project_members"],
-    enabled,
-    queryFn: async () => {
-      const { data, error } = await supabase.from("project_members").select("project_id, user_id");
-      if (error) throw error;
-      return data;
-    },
-  });
-
-  const projectTagsQ = useQuery({
-    queryKey: ["project_tags"],
-    enabled,
-    queryFn: async () => {
-      const { data, error } = await supabase.from("project_tags").select("project_id, tag_id");
-      if (error) throw error;
-      return data;
-    },
-  });
-
-  const projectHoursQ = useQuery({
-    queryKey: ["project_hours"],
-    enabled,
-    queryFn: async () => {
-      const { data, error } = await supabase.rpc("project_hours");
-      if (error) throw error;
-      return data;
-    },
-  });
+  const {
+    projectsQ,
+    projectMembersQ,
+    projectTagsQ,
+    projectHoursQ,
+    projects,
+    createProject,
+    updateProject,
+    archiveProject,
+    unarchiveProject,
+    deleteProject,
+    projectHoursForRange,
+  } = useProjectsData(enabled, clientsQ.data, resolveClientId);
 
   const { settingsQ, settings, updateSettings } = useSettingsData(enabled);
 
@@ -437,30 +409,6 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   // name stays correct on anything historical they're already attached to.
   const activeMembers = useMemo(() => members.filter((m) => m.active), [members]);
 
-  const projects = useMemo<WorkspaceProject[]>(() => {
-    const clients = clientsQ.data ?? [];
-    const pm = projectMembersQ.data ?? [];
-    const pt = projectTagsQ.data ?? [];
-    const hours = projectHoursQ.data ?? [];
-    return (projectsQ.data ?? []).map((p) => {
-      const h = hours.find((x) => x.project_id === p.id);
-      return {
-        id: p.id,
-        name: p.name,
-        clientId: p.client_id,
-        client: clients.find((c) => c.id === p.client_id)?.name ?? NO_CLIENT,
-        teamId: p.team_id ?? "",
-        color: p.color,
-        hours: (h?.total_minutes ?? 0) / 60,
-        weekHours: (h?.week_minutes ?? 0) / 60,
-        memberIds: pm.filter((x) => x.project_id === p.id).map((x) => x.user_id),
-        tagIds: pt.filter((x) => x.project_id === p.id).map((x) => x.tag_id),
-        billable: p.is_billable,
-        archived: p.is_archived,
-      };
-    });
-  }, [projectsQ.data, clientsQ.data, projectMembersQ.data, projectTagsQ.data, projectHoursQ.data]);
-
   const entries = useMemo<WorkspaceEntry[]>(
     () =>
       (entriesQ.data ?? []).map((e) => ({
@@ -544,22 +492,6 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     [qc],
   );
 
-  const writeProjectLinks = useCallback(
-    async (projectId: string, tagIds: string[], memberIds: string[]) => {
-      await supabase.from("project_tags").delete().eq("project_id", projectId);
-      await supabase.from("project_members").delete().eq("project_id", projectId);
-      if (tagIds.length)
-        await supabase
-          .from("project_tags")
-          .insert(tagIds.map((tag_id) => ({ project_id: projectId, tag_id })));
-      if (memberIds.length)
-        await supabase
-          .from("project_members")
-          .insert(memberIds.map((user_id) => ({ project_id: projectId, user_id })));
-    },
-    [],
-  );
-
   const loading =
     enabled &&
     (profilesQ.isLoading ||
@@ -594,6 +526,12 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       updateTeam,
       deleteTeam,
       projects,
+      createProject,
+      updateProject,
+      archiveProject,
+      unarchiveProject,
+      deleteProject,
+      projectHoursForRange,
       tags,
       createTag,
       updateTag,
@@ -617,11 +555,6 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       teamMemberCount: (teamId) => membersByTeam(teamId).length,
       memberById: (id) => members.find((m) => m.id === id),
       projectById: (id) => (id ? projects.find((p) => p.id === id) : undefined),
-      projectHoursForRange: async (from, to) => {
-        const { data, error } = await supabase.rpc("project_hours_range", { _from: from, _to: to });
-        throwIf(error);
-        return (data ?? []).map((r) => ({ projectId: r.project_id, minutes: r.minutes }));
-      },
       employeeHoursForRange: async (from, to) => {
         const { data, error } = await supabase.rpc("employee_hours_range", {
           _from: from,
@@ -710,59 +643,6 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         const { removeUserAccess } = await import("@/lib/admin.functions");
         await removeUserAccess({ data: { userId: memberId } });
         invalidate("profiles", "team_members");
-      },
-
-      createProject: async (input) => {
-        const { data, error } = await supabase
-          .from("projects")
-          .insert({
-            name: input.name,
-            client_id: resolveClientId(input.client),
-            team_id: input.teamId || null,
-            color: input.color,
-            is_billable: input.billable,
-          })
-          .select("id")
-          .single();
-        throwIf(error);
-        if (data) await writeProjectLinks(data.id, input.tagIds, input.memberIds);
-        invalidate("projects", "project_members", "project_tags", "project_hours");
-      },
-      updateProject: async (projectId, input) => {
-        const { error } = await supabase
-          .from("projects")
-          .update({
-            name: input.name,
-            client_id: resolveClientId(input.client),
-            team_id: input.teamId || null,
-            color: input.color,
-            is_billable: input.billable,
-          })
-          .eq("id", projectId);
-        throwIf(error);
-        await writeProjectLinks(projectId, input.tagIds, input.memberIds);
-        invalidate("projects", "project_members", "project_tags");
-      },
-      archiveProject: async (projectId) => {
-        const { error } = await supabase
-          .from("projects")
-          .update({ is_archived: true })
-          .eq("id", projectId);
-        throwIf(error);
-        invalidate("projects");
-      },
-      unarchiveProject: async (projectId) => {
-        const { error } = await supabase
-          .from("projects")
-          .update({ is_archived: false })
-          .eq("id", projectId);
-        throwIf(error);
-        invalidate("projects");
-      },
-      deleteProject: async (projectId) => {
-        const { error } = await supabase.from("projects").delete().eq("id", projectId);
-        throwIf(error);
-        invalidate("projects", "project_members", "project_tags", "time_entries", "project_hours");
       },
 
       updateProfile: async (patch) => {
@@ -898,6 +778,12 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     updateTeam,
     deleteTeam,
     projects,
+    createProject,
+    updateProject,
+    archiveProject,
+    unarchiveProject,
+    deleteProject,
+    projectHoursForRange,
     tags,
     createTag,
     updateTag,
@@ -919,8 +805,6 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     timesheetForWeek,
     membersByTeam,
     invalidate,
-    resolveClientId,
-    writeProjectLinks,
     qc,
     uid,
   ]);
