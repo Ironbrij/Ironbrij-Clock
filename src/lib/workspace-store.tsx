@@ -26,10 +26,7 @@ import {
   NO_CLIENT,
   timezones,
   toDbReviewStatus,
-  toDbRole,
-  toRole,
   toTimesheetStatus,
-  type DbRole,
   type DbTimesheetStatus,
   type PendingApproval,
   type ProjectInput,
@@ -46,6 +43,7 @@ import {
   type WorkspaceTimesheet,
 } from "@/lib/workspace/types";
 import { useClientsData } from "@/lib/workspace/use-clients";
+import { useMembersData } from "@/lib/workspace/use-members";
 import { useProjectsData } from "@/lib/workspace/use-projects";
 import { useSettingsData } from "@/lib/workspace/use-settings";
 import { useTeamsData } from "@/lib/workspace/use-teams";
@@ -207,18 +205,6 @@ type WorkspaceContextValue = {
 
 const WorkspaceContext = createContext<WorkspaceContextValue | null>(null);
 
-const emptyUser: WorkspaceMember = {
-  id: "",
-  name: "",
-  initials: "—",
-  role: "Member",
-  title: "",
-  teamId: "",
-  teamIds: [],
-  active: true,
-  timezone: "Australia/Sydney",
-};
-
 export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const qc = useQueryClient();
   const [session, setSession] = useState<Session | null>(null);
@@ -240,32 +226,30 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const uid = session?.user.id ?? null;
   const enabled = !!uid;
 
-  const profilesQ = useQuery({
-    queryKey: ["profiles"],
-    enabled,
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from("profiles")
-        .select(
-          "id, email, full_name, avatar_url, job_title, timezone, role, is_pending, is_active",
-        )
-        .order("full_name");
-      if (error) throw error;
-      return data;
-    },
-  });
+  const {
+    profilesQ,
+    teamMembersQ,
+    members,
+    activeMembers,
+    currentUser,
+    isAdmin,
+    canManage,
+    membersByTeam,
+    teamMemberCount,
+    memberById,
+    invitePeople,
+    resendInvite,
+    updateMemberRole,
+    approveMember,
+    addMemberToTeam,
+    removeMemberFromTeam,
+    removeUser,
+    updateProfile,
+    employeeHoursForRange,
+    employeeClientHoursForRange,
+  } = useMembersData(enabled, uid, session);
 
   const { teamsQ, teams, createTeam, updateTeam, deleteTeam } = useTeamsData(enabled);
-
-  const teamMembersQ = useQuery({
-    queryKey: ["team_members"],
-    enabled,
-    queryFn: async () => {
-      const { data, error } = await supabase.from("team_members").select("user_id, team_id");
-      if (error) throw error;
-      return data;
-    },
-  });
 
   const { clientsQ, clients, resolveClientId, createClient, updateClient, deleteClient } =
     useClientsData(enabled);
@@ -363,52 +347,6 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     },
   });
 
-  // Make sure a signed-in person always has a profile row.
-  useEffect(() => {
-    if (!uid || !session?.user || profilesQ.isLoading || !profilesQ.data) return;
-    if (profilesQ.data.some((p) => p.id === uid)) return;
-    const email = session.user.email ?? "";
-    const meta = session.user.user_metadata ?? {};
-    supabase
-      .from("profiles")
-      .insert({
-        id: uid,
-        email,
-        full_name:
-          (meta["full_name"] as string) || (meta["name"] as string) || nameFromEmail(email),
-        avatar_url: (meta["avatar_url"] as string) ?? null,
-        job_title: "Team member",
-        is_pending: true,
-      })
-      .then(() => qc.invalidateQueries({ queryKey: ["profiles"] }));
-  }, [uid, session, profilesQ.data, profilesQ.isLoading, qc]);
-
-  const members = useMemo<WorkspaceMember[]>(() => {
-    const links = teamMembersQ.data ?? [];
-    return (profilesQ.data ?? []).map((p) => {
-      const teamIds = links.filter((l) => l.user_id === p.id).map((l) => l.team_id);
-      const name = p.full_name || p.email || "Unnamed";
-      return {
-        id: p.id,
-        name,
-        initials: initialsFrom(name),
-        role: toRole(p.role as DbRole),
-        title: p.job_title ?? "",
-        teamId: teamIds[0] ?? "",
-        teamIds,
-        email: p.email ?? undefined,
-        pending: p.is_pending ?? false,
-        active: p.is_active ?? true,
-        timezone: p.timezone ?? "Australia/Sydney",
-      };
-    });
-  }, [profilesQ.data, teamMembersQ.data]);
-
-  // For rosters and "assign this person" pickers — memberById/reports
-  // still use the full `members` list on purpose, so a removed person's
-  // name stays correct on anything historical they're already attached to.
-  const activeMembers = useMemo(() => members.filter((m) => m.active), [members]);
-
   const entries = useMemo<WorkspaceEntry[]>(
     () =>
       (entriesQ.data ?? []).map((e) => ({
@@ -459,26 +397,6 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       });
   }, [timesheets, reviewEntriesQ.data]);
 
-  const currentUser = useMemo<WorkspaceMember>(() => {
-    const me = members.find((m) => m.id === uid);
-    if (me) return me;
-    const email = session?.user.email ?? "";
-    return email
-      ? {
-          ...emptyUser,
-          id: uid ?? "",
-          name: nameFromEmail(email),
-          initials: initialsFrom(email),
-          email,
-        }
-      : emptyUser;
-  }, [members, uid, session]);
-
-  const membersByTeam = useCallback(
-    (teamId: string) => members.filter((m) => m.teamIds.includes(teamId)),
-    [members],
-  );
-
   const timesheetForWeek = useCallback(
     (weekStart: Date) => {
       const key = toDateKey(weekStart);
@@ -517,8 +435,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         await supabase.auth.signOut();
       },
       currentUser,
-      isAdmin: currentUser.role === "Admin",
-      canManage: currentUser.role === "Admin" || currentUser.role === "Manager",
+      isAdmin,
+      canManage,
       members,
       activeMembers,
       teams,
@@ -552,29 +470,11 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       pendingApprovals,
       timesheetForWeek,
       membersByTeam,
-      teamMemberCount: (teamId) => membersByTeam(teamId).length,
-      memberById: (id) => members.find((m) => m.id === id),
+      teamMemberCount,
+      memberById,
       projectById: (id) => (id ? projects.find((p) => p.id === id) : undefined),
-      employeeHoursForRange: async (from, to) => {
-        const { data, error } = await supabase.rpc("employee_hours_range", {
-          _from: from,
-          _to: to,
-        });
-        throwIf(error);
-        return (data ?? []).map((r) => ({ userId: r.user_id, minutes: r.minutes }));
-      },
-      employeeClientHoursForRange: async (from, to) => {
-        const { data, error } = await supabase.rpc("employee_client_hours_range", {
-          _from: from,
-          _to: to,
-        });
-        throwIf(error);
-        return (data ?? []).map((r) => ({
-          userId: r.user_id,
-          clientId: r.client_id,
-          minutes: r.minutes,
-        }));
-      },
+      employeeHoursForRange,
+      employeeClientHoursForRange,
       entriesForTag: async (tagId) => {
         const { data, error } = await supabase
           .from("time_entries")
@@ -592,65 +492,14 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
           minutes: e.duration_minutes ?? 0,
         }));
       },
-
-      invitePeople: async ({ emails, teamId, role }) => {
-        const { inviteMembers } = await import("@/lib/admin.functions");
-        const result = await inviteMembers({
-          data: {
-            emails,
-            teamId,
-            role: toDbRole(role),
-            redirectTo: typeof window === "undefined" ? undefined : window.location.origin,
-          },
-        });
-        invalidate("profiles", "team_members");
-        return result.invited;
-      },
-      resendInvite: async (email) => {
-        const { resendInvite } = await import("@/lib/admin.functions");
-        await resendInvite({ data: { email } });
-      },
-      updateMemberRole: async (memberId, role) => {
-        const { error } = await supabase.rpc("set_member_role", {
-          _user_id: memberId,
-          _role: toDbRole(role),
-        });
-        throwIf(error);
-        invalidate("profiles");
-      },
-      approveMember: async (memberId) => {
-        const { error } = await supabase.rpc("approve_member", { _user_id: memberId });
-        throwIf(error);
-        invalidate("profiles");
-      },
-      addMemberToTeam: async (memberId, teamId) => {
-        const { error } = await supabase
-          .from("team_members")
-          .upsert({ user_id: memberId, team_id: teamId }, { onConflict: "user_id,team_id" });
-        throwIf(error);
-        invalidate("team_members");
-      },
-      removeMemberFromTeam: async (memberId, teamId) => {
-        const { error } = await supabase
-          .from("team_members")
-          .delete()
-          .eq("user_id", memberId)
-          .eq("team_id", teamId);
-        throwIf(error);
-        invalidate("team_members");
-      },
-      removeUser: async (memberId) => {
-        const { removeUserAccess } = await import("@/lib/admin.functions");
-        await removeUserAccess({ data: { userId: memberId } });
-        invalidate("profiles", "team_members");
-      },
-
-      updateProfile: async (patch) => {
-        if (!uid) return;
-        const { error } = await supabase.from("profiles").update(patch).eq("id", uid);
-        throwIf(error);
-        invalidate("profiles");
-      },
+      invitePeople,
+      resendInvite,
+      updateMemberRole,
+      approveMember,
+      addMemberToTeam,
+      removeMemberFromTeam,
+      removeUser,
+      updateProfile,
 
       startTimer: async ({ projectId, task, description }) => {
         if (!uid) return;
@@ -771,8 +620,22 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     authLoading,
     loading,
     currentUser,
+    isAdmin,
+    canManage,
     members,
     activeMembers,
+    memberById,
+    teamMemberCount,
+    invitePeople,
+    resendInvite,
+    updateMemberRole,
+    approveMember,
+    addMemberToTeam,
+    removeMemberFromTeam,
+    removeUser,
+    updateProfile,
+    employeeHoursForRange,
+    employeeClientHoursForRange,
     teams,
     createTeam,
     updateTeam,
