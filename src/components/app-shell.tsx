@@ -107,15 +107,18 @@ export function AppShell({
   return (
     <div className="flex min-h-screen w-full bg-background">
       <aside className="sticky top-0 hidden h-screen w-64 shrink-0 flex-col border-r border-sidebar-border bg-sidebar px-4 py-6 lg:flex">
-        <Link to="/" className="mb-8 block px-2">
+        <Link to="/" className="mb-8 flex items-center gap-2.5 px-2">
           <img
-            src="/ironbrij-wordmark.png"
-            alt="Ironbrij"
-            className="h-8 w-auto dark:brightness-0 dark:invert"
+            src="/ironbrij-mark.png"
+            alt="IronTrack"
+            className="h-8 w-8 shrink-0 dark:brightness-0 dark:invert"
           />
-          <span className="mt-1 block text-xs font-medium text-muted-foreground">
-            Time tracking
-          </span>
+          <div className="min-w-0">
+            <span className="block truncate text-base font-semibold text-sidebar-foreground">
+              IronTrack
+            </span>
+            <span className="block text-xs font-medium text-muted-foreground">Time tracking</span>
+          </div>
         </Link>
         <nav className="flex flex-1 flex-col gap-1">
           {nav.map((item) => {
