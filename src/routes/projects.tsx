@@ -54,13 +54,13 @@ import {
 export const Route = createFileRoute("/projects")({
   head: () => ({
     meta: [
-      { title: "Projects — Ironbrij Time" },
+      { title: "Projects — IronTrack" },
       {
         name: "description",
         content:
           "Browse and manage Ironbrij projects, clients and tags with assigned members and total hours logged.",
       },
-      { property: "og:title", content: "Projects — Ironbrij Time" },
+      { property: "og:title", content: "Projects — IronTrack" },
       { property: "og:description", content: "Projects, clients and tags with hours logged." },
     ],
   }),
@@ -152,10 +152,17 @@ function ProjectsPage() {
           createClient={createClient}
           updateClient={updateClient}
           deleteClient={deleteClient}
+          canManage={canManage}
         />
       )}
       {tab === "tags" && (
-        <TagsTab tags={tags} createTag={createTag} updateTag={updateTag} deleteTag={deleteTag} />
+        <TagsTab
+          tags={tags}
+          createTag={createTag}
+          updateTag={updateTag}
+          deleteTag={deleteTag}
+          canManage={canManage}
+        />
       )}
       {tab === "projects" && (
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
@@ -570,11 +577,13 @@ function ClientsTab({
   createClient,
   updateClient,
   deleteClient,
+  canManage,
 }: {
   clients: { id: string; name: string; projects: WorkspaceProject[]; hours: number }[];
   createClient: (name: string) => Promise<void>;
   updateClient: (id: string, name: string) => Promise<void>;
   deleteClient: (id: string) => Promise<void>;
+  canManage: boolean;
 }) {
   const [newName, setNewName] = useState("");
   const [adding, setAdding] = useState(false);
@@ -691,30 +700,32 @@ function ClientsTab({
                         {c.projects.length} {c.projects.length === 1 ? "project" : "projects"}
                       </p>
                     </div>
-                    <div className="flex items-center gap-1">
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        aria-label={`Rename ${c.name}`}
-                        onClick={() => startEdit(c.id, c.name)}
-                      >
-                        <Pencil className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        aria-label={`Remove ${c.name}`}
-                        onClick={() =>
-                          setDeleteTarget({
-                            id: c.id,
-                            name: c.name,
-                            projectCount: c.projects.length,
-                          })
-                        }
-                      >
-                        <Trash2 className="h-4 w-4 text-destructive" />
-                      </Button>
-                    </div>
+                    {canManage && (
+                      <div className="flex items-center gap-1">
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          aria-label={`Rename ${c.name}`}
+                          onClick={() => startEdit(c.id, c.name)}
+                        >
+                          <Pencil className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          aria-label={`Remove ${c.name}`}
+                          onClick={() =>
+                            setDeleteTarget({
+                              id: c.id,
+                              name: c.name,
+                              projectCount: c.projects.length,
+                            })
+                          }
+                        >
+                          <Trash2 className="h-4 w-4 text-destructive" />
+                        </Button>
+                      </div>
+                    )}
                   </div>
                 </li>
               ))}
@@ -723,17 +734,19 @@ function ClientsTab({
         </CardContent>
       </Card>
 
-      <div className="flex gap-2">
-        <Input
-          placeholder="New client name"
-          value={newName}
-          onChange={(e) => setNewName(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && void add()}
-        />
-        <Button disabled={adding || !newName.trim()} onClick={() => void add()}>
-          Add client
-        </Button>
-      </div>
+      {canManage && (
+        <div className="flex gap-2">
+          <Input
+            placeholder="New client name"
+            value={newName}
+            onChange={(e) => setNewName(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && void add()}
+          />
+          <Button disabled={adding || !newName.trim()} onClick={() => void add()}>
+            Add client
+          </Button>
+        </div>
+      )}
 
       <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
         <AlertDialogContent>
@@ -764,11 +777,13 @@ function TagsTab({
   createTag,
   updateTag,
   deleteTag,
+  canManage,
 }: {
   tags: WorkspaceTag[];
   createTag: (name: string, color: string) => Promise<void>;
   updateTag: (id: string, name: string, color: string) => Promise<void>;
   deleteTag: (id: string) => Promise<void>;
+  canManage: boolean;
 }) {
   const [formOpen, setFormOpen] = useState(false);
   const [editingTag, setEditingTag] = useState<WorkspaceTag | null>(null);
@@ -792,17 +807,19 @@ function TagsTab({
 
   return (
     <div className="grid gap-4">
-      <div className="flex justify-end">
-        <Button
-          className="gap-2"
-          onClick={() => {
-            setEditingTag(null);
-            setFormOpen(true);
-          }}
-        >
-          <Plus className="h-4 w-4" /> New tag
-        </Button>
-      </div>
+      {canManage && (
+        <div className="flex justify-end">
+          <Button
+            className="gap-2"
+            onClick={() => {
+              setEditingTag(null);
+              setFormOpen(true);
+            }}
+          >
+            <Plus className="h-4 w-4" /> New tag
+          </Button>
+        </div>
+      )}
 
       {tags.length === 0 ? (
         <Card className="shadow-card">
@@ -831,29 +848,33 @@ function TagsTab({
                 </span>
                 <div className="flex shrink-0 items-center gap-1">
                   <span className="text-sm text-muted-foreground tabular-nums">{t.entryCount}</span>
-                  <Button
-                    size="icon"
-                    variant="ghost"
-                    aria-label={`Edit ${t.name}`}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setEditingTag(t);
-                      setFormOpen(true);
-                    }}
-                  >
-                    <Pencil className="h-4 w-4" />
-                  </Button>
-                  <Button
-                    size="icon"
-                    variant="ghost"
-                    aria-label={`Delete ${t.name}`}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setDeleteTarget(t);
-                    }}
-                  >
-                    <Trash2 className="h-4 w-4 text-destructive" />
-                  </Button>
+                  {canManage && (
+                    <>
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        aria-label={`Edit ${t.name}`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setEditingTag(t);
+                          setFormOpen(true);
+                        }}
+                      >
+                        <Pencil className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        aria-label={`Delete ${t.name}`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setDeleteTarget(t);
+                        }}
+                      >
+                        <Trash2 className="h-4 w-4 text-destructive" />
+                      </Button>
+                    </>
+                  )}
                 </div>
               </CardContent>
             </Card>
