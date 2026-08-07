@@ -1,6 +1,8 @@
-import { useMemo } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+
+const LAST_SEEN_KEY = "ironbrij-activity-last-seen";
 
 export type WorkspaceActivityEvent = {
   id: string;
@@ -41,5 +43,24 @@ export function useActivityLogData(enabled: boolean, canManage: boolean) {
     [activityLogQ.data],
   );
 
-  return { activityLogQ, activityLog };
+  // "Unseen since last visit" — a plain localStorage timestamp, not
+  // per-event read/unread state. Simple on purpose: this is a nudge to
+  // check the tab, not an inbox.
+  const [lastSeen, setLastSeen] = useState<string>(() => {
+    if (typeof window === "undefined") return new Date(0).toISOString();
+    return window.localStorage.getItem(LAST_SEEN_KEY) ?? new Date(0).toISOString();
+  });
+
+  const unseenActivityCount = useMemo(
+    () => activityLog.filter((e) => e.createdAt > lastSeen).length,
+    [activityLog, lastSeen],
+  );
+
+  const markActivitySeen = useCallback(() => {
+    const now = new Date().toISOString();
+    if (typeof window !== "undefined") window.localStorage.setItem(LAST_SEEN_KEY, now);
+    setLastSeen(now);
+  }, []);
+
+  return { activityLogQ, activityLog, unseenActivityCount, markActivitySeen };
 }
