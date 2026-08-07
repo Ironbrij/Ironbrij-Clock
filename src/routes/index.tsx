@@ -10,13 +10,13 @@ import { useThisWeekStart, useWorkspace } from "@/lib/workspace-store";
 export const Route = createFileRoute("/")({
   head: () => ({
     meta: [
-      { title: "Dashboard — Ironbrij Time" },
+      { title: "Dashboard — IronTrack" },
       {
         name: "description",
         content:
           "Your Ironbrij overview: hours tracked today and this week, daily breakdown and top projects.",
       },
-      { property: "og:title", content: "Dashboard — Ironbrij Time" },
+      { property: "og:title", content: "Dashboard — IronTrack" },
       {
         property: "og:description",
         content: "Hours tracked today and this week across Ironbrij projects.",
