@@ -101,6 +101,9 @@ type WorkspaceContextValue = {
   pendingApprovals: PendingApproval[];
   /** Recent workspace activity for the Manage → Activity tab — empty for anyone who isn't a manager/admin. */
   activityLog: WorkspaceActivityEvent[];
+  /** How many activity events happened since the person last opened the Activity tab. */
+  unseenActivityCount: number;
+  markActivitySeen: () => void;
   timesheetForWeek: (weekStart: Date) => WorkspaceTimesheet | undefined;
   submitTimesheet: (weekStart: Date) => Promise<void>;
   reviewTimesheet: (
@@ -238,7 +241,10 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     employeeClientHoursForRange,
   } = useMembersData(enabled, uid, session);
 
-  const { activityLogQ, activityLog } = useActivityLogData(enabled, canManage);
+  const { activityLogQ, activityLog, unseenActivityCount, markActivitySeen } = useActivityLogData(
+    enabled,
+    canManage,
+  );
 
   const { teamsQ, teams, createTeam, updateTeam, deleteTeam } = useTeamsData(enabled);
 
@@ -352,6 +358,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       timesheets,
       pendingApprovals,
       activityLog,
+      unseenActivityCount,
+      markActivitySeen,
       timesheetForWeek,
       membersByTeam,
       teamMemberCount,
@@ -436,6 +444,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     timesheets,
     pendingApprovals,
     activityLog,
+    unseenActivityCount,
+    markActivitySeen,
     timesheetForWeek,
     submitTimesheet,
     reviewTimesheet,
