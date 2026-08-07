@@ -11,14 +11,17 @@ export function useClientsData(enabled: boolean) {
     queryKey: ["clients"],
     enabled,
     queryFn: async () => {
-      const { data, error } = await supabase.from("clients").select("id, name").order("name");
+      const { data, error } = await supabase
+        .from("clients")
+        .select("id, name, is_active")
+        .order("name");
       if (error) throw error;
       return data;
     },
   });
 
   const clients = useMemo<WorkspaceClient[]>(
-    () => (clientsQ.data ?? []).map((c) => ({ id: c.id, name: c.name })),
+    () => (clientsQ.data ?? []).map((c) => ({ id: c.id, name: c.name, active: c.is_active })),
     [clientsQ.data],
   );
 
@@ -48,6 +51,15 @@ export function useClientsData(enabled: boolean) {
     [qc],
   );
 
+  const setClientActive = useCallback(
+    async (id: string, active: boolean) => {
+      const { error } = await supabase.from("clients").update({ is_active: active }).eq("id", id);
+      throwIf(error);
+      qc.invalidateQueries({ queryKey: ["clients"] });
+    },
+    [qc],
+  );
+
   const deleteClient = useCallback(
     async (id: string) => {
       const { error } = await supabase.from("clients").delete().eq("id", id);
@@ -64,6 +76,7 @@ export function useClientsData(enabled: boolean) {
     resolveClientId,
     createClient,
     updateClient,
+    setClientActive,
     deleteClient,
   };
 }
