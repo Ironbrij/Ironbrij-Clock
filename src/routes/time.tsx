@@ -45,6 +45,7 @@ import {
   formatWeekRange,
   fromDateKey,
   orderByRecency,
+  orderByRecencyName,
   startOfWeek,
   toDateKey,
   weekdayNames,
@@ -54,13 +55,13 @@ import { useThisWeekStart, useWorkspace, type WorkspaceEntry } from "@/lib/works
 export const Route = createFileRoute("/time")({
   head: () => ({
     meta: [
-      { title: "Time — Ironbrij Time" },
+      { title: "Time — IronTrack" },
       {
         name: "description",
         content:
           "Track time with a live timer and review your entries as a list, weekly grid or calendar.",
       },
-      { property: "og:title", content: "Time — Ironbrij Time" },
+      { property: "og:title", content: "Time — IronTrack" },
       {
         property: "og:description",
         content: "Live timer plus list, grid and calendar views of your tracked time.",
@@ -110,6 +111,7 @@ function TimerBar() {
     useWorkspace();
   const active = projects.filter((p) => !p.archived);
   const { recent: recentProjects, rest: otherProjects } = orderByRecency(active, entries);
+  const { recent: recentTasks, rest: otherTasks } = orderByRecencyName(taskCategories, entries);
   const [project, setProject] = useState("");
   const [task, setTask] = useState("");
   const [description, setDescription] = useState("");
@@ -283,7 +285,18 @@ function TimerBar() {
               <SelectValue placeholder="Task" />
             </SelectTrigger>
             <SelectContent>
-              {taskCategories.map((t) => (
+              {recentTasks.length > 0 && (
+                <SelectGroup>
+                  <SelectLabel>Recent</SelectLabel>
+                  {recentTasks.map((t) => (
+                    <SelectItem key={t.id} value={t.name}>
+                      {t.name}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+              )}
+              {recentTasks.length > 0 && otherTasks.length > 0 && <SelectSeparator />}
+              {otherTasks.map((t) => (
                 <SelectItem key={t.id} value={t.name}>
                   {t.name}
                 </SelectItem>
@@ -515,6 +528,7 @@ function EntryFormDialog({
   const { projects, entries, createEntry, updateEntry, settings, taskCategories } = useWorkspace();
   const active = projects.filter((p) => !p.archived);
   const { recent: recentProjects, rest: otherProjects } = orderByRecency(active, entries);
+  const { recent: recentTasks, rest: otherTasks } = orderByRecencyName(taskCategories, entries);
   const defaultTask = taskCategories[0]?.name ?? "";
   const [values, setValues] = useState<EntryFormValues>(() => toFormValues(entry, defaultTask));
   const [busy, setBusy] = useState(false);
@@ -626,7 +640,18 @@ function EntryFormDialog({
                   <SelectValue placeholder="Task" />
                 </SelectTrigger>
                 <SelectContent>
-                  {taskCategories.map((t) => (
+                  {recentTasks.length > 0 && (
+                    <SelectGroup>
+                      <SelectLabel>Recent</SelectLabel>
+                      {recentTasks.map((t) => (
+                        <SelectItem key={t.id} value={t.name}>
+                          {t.name}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  )}
+                  {recentTasks.length > 0 && otherTasks.length > 0 && <SelectSeparator />}
+                  {otherTasks.map((t) => (
                     <SelectItem key={t.id} value={t.name}>
                       {t.name}
                     </SelectItem>
