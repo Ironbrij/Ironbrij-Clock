@@ -31,13 +31,13 @@ import { useWorkspace } from "@/lib/workspace-store";
 export const Route = createFileRoute("/reports")({
   head: () => ({
     meta: [
-      { title: "Reports — Ironbrij Time" },
+      { title: "Reports — IronTrack" },
       {
         name: "description",
         content:
           "Hours by project over any date range, with a sortable breakdown table and export.",
       },
-      { property: "og:title", content: "Reports — Ironbrij Time" },
+      { property: "og:title", content: "Reports — IronTrack" },
       { property: "og:description", content: "Hours by project with a sortable breakdown." },
     ],
   }),
