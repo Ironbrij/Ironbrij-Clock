@@ -38,13 +38,13 @@ import {
 export const Route = createFileRoute("/manage")({
   head: () => ({
     meta: [
-      { title: "Manage — Ironbrij Time" },
+      { title: "Manage — IronTrack" },
       {
         name: "description",
         content:
           "Workspace management hub: schedule, expenses, approvals, activity, kiosks and invoices for Ironbrij teams.",
       },
-      { property: "og:title", content: "Manage — Ironbrij Time" },
+      { property: "og:title", content: "Manage — IronTrack" },
       {
         property: "og:description",
         content: "Schedule, expenses, approvals, activity, kiosks and invoices in one hub.",
