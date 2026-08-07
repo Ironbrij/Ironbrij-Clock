@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
-import { Archive, ArchiveRestore, Pencil, Plus, Trash2 } from "lucide-react";
+import { Archive, ArchiveRestore, Eye, EyeOff, Pencil, Plus, Search, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell, ProjectDot } from "@/components/app-shell";
 import { ColorDotPicker } from "@/components/color-dot-picker";
@@ -9,6 +9,14 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Pagination,
+  PaginationContent,
+  PaginationItem,
+  PaginationNext,
+  PaginationPrevious,
+} from "@/components/ui/pagination";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -83,6 +91,7 @@ function ProjectsPage() {
     clients: realClients,
     createClient,
     updateClient,
+    setClientActive,
     deleteClient,
     createTag,
     updateTag,
@@ -145,12 +154,14 @@ function ProjectsPage() {
             return {
               id: rc.id,
               name: rc.name,
+              active: rc.active,
               projects: group?.projects ?? [],
               hours: group?.hours ?? 0,
             };
           })}
           createClient={createClient}
           updateClient={updateClient}
+          setClientActive={setClientActive}
           deleteClient={deleteClient}
           canManage={canManage}
         />
@@ -572,16 +583,26 @@ function ProjectFormDialog({
   );
 }
 
+const CLIENTS_PAGE_SIZE = 10;
+
 function ClientsTab({
   clients,
   createClient,
   updateClient,
+  setClientActive,
   deleteClient,
   canManage,
 }: {
-  clients: { id: string; name: string; projects: WorkspaceProject[]; hours: number }[];
+  clients: {
+    id: string;
+    name: string;
+    active: boolean;
+    projects: WorkspaceProject[];
+    hours: number;
+  }[];
   createClient: (name: string) => Promise<void>;
   updateClient: (id: string, name: string) => Promise<void>;
+  setClientActive: (id: string, active: boolean) => Promise<void>;
   deleteClient: (id: string) => Promise<void>;
   canManage: boolean;
 }) {
@@ -595,6 +616,28 @@ function ClientsTab({
     projectCount: number;
   } | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [togglingId, setTogglingId] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
+  const [showInactive, setShowInactive] = useState(false);
+  const [page, setPage] = useState(1);
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return clients
+      .filter((c) => showInactive || c.active)
+      .filter((c) => !q || c.name.toLowerCase().includes(q));
+  }, [clients, showInactive, search]);
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / CLIENTS_PAGE_SIZE));
+  const currentPage = Math.min(page, totalPages);
+  const paged = filtered.slice(
+    (currentPage - 1) * CLIENTS_PAGE_SIZE,
+    currentPage * CLIENTS_PAGE_SIZE,
+  );
+
+  useEffect(() => {
+    setPage(1);
+  }, [search, showInactive]);
 
   const add = async () => {
     const name = newName.trim();
@@ -603,6 +646,8 @@ function ClientsTab({
     try {
       await createClient(name);
       setNewName("");
+      setSearch("");
+      setPage(1);
       toast.success("Client added");
     } catch (error) {
       toast.error("Couldn't add that", { description: (error as Error).message });
@@ -630,6 +675,18 @@ function ClientsTab({
     }
   };
 
+  const toggleActive = async (c: { id: string; name: string; active: boolean }) => {
+    setTogglingId(c.id);
+    try {
+      await setClientActive(c.id, !c.active);
+      toast.success(c.active ? `${c.name} marked inactive` : `${c.name} marked active`);
+    } catch (error) {
+      toast.error("Couldn't update that", { description: (error as Error).message });
+    } finally {
+      setTogglingId(null);
+    }
+  };
+
   const confirmDelete = async () => {
     if (!deleteTarget) return;
     setDeleting(true);
@@ -646,35 +703,74 @@ function ClientsTab({
 
   return (
     <div className="grid gap-4">
+      {canManage && (
+        <div className="flex gap-2">
+          <Input
+            placeholder="New client name"
+            value={newName}
+            onChange={(e) => setNewName(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && void add()}
+          />
+          <Button disabled={adding || !newName.trim()} onClick={() => void add()}>
+            Add client
+          </Button>
+        </div>
+      )}
+
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="relative min-w-[220px] flex-1">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            placeholder="Search clients…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="pl-8"
+          />
+        </div>
+        <label className="flex shrink-0 items-center gap-2 text-sm text-muted-foreground">
+          <Checkbox checked={showInactive} onCheckedChange={(v) => setShowInactive(!!v)} />
+          Show inactive
+        </label>
+      </div>
+
       <Card className="min-w-0 shadow-card">
         <CardContent className="p-0">
-          {clients.length === 0 ? (
+          {paged.length === 0 ? (
             <p className="px-6 py-8 text-center text-sm text-muted-foreground">
-              No clients yet — add one below.
+              {clients.length === 0
+                ? "No clients yet — add one above."
+                : "No clients match your search."}
             </p>
           ) : (
             <ul className="divide-y divide-border">
-              {clients.map((c) => (
+              {paged.map((c) => (
                 <li
                   key={c.id}
                   className="grid gap-3 px-6 py-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center"
                 >
                   <div className="min-w-0">
-                    {editingId === c.id ? (
-                      <Input
-                        autoFocus
-                        value={editName}
-                        onChange={(e) => setEditName(e.target.value)}
-                        onBlur={() => void saveEdit()}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") void saveEdit();
-                          if (e.key === "Escape") setEditingId(null);
-                        }}
-                        className="h-8 max-w-xs"
-                      />
-                    ) : (
-                      <p className="truncate text-sm font-medium">{c.name}</p>
-                    )}
+                    <div className="flex items-center gap-2">
+                      {editingId === c.id ? (
+                        <Input
+                          autoFocus
+                          value={editName}
+                          onChange={(e) => setEditName(e.target.value)}
+                          onBlur={() => void saveEdit()}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") void saveEdit();
+                            if (e.key === "Escape") setEditingId(null);
+                          }}
+                          className="h-8 max-w-xs"
+                        />
+                      ) : (
+                        <p className="truncate text-sm font-medium">{c.name}</p>
+                      )}
+                      {!c.active && (
+                        <Badge variant="outline" className="shrink-0 text-muted-foreground">
+                          Inactive
+                        </Badge>
+                      )}
+                    </div>
                     {c.projects.length > 0 && (
                       <div className="mt-1.5 flex flex-wrap gap-1.5">
                         {c.projects.map((p) => (
@@ -702,6 +798,21 @@ function ClientsTab({
                     </div>
                     {canManage && (
                       <div className="flex items-center gap-1">
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          disabled={togglingId === c.id}
+                          aria-label={
+                            c.active ? `Mark ${c.name} inactive` : `Mark ${c.name} active`
+                          }
+                          onClick={() => void toggleActive(c)}
+                        >
+                          {c.active ? (
+                            <Eye className="h-4 w-4" />
+                          ) : (
+                            <EyeOff className="h-4 w-4 text-muted-foreground" />
+                          )}
+                        </Button>
                         <Button
                           size="icon"
                           variant="ghost"
@@ -734,17 +845,36 @@ function ClientsTab({
         </CardContent>
       </Card>
 
-      {canManage && (
-        <div className="flex gap-2">
-          <Input
-            placeholder="New client name"
-            value={newName}
-            onChange={(e) => setNewName(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && void add()}
-          />
-          <Button disabled={adding || !newName.trim()} onClick={() => void add()}>
-            Add client
-          </Button>
+      {filtered.length > 0 && (
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <p className="text-sm text-muted-foreground">
+            {filtered.length} {filtered.length === 1 ? "client" : "clients"}
+            {totalPages > 1 && ` · page ${currentPage} of ${totalPages}`}
+          </p>
+          {totalPages > 1 && (
+            <Pagination className="mx-0 w-auto">
+              <PaginationContent>
+                <PaginationItem>
+                  <PaginationPrevious
+                    className={
+                      currentPage <= 1 ? "pointer-events-none opacity-50" : "cursor-pointer"
+                    }
+                    onClick={() => currentPage > 1 && setPage(currentPage - 1)}
+                  />
+                </PaginationItem>
+                <PaginationItem>
+                  <PaginationNext
+                    className={
+                      currentPage >= totalPages
+                        ? "pointer-events-none opacity-50"
+                        : "cursor-pointer"
+                    }
+                    onClick={() => currentPage < totalPages && setPage(currentPage + 1)}
+                  />
+                </PaginationItem>
+              </PaginationContent>
+            </Pagination>
+          )}
         </div>
       )}
 
