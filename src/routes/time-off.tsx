@@ -9,13 +9,17 @@ import { timeOffBalances, timeOffHistory } from "@/lib/mock-data";
 export const Route = createFileRoute("/time-off")({
   head: () => ({
     meta: [
-      { title: "Time off — Ironbrij Time" },
+      { title: "Time off — IronTrack" },
       {
         name: "description",
-        content: "Your vacation, sick leave and personal day balances, plus the full history of your time-off requests.",
+        content:
+          "Your vacation, sick leave and personal day balances, plus the full history of your time-off requests.",
       },
-      { property: "og:title", content: "Time off — Ironbrij Time" },
-      { property: "og:description", content: "Leave balances and request history for your Ironbrij account." },
+      { property: "og:title", content: "Time off — IronTrack" },
+      {
+        property: "og:description",
+        content: "Leave balances and request history for your Ironbrij account.",
+      },
     ],
   }),
   component: TimeOffPage,
@@ -44,7 +48,9 @@ function TimeOffPage() {
           return (
             <Card key={b.id} className="shadow-card">
               <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-medium text-muted-foreground">{b.label}</CardTitle>
+                <CardTitle className="text-sm font-medium text-muted-foreground">
+                  {b.label}
+                </CardTitle>
               </CardHeader>
               <CardContent>
                 <p className="text-3xl font-semibold tabular-nums">{remaining}</p>
