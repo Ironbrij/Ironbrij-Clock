@@ -79,10 +79,10 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "Ironbrij Time" },
+      { title: "IronTrack" },
       { name: "description", content: "Internal time tracking for Ironbrij teams." },
       { name: "author", content: "Ironbrij" },
-      { property: "og:title", content: "Ironbrij Time" },
+      { property: "og:title", content: "IronTrack" },
       { property: "og:description", content: "Internal time tracking for Ironbrij teams." },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary_large_image" },
