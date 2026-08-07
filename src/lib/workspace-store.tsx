@@ -1,23 +1,8 @@
-import {
-  createContext,
-  useCallback,
-  useContext,
-  useEffect,
-  useMemo,
-  useState,
-  type ReactNode,
-} from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import type { Session } from "@supabase/supabase-js";
 import { supabase } from "@/integrations/supabase/client";
-import type { Database } from "@/integrations/supabase/types";
-import {
-  combineDateAndTime,
-  dayIndexOf,
-  fromDateKey,
-  startOfWeek,
-  toDateKey,
-} from "@/lib/time-utils";
+import { dayIndexOf, startOfWeek } from "@/lib/time-utils";
 import {
   currencies,
   dotColors,
@@ -47,6 +32,8 @@ import { useMembersData } from "@/lib/workspace/use-members";
 import { useProjectsData } from "@/lib/workspace/use-projects";
 import { useSettingsData } from "@/lib/workspace/use-settings";
 import { useTeamsData } from "@/lib/workspace/use-teams";
+import { useTimeEntriesData } from "@/lib/workspace/use-time-entries";
+import { useTimesheetsData } from "@/lib/workspace/use-timesheets";
 import { useTagsData } from "@/lib/workspace/use-tags";
 import { useTaskCategoriesData } from "@/lib/workspace/use-task-categories";
 
@@ -75,8 +62,6 @@ export {
   type WorkspaceTaskCategory,
   type WorkspaceTimesheet,
 };
-
-type TimeEntryUpdate = Database["public"]["Tables"]["time_entries"]["Update"];
 
 type WorkspaceContextValue = {
   session: Session | null;
@@ -280,135 +265,27 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
 
   const { settingsQ, settings, updateSettings } = useSettingsData(enabled);
 
-  const entriesQ = useQuery({
-    queryKey: ["time_entries", uid],
-    enabled,
-    queryFn: async () => {
-      const from = new Date();
-      from.setDate(from.getDate() - 60);
-      const { data, error } = await supabase
-        .from("time_entries")
-        .select(
-          "id, project_id, task, description, start_time, end_time, entry_date, duration_minutes, is_billable",
-        )
-        .eq("user_id", uid!)
-        .gte("entry_date", toDateKey(from))
-        .order("start_time", { ascending: false });
-      if (error) throw error;
-      return data;
-    },
-  });
+  const {
+    entriesQ,
+    entries,
+    runningEntry,
+    startTimer,
+    stopTimer,
+    updateEntry,
+    createEntry,
+    deleteEntry,
+    entriesForTag,
+  } = useTimeEntriesData(enabled, uid, projects);
 
-  const timesheetsQ = useQuery({
-    queryKey: ["timesheets"],
-    enabled,
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from("timesheets")
-        .select(
-          "id, user_id, week_start, status, submitted_at, reviewed_by, reviewed_at, review_note",
-        )
-        .order("week_start", { ascending: false });
-      if (error) throw error;
-      return data;
-    },
-  });
-
-  const pendingReviewRaw = useMemo(
-    () => (timesheetsQ.data ?? []).filter((t) => t.status === "submitted"),
-    [timesheetsQ.data],
-  );
-
-  // Only fetched once there's something to review, and scoped to just the
-  // people/weeks involved — RLS already limits this to entries the viewer
-  // (a manager on a shared team, or an admin) is allowed to see.
-  const reviewEntriesQ = useQuery({
-    queryKey: [
-      "review_entries",
-      pendingReviewRaw
-        .map((t) => t.id)
-        .sort()
-        .join(","),
-    ],
-    enabled: enabled && pendingReviewRaw.length > 0,
-    queryFn: async () => {
-      const userIds = Array.from(new Set(pendingReviewRaw.map((t) => t.user_id)));
-      const earliest = pendingReviewRaw.reduce(
-        (min, t) => (t.week_start < min ? t.week_start : min),
-        pendingReviewRaw[0].week_start,
-      );
-      const { data, error } = await supabase
-        .from("time_entries")
-        .select("user_id, entry_date, duration_minutes")
-        .in("user_id", userIds)
-        .gte("entry_date", earliest);
-      if (error) throw error;
-      return data;
-    },
-  });
-
-  const entries = useMemo<WorkspaceEntry[]>(
-    () =>
-      (entriesQ.data ?? []).map((e) => ({
-        id: e.id,
-        projectId: e.project_id,
-        task: e.task ?? "",
-        description: e.description,
-        minutes: e.duration_minutes ?? 0,
-        startTime: e.start_time,
-        endTime: e.end_time,
-        date: e.entry_date,
-        running: !e.end_time,
-      })),
-    [entriesQ.data],
-  );
-
-  const runningEntry = useMemo(() => entries.find((e) => e.running) ?? null, [entries]);
-
-  const timesheets = useMemo<WorkspaceTimesheet[]>(
-    () =>
-      (timesheetsQ.data ?? []).map((t) => ({
-        id: t.id,
-        userId: t.user_id,
-        weekStart: t.week_start,
-        status: toTimesheetStatus(t.status as DbTimesheetStatus),
-        submittedAt: t.submitted_at,
-        reviewedBy: t.reviewed_by,
-        reviewedAt: t.reviewed_at,
-        reviewNote: t.review_note,
-      })),
-    [timesheetsQ.data],
-  );
-
-  const pendingApprovals = useMemo<PendingApproval[]>(() => {
-    const rows = reviewEntriesQ.data ?? [];
-    return timesheets
-      .filter((t) => t.status === "Submitted")
-      .map((t) => {
-        const start = fromDateKey(t.weekStart);
-        const minutes = rows
-          .filter((r) => r.user_id === t.userId)
-          .filter((r) => {
-            const idx = dayIndexOf(r.entry_date, start);
-            return idx >= 0 && idx <= 6;
-          })
-          .reduce((sum, r) => sum + (r.duration_minutes ?? 0), 0);
-        return { ...t, minutes };
-      });
-  }, [timesheets, reviewEntriesQ.data]);
-
-  const timesheetForWeek = useCallback(
-    (weekStart: Date) => {
-      const key = toDateKey(weekStart);
-      return timesheets.find((t) => t.userId === uid && t.weekStart === key);
-    },
-    [timesheets, uid],
-  );
-
-  const invalidate = useCallback(
-    (...keys: string[]) => keys.forEach((k) => qc.invalidateQueries({ queryKey: [k] })),
-    [qc],
-  );
+  const {
+    timesheetsQ,
+    reviewEntriesQ,
+    timesheets,
+    pendingApprovals,
+    timesheetForWeek,
+    submitTimesheet,
+    reviewTimesheet,
+  } = useTimesheetsData(enabled, uid);
 
   const loading =
     enabled &&
@@ -475,23 +352,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       projectById: (id) => (id ? projects.find((p) => p.id === id) : undefined),
       employeeHoursForRange,
       employeeClientHoursForRange,
-      entriesForTag: async (tagId) => {
-        const { data, error } = await supabase
-          .from("time_entries")
-          .select("id, user_id, project_id, description, entry_date, duration_minutes")
-          .contains("tag_ids", [tagId])
-          .order("entry_date", { ascending: false })
-          .limit(200);
-        throwIf(error);
-        return (data ?? []).map((e) => ({
-          id: e.id,
-          userId: e.user_id,
-          projectId: e.project_id,
-          description: e.description,
-          date: e.entry_date,
-          minutes: e.duration_minutes ?? 0,
-        }));
-      },
+      entriesForTag,
       invitePeople,
       resendInvite,
       updateMemberRole,
@@ -501,118 +362,14 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       removeUser,
       updateProfile,
 
-      startTimer: async ({ projectId, task, description }) => {
-        if (!uid) return;
-        const project = projects.find((p) => p.id === projectId);
-        const now = new Date();
-        const { error } = await supabase.from("time_entries").insert({
-          user_id: uid,
-          project_id: projectId,
-          task,
-          description,
-          start_time: now.toISOString(),
-          entry_date: toDateKey(now),
-          is_billable: project?.billable ?? true,
-          tag_ids: project?.tagIds ?? [],
-        });
-        throwIf(error);
-        invalidate("time_entries", "project_hours", "tag_usage");
-      },
-      stopTimer: async (entryId) => {
-        const entry = entries.find((e) => e.id === entryId);
-        if (!entry) return;
-        const end = new Date();
-        const minutes = Math.max(
-          1,
-          Math.round((end.getTime() - new Date(entry.startTime).getTime()) / 60000),
-        );
-        const { error } = await supabase
-          .from("time_entries")
-          .update({ end_time: end.toISOString(), duration_minutes: minutes })
-          .eq("id", entryId);
-        throwIf(error);
-        invalidate("time_entries", "project_hours", "tag_usage");
-      },
-      updateEntry: async (entryId, patch) => {
-        const dbPatch: TimeEntryUpdate = {};
-        if (patch.projectId !== undefined) dbPatch.project_id = patch.projectId;
-        if (patch.task !== undefined) dbPatch.task = patch.task;
-        if (patch.description !== undefined) dbPatch.description = patch.description;
+      startTimer,
+      stopTimer,
+      updateEntry,
+      createEntry,
+      deleteEntry,
 
-        if (
-          patch.date !== undefined ||
-          patch.startTime !== undefined ||
-          patch.endTime !== undefined
-        ) {
-          const existing = entries.find((e) => e.id === entryId);
-          if (!existing) throw new Error("Entry not found.");
-          const date = patch.date ?? existing.date;
-          const existingStart = new Date(existing.startTime);
-          const existingEnd = existing.endTime ? new Date(existing.endTime) : existingStart;
-          const pad = (n: number) => String(n).padStart(2, "0");
-          const startTime =
-            patch.startTime ??
-            `${pad(existingStart.getHours())}:${pad(existingStart.getMinutes())}`;
-          const endTime =
-            patch.endTime ?? `${pad(existingEnd.getHours())}:${pad(existingEnd.getMinutes())}`;
-          const start = combineDateAndTime(date, startTime);
-          const end = combineDateAndTime(date, endTime);
-          const minutes = Math.round((end.getTime() - start.getTime()) / 60000);
-          if (minutes <= 0) throw new Error("End time must be after start time.");
-          dbPatch.entry_date = date;
-          dbPatch.start_time = start.toISOString();
-          dbPatch.end_time = end.toISOString();
-          dbPatch.duration_minutes = minutes;
-        }
-
-        const { error } = await supabase.from("time_entries").update(dbPatch).eq("id", entryId);
-        throwIf(error);
-        invalidate("time_entries", "project_hours", "tag_usage");
-      },
-      createEntry: async (input) => {
-        if (!uid) return;
-        const project = projects.find((p) => p.id === input.projectId);
-        const start = combineDateAndTime(input.date, input.startTime);
-        const end = combineDateAndTime(input.date, input.endTime);
-        const minutes = Math.round((end.getTime() - start.getTime()) / 60000);
-        if (minutes <= 0) throw new Error("End time must be after start time.");
-        const { error } = await supabase.from("time_entries").insert({
-          user_id: uid,
-          project_id: input.projectId,
-          task: input.task,
-          description: input.description,
-          start_time: start.toISOString(),
-          end_time: end.toISOString(),
-          entry_date: input.date,
-          duration_minutes: minutes,
-          is_billable: project?.billable ?? true,
-          tag_ids: project?.tagIds ?? [],
-        });
-        throwIf(error);
-        invalidate("time_entries", "project_hours", "tag_usage");
-      },
-      deleteEntry: async (entryId) => {
-        const { error } = await supabase.from("time_entries").delete().eq("id", entryId);
-        throwIf(error);
-        invalidate("time_entries", "project_hours", "tag_usage");
-      },
-
-      submitTimesheet: async (weekStart) => {
-        const { error } = await supabase.rpc("submit_timesheet", {
-          _week_start: toDateKey(weekStart),
-        });
-        throwIf(error);
-        invalidate("timesheets");
-      },
-      reviewTimesheet: async (timesheetId, status, note) => {
-        const { error } = await supabase.rpc("review_timesheet", {
-          _timesheet_id: timesheetId,
-          _status: toDbReviewStatus(status),
-          _note: note,
-        });
-        throwIf(error);
-        invalidate("timesheets", "time_entries", "review_entries");
-      },
+      submitTimesheet,
+      reviewTimesheet,
       refreshAll: () => qc.invalidateQueries(),
     };
   }, [
@@ -663,13 +420,19 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     updateSettings,
     entries,
     runningEntry,
+    startTimer,
+    stopTimer,
+    updateEntry,
+    createEntry,
+    deleteEntry,
+    entriesForTag,
     timesheets,
     pendingApprovals,
     timesheetForWeek,
+    submitTimesheet,
+    reviewTimesheet,
     membersByTeam,
-    invalidate,
     qc,
-    uid,
   ]);
 
   return <WorkspaceContext.Provider value={value}>{children}</WorkspaceContext.Provider>;
