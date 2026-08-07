@@ -45,6 +45,7 @@ import {
   type WorkspaceTaskCategory,
   type WorkspaceTimesheet,
 } from "@/lib/workspace/types";
+import { useClientsData } from "@/lib/workspace/use-clients";
 import { useSettingsData } from "@/lib/workspace/use-settings";
 import { useTagsData } from "@/lib/workspace/use-tags";
 import { useTaskCategoriesData } from "@/lib/workspace/use-task-categories";
@@ -275,15 +276,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     },
   });
 
-  const clientsQ = useQuery({
-    queryKey: ["clients"],
-    enabled,
-    queryFn: async () => {
-      const { data, error } = await supabase.from("clients").select("id, name").order("name");
-      if (error) throw error;
-      return data;
-    },
-  });
+  const { clientsQ, clients, resolveClientId, createClient, updateClient, deleteClient } =
+    useClientsData(enabled);
 
   const { tagsQ, tagUsageQ, tags, createTag, updateTag, deleteTag } = useTagsData(enabled);
 
@@ -455,11 +449,6 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   // name stays correct on anything historical they're already attached to.
   const activeMembers = useMemo(() => members.filter((m) => m.active), [members]);
 
-  const clients = useMemo<WorkspaceClient[]>(
-    () => (clientsQ.data ?? []).map((c) => ({ id: c.id, name: c.name })),
-    [clientsQ.data],
-  );
-
   const projects = useMemo<WorkspaceProject[]>(() => {
     const clients = clientsQ.data ?? [];
     const pm = projectMembersQ.data ?? [];
@@ -567,11 +556,6 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     [qc],
   );
 
-  const resolveClientId = useCallback(
-    (name: string) => (clientsQ.data ?? []).find((c) => c.name === name)?.id ?? null,
-    [clientsQ.data],
-  );
-
   const writeProjectLinks = useCallback(
     async (projectId: string, tagIds: string[], memberIds: string[]) => {
       await supabase.from("project_tags").delete().eq("project_id", projectId);
@@ -628,6 +612,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       updateTaskCategory,
       deleteTaskCategory,
       clients,
+      createClient,
+      updateClient,
+      deleteClient,
       settings,
       updateSettings,
       entries,
@@ -757,22 +744,6 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         const { error } = await supabase.from("teams").delete().eq("id", teamId);
         throwIf(error);
         invalidate("teams", "team_members", "projects");
-      },
-
-      createClient: async (name) => {
-        const { error } = await supabase.from("clients").insert({ name: name.trim() });
-        throwIf(error);
-        invalidate("clients");
-      },
-      updateClient: async (id, name) => {
-        const { error } = await supabase.from("clients").update({ name: name.trim() }).eq("id", id);
-        throwIf(error);
-        invalidate("clients");
-      },
-      deleteClient: async (id) => {
-        const { error } = await supabase.from("clients").delete().eq("id", id);
-        throwIf(error);
-        invalidate("clients", "projects");
       },
 
       createProject: async (input) => {
@@ -967,6 +938,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     updateTaskCategory,
     deleteTaskCategory,
     clients,
+    createClient,
+    updateClient,
+    deleteClient,
     settings,
     updateSettings,
     entries,
