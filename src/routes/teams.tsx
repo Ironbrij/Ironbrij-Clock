@@ -50,13 +50,13 @@ import { dotColors, useWorkspace } from "@/lib/workspace-store";
 export const Route = createFileRoute("/teams")({
   head: () => ({
     meta: [
-      { title: "Teams — Ironbrij Time" },
+      { title: "Teams — IronTrack" },
       {
         name: "description",
         content:
           "Ironbrij internal teams, their members and roles — invite people, create teams and manage rosters.",
       },
-      { property: "og:title", content: "Teams — Ironbrij Time" },
+      { property: "og:title", content: "Teams — IronTrack" },
       {
         property: "og:description",
         content: "Internal Ironbrij teams, rosters and role management.",
