@@ -15,13 +15,13 @@ import { useThisWeekStart, useWorkspace, type TimesheetStatus } from "@/lib/work
 export const Route = createFileRoute("/timesheet")({
   head: () => ({
     meta: [
-      { title: "Timesheet — Ironbrij Time" },
+      { title: "Timesheet — IronTrack" },
       {
         name: "description",
         content:
           "Review your week in a project-by-day grid or a chronological list of logged time entries.",
       },
-      { property: "og:title", content: "Timesheet — Ironbrij Time" },
+      { property: "og:title", content: "Timesheet — IronTrack" },
       { property: "og:description", content: "Weekly grid and list views of your tracked time." },
     ],
   }),
