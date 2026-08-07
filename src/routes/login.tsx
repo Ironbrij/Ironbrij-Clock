@@ -12,13 +12,12 @@ import { useWorkspace } from "@/lib/workspace-store";
 export const Route = createFileRoute("/login")({
   head: () => ({
     meta: [
-      { title: "Sign in — Ironbrij Time" },
+      { title: "Sign in — IronTrack" },
       {
         name: "description",
-        content:
-          "Sign in to Ironbrij Time, the internal time tracking workspace for Ironbrij teams.",
+        content: "Sign in to IronTrack, the internal time tracking workspace for Ironbrij teams.",
       },
-      { property: "og:title", content: "Sign in — Ironbrij Time" },
+      { property: "og:title", content: "Sign in — IronTrack" },
       { property: "og:description", content: "Internal time tracking for Ironbrij teams." },
     ],
   }),
@@ -86,10 +85,10 @@ function Login() {
     <main className="flex min-h-screen items-center justify-center bg-muted/40 px-4 py-12">
       <div className="w-full max-w-sm">
         <div className="mb-8 flex flex-col items-center text-center">
-          <img src="/ironbrij-mark.png" alt="Ironbrij" className="h-14 w-14" />
+          <img src="/ironbrij-mark.png" alt="IronTrack" className="h-14 w-14" />
           <h1 className="mt-4 text-2xl font-semibold tracking-tight">Welcome back</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Sign in to Ironbrij Time and pick up where you left off.
+            Sign in to IronTrack and pick up where you left off.
           </p>
         </div>
         <Card className="shadow-elevated">
