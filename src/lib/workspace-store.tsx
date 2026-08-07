@@ -30,6 +30,7 @@ import {
 import { useClientsData } from "@/lib/workspace/use-clients";
 import { useMembersData } from "@/lib/workspace/use-members";
 import { useProjectsData } from "@/lib/workspace/use-projects";
+import { useActivityLogData, type WorkspaceActivityEvent } from "@/lib/workspace/use-activity-log";
 import { useSettingsData } from "@/lib/workspace/use-settings";
 import { useTeamsData } from "@/lib/workspace/use-teams";
 import { useTimeEntriesData } from "@/lib/workspace/use-time-entries";
@@ -53,6 +54,7 @@ export {
   type Role,
   type Team,
   type TimesheetStatus,
+  type WorkspaceActivityEvent,
   type WorkspaceClient,
   type WorkspaceEntry,
   type WorkspaceMember,
@@ -97,6 +99,8 @@ type WorkspaceContextValue = {
   timesheets: WorkspaceTimesheet[];
   /** Submitted timesheets this person can review (empty for plain Members). */
   pendingApprovals: PendingApproval[];
+  /** Recent workspace activity for the Manage → Activity tab — empty for anyone who isn't a manager/admin. */
+  activityLog: WorkspaceActivityEvent[];
   timesheetForWeek: (weekStart: Date) => WorkspaceTimesheet | undefined;
   submitTimesheet: (weekStart: Date) => Promise<void>;
   reviewTimesheet: (
@@ -234,6 +238,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     employeeClientHoursForRange,
   } = useMembersData(enabled, uid, session);
 
+  const { activityLogQ, activityLog } = useActivityLogData(enabled, canManage);
+
   const { teamsQ, teams, createTeam, updateTeam, deleteTeam } = useTeamsData(enabled);
 
   const { clientsQ, clients, resolveClientId, createClient, updateClient, deleteClient } =
@@ -345,6 +351,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       runningEntry,
       timesheets,
       pendingApprovals,
+      activityLog,
       timesheetForWeek,
       membersByTeam,
       teamMemberCount,
@@ -428,6 +435,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     entriesForTag,
     timesheets,
     pendingApprovals,
+    activityLog,
     timesheetForWeek,
     submitTimesheet,
     reviewTimesheet,
