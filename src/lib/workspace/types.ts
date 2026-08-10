@@ -68,6 +68,14 @@ export type WorkspaceClient = {
   contactEmail: string | null;
   subscriptionHours: number | null;
 };
+export type EmploymentType = "full_time" | "part_time";
+export type WorkspaceEmployment = {
+  userId: string;
+  employmentType: EmploymentType;
+  hourlyRate: number | null;
+  weeklySchedule: string | null;
+};
+
 export type WorkspaceTaskCategory = { id: string; name: string };
 
 export type WorkspaceSettings = {
