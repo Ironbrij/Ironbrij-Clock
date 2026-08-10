@@ -1,6 +1,16 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
-import { Archive, ArchiveRestore, Eye, EyeOff, Pencil, Plus, Search, Trash2 } from "lucide-react";
+import {
+  Archive,
+  ArchiveRestore,
+  Eye,
+  EyeOff,
+  Info,
+  Pencil,
+  Plus,
+  Search,
+  Trash2,
+} from "lucide-react";
 import { toast } from "sonner";
 import { AppShell, ProjectDot } from "@/components/app-shell";
 import { ColorDotPicker } from "@/components/color-dot-picker";
@@ -92,6 +102,7 @@ function ProjectsPage() {
     createClient,
     updateClient,
     setClientActive,
+    updateClientProfile,
     deleteClient,
     createTag,
     updateTag,
@@ -155,6 +166,10 @@ function ProjectsPage() {
               id: rc.id,
               name: rc.name,
               active: rc.active,
+              basecampUrl: rc.basecampUrl,
+              contactName: rc.contactName,
+              contactEmail: rc.contactEmail,
+              subscriptionHours: rc.subscriptionHours,
               projects: group?.projects ?? [],
               hours: group?.hours ?? 0,
             };
@@ -162,6 +177,7 @@ function ProjectsPage() {
           createClient={createClient}
           updateClient={updateClient}
           setClientActive={setClientActive}
+          updateClientProfile={updateClientProfile}
           deleteClient={deleteClient}
           canManage={canManage}
         />
@@ -590,6 +606,7 @@ function ClientsTab({
   createClient,
   updateClient,
   setClientActive,
+  updateClientProfile,
   deleteClient,
   canManage,
 }: {
@@ -597,15 +614,29 @@ function ClientsTab({
     id: string;
     name: string;
     active: boolean;
+    basecampUrl: string | null;
+    contactName: string | null;
+    contactEmail: string | null;
+    subscriptionHours: number | null;
     projects: WorkspaceProject[];
     hours: number;
   }[];
   createClient: (name: string) => Promise<void>;
   updateClient: (id: string, name: string) => Promise<void>;
   setClientActive: (id: string, active: boolean) => Promise<void>;
+  updateClientProfile: (
+    id: string,
+    profile: {
+      basecampUrl: string | null;
+      contactName: string | null;
+      contactEmail: string | null;
+      subscriptionHours: number | null;
+    },
+  ) => Promise<void>;
   deleteClient: (id: string) => Promise<void>;
   canManage: boolean;
 }) {
+  const [viewingId, setViewingId] = useState<string | null>(null);
   const [newName, setNewName] = useState("");
   const [adding, setAdding] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -796,6 +827,14 @@ function ClientsTab({
                         {c.projects.length} {c.projects.length === 1 ? "project" : "projects"}
                       </p>
                     </div>
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      aria-label={`View ${c.name}'s profile`}
+                      onClick={() => setViewingId(c.id)}
+                    >
+                      <Info className="h-4 w-4" />
+                    </Button>
                     {canManage && (
                       <div className="flex items-center gap-1">
                         <Button
@@ -898,7 +937,226 @@ function ClientsTab({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <ClientProfileDialog
+        client={clients.find((c) => c.id === viewingId) ?? null}
+        canManage={canManage}
+        updateClientProfile={updateClientProfile}
+        onOpenChange={(open) => !open && setViewingId(null)}
+      />
     </div>
+  );
+}
+
+function ClientProfileDialog({
+  client,
+  canManage,
+  updateClientProfile,
+  onOpenChange,
+}: {
+  client: {
+    id: string;
+    name: string;
+    basecampUrl: string | null;
+    contactName: string | null;
+    contactEmail: string | null;
+    subscriptionHours: number | null;
+    hours: number;
+  } | null;
+  canManage: boolean;
+  updateClientProfile: (
+    id: string,
+    profile: {
+      basecampUrl: string | null;
+      contactName: string | null;
+      contactEmail: string | null;
+      subscriptionHours: number | null;
+    },
+  ) => Promise<void>;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [basecampUrl, setBasecampUrl] = useState("");
+  const [contactName, setContactName] = useState("");
+  const [contactEmail, setContactEmail] = useState("");
+  const [subscriptionHours, setSubscriptionHours] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (client) {
+      setBasecampUrl(client.basecampUrl ?? "");
+      setContactName(client.contactName ?? "");
+      setContactEmail(client.contactEmail ?? "");
+      setSubscriptionHours(
+        client.subscriptionHours != null ? String(client.subscriptionHours) : "",
+      );
+      setEditing(false);
+    }
+  }, [client]);
+
+  if (!client) return null;
+
+  const rendered = client.hours;
+  const subscription = client.subscriptionHours;
+  const remaining = subscription != null ? subscription - rendered : null;
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      const parsedHours = subscriptionHours.trim() === "" ? null : Number(subscriptionHours);
+      await updateClientProfile(client.id, {
+        basecampUrl: basecampUrl.trim() || null,
+        contactName: contactName.trim() || null,
+        contactEmail: contactEmail.trim() || null,
+        subscriptionHours: parsedHours != null && !Number.isNaN(parsedHours) ? parsedHours : null,
+      });
+      toast.success("Client profile updated");
+      setEditing(false);
+    } catch (error) {
+      toast.error("Couldn't save that", { description: (error as Error).message });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Dialog open={!!client} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>{client.name}</DialogTitle>
+        </DialogHeader>
+
+        {editing ? (
+          <div className="grid gap-4 py-2">
+            <div className="grid gap-2">
+              <Label htmlFor="client-contact-name">Contact name</Label>
+              <Input
+                id="client-contact-name"
+                value={contactName}
+                onChange={(e) => setContactName(e.target.value)}
+                placeholder="Jane Smith"
+              />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="client-contact-email">Client email</Label>
+              <Input
+                id="client-contact-email"
+                type="email"
+                value={contactEmail}
+                onChange={(e) => setContactEmail(e.target.value)}
+                placeholder="jane@client.com"
+              />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="client-basecamp">Basecamp link</Label>
+              <Input
+                id="client-basecamp"
+                value={basecampUrl}
+                onChange={(e) => setBasecampUrl(e.target.value)}
+                placeholder="https://3.basecamp.com/..."
+              />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="client-subscription">Subscription hours</Label>
+              <Input
+                id="client-subscription"
+                type="number"
+                min="0"
+                step="0.5"
+                value={subscriptionHours}
+                onChange={(e) => setSubscriptionHours(e.target.value)}
+                placeholder="e.g. 40"
+              />
+            </div>
+          </div>
+        ) : (
+          <div className="grid gap-5 py-2">
+            <div className="grid grid-cols-2 gap-4 text-sm">
+              <div>
+                <p className="text-xs text-muted-foreground">Contact</p>
+                <p className="mt-0.5 font-medium">{client.contactName || "—"}</p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">Email</p>
+                {client.contactEmail ? (
+                  <a
+                    href={`mailto:${client.contactEmail}`}
+                    className="mt-0.5 block truncate font-medium text-primary underline-offset-2 hover:underline"
+                  >
+                    {client.contactEmail}
+                  </a>
+                ) : (
+                  <p className="mt-0.5 font-medium">—</p>
+                )}
+              </div>
+              <div className="col-span-2">
+                <p className="text-xs text-muted-foreground">Basecamp</p>
+                {client.basecampUrl ? (
+                  <a
+                    href={client.basecampUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="mt-0.5 block truncate font-medium text-primary underline-offset-2 hover:underline"
+                  >
+                    {client.basecampUrl}
+                  </a>
+                ) : (
+                  <p className="mt-0.5 font-medium">—</p>
+                )}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-3 gap-3 rounded-lg border border-border p-4">
+              <div className="text-center">
+                <p className="text-lg font-semibold tabular-nums">
+                  {subscription != null ? formatHours(subscription) : "—"}
+                </p>
+                <p className="text-xs text-muted-foreground">Subscription</p>
+              </div>
+              <div className="text-center">
+                <p className="text-lg font-semibold tabular-nums">{formatHours(rendered)}</p>
+                <p className="text-xs text-muted-foreground">Rendered</p>
+              </div>
+              <div className="text-center">
+                <p
+                  className={`text-lg font-semibold tabular-nums ${
+                    remaining != null && remaining < 0 ? "text-destructive" : ""
+                  }`}
+                >
+                  {remaining != null ? formatHours(remaining) : "—"}
+                </p>
+                <p className="text-xs text-muted-foreground">Remaining</p>
+              </div>
+            </div>
+            {subscription != null && remaining != null && remaining < 0 && (
+              <p className="-mt-3 text-xs text-destructive">
+                This client has used {formatHours(Math.abs(remaining))} beyond their subscription.
+              </p>
+            )}
+          </div>
+        )}
+
+        <DialogFooter>
+          {editing ? (
+            <>
+              <Button variant="outline" onClick={() => setEditing(false)} disabled={saving}>
+                Cancel
+              </Button>
+              <Button disabled={saving} onClick={() => void save()}>
+                Save
+              </Button>
+            </>
+          ) : (
+            <>
+              <Button variant="outline" onClick={() => onOpenChange(false)}>
+                Close
+              </Button>
+              {canManage && <Button onClick={() => setEditing(true)}>Edit profile</Button>}
+            </>
+          )}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
