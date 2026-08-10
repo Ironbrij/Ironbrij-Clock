@@ -13,7 +13,9 @@ export function useClientsData(enabled: boolean) {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("clients")
-        .select("id, name, is_active")
+        .select(
+          "id, name, is_active, basecamp_url, contact_name, contact_email, subscription_hours",
+        )
         .order("name");
       if (error) throw error;
       return data;
@@ -21,7 +23,16 @@ export function useClientsData(enabled: boolean) {
   });
 
   const clients = useMemo<WorkspaceClient[]>(
-    () => (clientsQ.data ?? []).map((c) => ({ id: c.id, name: c.name, active: c.is_active })),
+    () =>
+      (clientsQ.data ?? []).map((c) => ({
+        id: c.id,
+        name: c.name,
+        active: c.is_active,
+        basecampUrl: c.basecamp_url,
+        contactName: c.contact_name,
+        contactEmail: c.contact_email,
+        subscriptionHours: c.subscription_hours,
+      })),
     [clientsQ.data],
   );
 
@@ -60,6 +71,31 @@ export function useClientsData(enabled: boolean) {
     [qc],
   );
 
+  const updateClientProfile = useCallback(
+    async (
+      id: string,
+      profile: {
+        basecampUrl: string | null;
+        contactName: string | null;
+        contactEmail: string | null;
+        subscriptionHours: number | null;
+      },
+    ) => {
+      const { error } = await supabase
+        .from("clients")
+        .update({
+          basecamp_url: profile.basecampUrl,
+          contact_name: profile.contactName,
+          contact_email: profile.contactEmail,
+          subscription_hours: profile.subscriptionHours,
+        })
+        .eq("id", id);
+      throwIf(error);
+      qc.invalidateQueries({ queryKey: ["clients"] });
+    },
+    [qc],
+  );
+
   const deleteClient = useCallback(
     async (id: string) => {
       const { error } = await supabase.from("clients").delete().eq("id", id);
@@ -77,6 +113,7 @@ export function useClientsData(enabled: boolean) {
     createClient,
     updateClient,
     setClientActive,
+    updateClientProfile,
     deleteClient,
   };
 }
