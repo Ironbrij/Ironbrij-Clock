@@ -92,6 +92,15 @@ type WorkspaceContextValue = {
   createClient: (name: string) => Promise<void>;
   updateClient: (id: string, name: string) => Promise<void>;
   setClientActive: (id: string, active: boolean) => Promise<void>;
+  updateClientProfile: (
+    id: string,
+    profile: {
+      basecampUrl: string | null;
+      contactName: string | null;
+      contactEmail: string | null;
+      subscriptionHours: number | null;
+    },
+  ) => Promise<void>;
   deleteClient: (id: string) => Promise<void>;
   settings: WorkspaceSettings;
   entries: WorkspaceEntry[];
@@ -256,6 +265,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     createClient,
     updateClient,
     setClientActive,
+    updateClientProfile,
     deleteClient,
   } = useClientsData(enabled);
 
@@ -359,6 +369,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       createClient,
       updateClient,
       setClientActive,
+      updateClientProfile,
       deleteClient,
       settings,
       updateSettings,
@@ -440,6 +451,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     createClient,
     updateClient,
     setClientActive,
+    updateClientProfile,
     deleteClient,
     settings,
     updateSettings,
