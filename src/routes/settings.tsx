@@ -14,6 +14,13 @@ import {
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import {
+  Pagination,
+  PaginationContent,
+  PaginationItem,
+  PaginationNext,
+  PaginationPrevious,
+} from "@/components/ui/pagination";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { MultiSelectList } from "@/components/multi-select-list";
@@ -223,6 +230,8 @@ function UsersTab() {
     removeMemberFromTeam,
   } = useWorkspace();
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [membersPage, setMembersPage] = useState(1);
+  const MEMBERS_PAGE_SIZE = 10;
   const [removeTarget, setRemoveTarget] = useState<{
     id: string;
     name: string;
@@ -234,6 +243,12 @@ function UsersTab() {
 
   const pendingMembers = activeMembers.filter((m) => m.pending);
   const approvedMembers = activeMembers.filter((m) => !m.pending);
+  const membersTotalPages = Math.max(1, Math.ceil(approvedMembers.length / MEMBERS_PAGE_SIZE));
+  const membersCurrentPage = Math.min(membersPage, membersTotalPages);
+  const pagedApprovedMembers = approvedMembers.slice(
+    (membersCurrentPage - 1) * MEMBERS_PAGE_SIZE,
+    membersCurrentPage * MEMBERS_PAGE_SIZE,
+  );
 
   const teamName = (teamId: string) => teams.find((t) => t.id === teamId)?.name ?? "No team";
 
@@ -463,7 +478,7 @@ function UsersTab() {
                   </tr>
                 </thead>
                 <tbody className="divide-y">
-                  {approvedMembers.map((m) => (
+                  {pagedApprovedMembers.map((m) => (
                     <tr key={m.id} className="hover:bg-accent/40 transition-colors">
                       <td className="px-3 py-2.5 font-medium flex items-center gap-2">
                         <Avatar className="h-7 w-7 shrink-0">
@@ -503,6 +518,45 @@ function UsersTab() {
                   ))}
                 </tbody>
               </table>
+            </div>
+          )}
+          {approvedMembers.length > 0 && (
+            <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+              <p className="text-sm text-muted-foreground">
+                {approvedMembers.length} {approvedMembers.length === 1 ? "member" : "members"}
+                {membersTotalPages > 1 && ` · page ${membersCurrentPage} of ${membersTotalPages}`}
+              </p>
+              {membersTotalPages > 1 && (
+                <Pagination className="mx-0 w-auto">
+                  <PaginationContent>
+                    <PaginationItem>
+                      <PaginationPrevious
+                        className={
+                          membersCurrentPage <= 1
+                            ? "pointer-events-none opacity-50"
+                            : "cursor-pointer"
+                        }
+                        onClick={() =>
+                          membersCurrentPage > 1 && setMembersPage(membersCurrentPage - 1)
+                        }
+                      />
+                    </PaginationItem>
+                    <PaginationItem>
+                      <PaginationNext
+                        className={
+                          membersCurrentPage >= membersTotalPages
+                            ? "pointer-events-none opacity-50"
+                            : "cursor-pointer"
+                        }
+                        onClick={() =>
+                          membersCurrentPage < membersTotalPages &&
+                          setMembersPage(membersCurrentPage + 1)
+                        }
+                      />
+                    </PaginationItem>
+                  </PaginationContent>
+                </Pagination>
+              )}
             </div>
           )}
         </CardContent>
