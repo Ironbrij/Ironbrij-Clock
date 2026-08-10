@@ -15,6 +15,14 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   Dialog,
   DialogContent,
@@ -31,8 +39,10 @@ import { formatWeekRange, fromDateKey, startOfWeek, toDateKey } from "@/lib/time
 import {
   useThisWeekStart,
   useWorkspace,
+  type EmploymentType,
   type PendingApproval,
   type WorkspaceActivityEvent,
+  type WorkspaceEmployment,
 } from "@/lib/workspace-store";
 
 export const Route = createFileRoute("/manage")({
@@ -59,7 +69,7 @@ const sections: { id: string; label: string; icon: LucideIcon; description: stri
     id: "schedule",
     label: "Schedule",
     icon: CalendarClock,
-    description: "Plan shifts and capacity across teams — coming soon.",
+    description: "Each person's weekly schedule, hourly rate, and employment type.",
   },
   {
     id: "expenses",
@@ -122,6 +132,8 @@ function ManagePage() {
         <ApprovalsPanel />
       ) : tab === "activity" ? (
         <ActivityTab />
+      ) : tab === "schedule" ? (
+        <ScheduleTab />
       ) : (
         <Card className="mt-4 shadow-card">
           <CardContent className="flex flex-col items-center gap-3 px-6 py-16 text-center">
@@ -417,6 +429,200 @@ function ActivityTab() {
         </Card>
       ))}
     </div>
+  );
+}
+
+function ScheduleTab() {
+  const {
+    activeMembers,
+    currentUser,
+    isAdmin,
+    canManage,
+    settings,
+    employmentByUser,
+    updateMemberEmployment,
+  } = useWorkspace();
+
+  const relevantMembers = useMemo(() => {
+    const base = activeMembers.filter((m) => !m.pending);
+    return isAdmin
+      ? base
+      : base.filter(
+          (m) =>
+            m.id === currentUser.id || m.teamIds.some((tid) => currentUser.teamIds.includes(tid)),
+        );
+  }, [activeMembers, currentUser, isAdmin]);
+
+  if (!canManage) {
+    return (
+      <Card className="mt-4 shadow-card">
+        <CardContent className="flex flex-col items-center gap-3 px-6 py-16 text-center">
+          <CalendarClock className="h-10 w-10 text-muted-foreground/50" />
+          <h2 className="text-lg font-semibold">Managers and admins only</h2>
+          <p className="max-w-md text-sm text-muted-foreground">
+            Schedule, rate, and employment details are only visible to people who manage the
+            workspace.
+          </p>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <Card className="mt-4 shadow-card">
+      <CardContent className="p-0">
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-sm">
+            <thead className="border-b text-xs uppercase text-muted-foreground">
+              <tr>
+                <th className="px-4 py-2.5">Name</th>
+                <th className="px-4 py-2.5">Type</th>
+                <th className="px-4 py-2.5">Weekly schedule</th>
+                <th className="px-4 py-2.5">Hourly rate ({settings.currency})</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y">
+              {relevantMembers.map((m) => (
+                <ScheduleRow
+                  key={m.id}
+                  member={m}
+                  employment={employmentByUser.get(m.id)}
+                  updateMemberEmployment={updateMemberEmployment}
+                />
+              ))}
+              {relevantMembers.length === 0 && (
+                <tr>
+                  <td colSpan={4} className="px-4 py-10 text-center text-sm text-muted-foreground">
+                    No one to show here yet.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function ScheduleRow({
+  member,
+  employment,
+  updateMemberEmployment,
+}: {
+  member: { id: string; name: string; initials: string };
+  employment: WorkspaceEmployment | undefined;
+  updateMemberEmployment: (
+    userId: string,
+    patch: {
+      employmentType?: EmploymentType;
+      hourlyRate?: number | null;
+      weeklySchedule?: string | null;
+    },
+  ) => Promise<void>;
+}) {
+  const [schedule, setSchedule] = useState(employment?.weeklySchedule ?? "");
+  const [rate, setRate] = useState(
+    employment?.hourlyRate != null ? String(employment.hourlyRate) : "",
+  );
+  const [savingType, setSavingType] = useState(false);
+
+  useEffect(() => {
+    setSchedule(employment?.weeklySchedule ?? "");
+    setRate(employment?.hourlyRate != null ? String(employment.hourlyRate) : "");
+  }, [employment?.weeklySchedule, employment?.hourlyRate]);
+
+  const employmentType = employment?.employmentType ?? "full_time";
+
+  const saveType = async (type: EmploymentType) => {
+    setSavingType(true);
+    try {
+      await updateMemberEmployment(member.id, { employmentType: type });
+      toast.success(`${member.name} marked ${type === "full_time" ? "full-time" : "part-time"}`);
+    } catch (error) {
+      toast.error("Couldn't update that", { description: (error as Error).message });
+    } finally {
+      setSavingType(false);
+    }
+  };
+
+  const saveSchedule = async () => {
+    if (schedule === (employment?.weeklySchedule ?? "")) return;
+    try {
+      await updateMemberEmployment(member.id, { weeklySchedule: schedule.trim() || null });
+    } catch (error) {
+      toast.error("Couldn't save schedule", { description: (error as Error).message });
+      setSchedule(employment?.weeklySchedule ?? "");
+    }
+  };
+
+  const saveRate = async () => {
+    const original = employment?.hourlyRate != null ? String(employment.hourlyRate) : "";
+    if (rate === original) return;
+    const trimmed = rate.trim();
+    const parsed = trimmed === "" ? null : Number(trimmed);
+    if (trimmed !== "" && (parsed === null || Number.isNaN(parsed) || parsed < 0)) {
+      toast.error("Rate must be a positive number");
+      setRate(original);
+      return;
+    }
+    try {
+      await updateMemberEmployment(member.id, { hourlyRate: parsed });
+    } catch (error) {
+      toast.error("Couldn't save rate", { description: (error as Error).message });
+      setRate(original);
+    }
+  };
+
+  return (
+    <tr className="transition-colors hover:bg-accent/40">
+      <td className="px-4 py-2.5">
+        <div className="flex items-center gap-2">
+          <Avatar className="h-7 w-7 shrink-0">
+            <AvatarFallback className="bg-secondary text-xs">{member.initials}</AvatarFallback>
+          </Avatar>
+          <span className="font-medium">{member.name}</span>
+        </div>
+      </td>
+      <td className="px-4 py-2.5">
+        <Select
+          value={employmentType}
+          onValueChange={(v) => void saveType(v as EmploymentType)}
+          disabled={savingType}
+        >
+          <SelectTrigger className="h-8 w-32">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="full_time">Full-time</SelectItem>
+            <SelectItem value="part_time">Part-time</SelectItem>
+          </SelectContent>
+        </Select>
+      </td>
+      <td className="px-4 py-2.5">
+        <Input
+          value={schedule}
+          onChange={(e) => setSchedule(e.target.value)}
+          onBlur={() => void saveSchedule()}
+          onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
+          placeholder="e.g. Mon–Fri, 9am–5pm"
+          className="h-8 min-w-[220px]"
+        />
+      </td>
+      <td className="px-4 py-2.5">
+        <Input
+          type="number"
+          min="0"
+          step="0.01"
+          value={rate}
+          onChange={(e) => setRate(e.target.value)}
+          onBlur={() => void saveRate()}
+          onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
+          placeholder="0.00"
+          className="h-8 w-28"
+        />
+      </td>
+    </tr>
   );
 }
 
