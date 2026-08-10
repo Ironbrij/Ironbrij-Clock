@@ -13,12 +13,14 @@ import {
   toDbReviewStatus,
   toTimesheetStatus,
   type DbTimesheetStatus,
+  type EmploymentType,
   type PendingApproval,
   type ProjectInput,
   type Role,
   type Team,
   type TimesheetStatus,
   type WorkspaceClient,
+  type WorkspaceEmployment,
   type WorkspaceEntry,
   type WorkspaceMember,
   type WorkspaceProject,
@@ -28,6 +30,7 @@ import {
   type WorkspaceTimesheet,
 } from "@/lib/workspace/types";
 import { useClientsData } from "@/lib/workspace/use-clients";
+import { useEmploymentData } from "@/lib/workspace/use-employment";
 import { useMembersData } from "@/lib/workspace/use-members";
 import { useProjectsData } from "@/lib/workspace/use-projects";
 import { useActivityLogData, type WorkspaceActivityEvent } from "@/lib/workspace/use-activity-log";
@@ -49,6 +52,7 @@ export {
   nameFromEmail,
   NO_CLIENT,
   timezones,
+  type EmploymentType,
   type PendingApproval,
   type ProjectInput,
   type Role,
@@ -56,6 +60,7 @@ export {
   type TimesheetStatus,
   type WorkspaceActivityEvent,
   type WorkspaceClient,
+  type WorkspaceEmployment,
   type WorkspaceEntry,
   type WorkspaceMember,
   type WorkspaceProject,
@@ -114,6 +119,16 @@ type WorkspaceContextValue = {
   /** How many activity events happened since the person last opened the Activity tab. */
   unseenActivityCount: number;
   markActivitySeen: () => void;
+  /** Rate/schedule/employment-type per member, for Manage → Schedule — empty for anyone who isn't a manager/admin. */
+  employmentByUser: Map<string, WorkspaceEmployment>;
+  updateMemberEmployment: (
+    userId: string,
+    patch: {
+      employmentType?: EmploymentType;
+      hourlyRate?: number | null;
+      weeklySchedule?: string | null;
+    },
+  ) => Promise<void>;
   timesheetForWeek: (weekStart: Date) => WorkspaceTimesheet | undefined;
   submitTimesheet: (weekStart: Date) => Promise<void>;
   reviewTimesheet: (
@@ -256,6 +271,12 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     canManage,
   );
 
+  const { employmentQ, employmentByUser, updateMemberEmployment } = useEmploymentData(
+    enabled,
+    canManage,
+    uid,
+  );
+
   const { teamsQ, teams, createTeam, updateTeam, deleteTeam } = useTeamsData(enabled);
 
   const {
@@ -380,6 +401,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       activityLog,
       unseenActivityCount,
       markActivitySeen,
+      employmentByUser,
+      updateMemberEmployment,
       timesheetForWeek,
       membersByTeam,
       teamMemberCount,
@@ -468,6 +491,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     activityLog,
     unseenActivityCount,
     markActivitySeen,
+    employmentByUser,
+    updateMemberEmployment,
     timesheetForWeek,
     submitTimesheet,
     reviewTimesheet,
