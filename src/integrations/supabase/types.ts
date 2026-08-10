@@ -99,6 +99,33 @@ export type Database = {
         }
         Relationships: []
       }
+      member_employment: {
+        Row: {
+          employment_type: string
+          hourly_rate: number | null
+          updated_at: string
+          updated_by: string | null
+          user_id: string
+          weekly_schedule: string | null
+        }
+        Insert: {
+          employment_type?: string
+          hourly_rate?: number | null
+          updated_at?: string
+          updated_by?: string | null
+          user_id: string
+          weekly_schedule?: string | null
+        }
+        Update: {
+          employment_type?: string
+          hourly_rate?: number | null
+          updated_at?: string
+          updated_by?: string | null
+          user_id?: string
+          weekly_schedule?: string | null
+        }
+        Relationships: []
+      }
       profiles: {
         Row: {
           avatar_url: string | null
