@@ -39,21 +39,63 @@ export type Database = {
   }
   public: {
     Tables: {
-      clients: {
+      activity_log: {
         Row: {
+          action: string
+          actor_id: string | null
           created_at: string
           id: string
-          name: string
+          metadata: Json
+          target_user_id: string | null
         }
         Insert: {
+          action: string
+          actor_id?: string | null
           created_at?: string
           id?: string
-          name: string
+          metadata?: Json
+          target_user_id?: string | null
         }
         Update: {
+          action?: string
+          actor_id?: string | null
           created_at?: string
           id?: string
+          metadata?: Json
+          target_user_id?: string | null
+        }
+        Relationships: []
+      }
+      clients: {
+        Row: {
+          basecamp_url: string | null
+          contact_email: string | null
+          contact_name: string | null
+          created_at: string
+          id: string
+          is_active: boolean
+          name: string
+          subscription_hours: number | null
+        }
+        Insert: {
+          basecamp_url?: string | null
+          contact_email?: string | null
+          contact_name?: string | null
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          name: string
+          subscription_hours?: number | null
+        }
+        Update: {
+          basecamp_url?: string | null
+          contact_email?: string | null
+          contact_name?: string | null
+          created_at?: string
+          id?: string
+          is_active?: boolean
           name?: string
+          subscription_hours?: number | null
         }
         Relationships: []
       }
