@@ -8,6 +8,23 @@ import type { WorkspaceEntry, WorkspaceProject } from "./types";
 
 type TimeEntryUpdate = Database["public"]["Tables"]["time_entries"]["Update"];
 
+/** True if [start, end) would overlap any of `entries` other than `excludeId` — a still-running entry (no end_time yet) is treated as open-ended. */
+function overlapsExisting(
+  entries: WorkspaceEntry[],
+  start: Date,
+  end: Date,
+  excludeId?: string,
+): boolean {
+  const newStart = start.getTime();
+  const newEnd = end.getTime();
+  return entries.some((e) => {
+    if (e.id === excludeId) return false;
+    const eStart = new Date(e.startTime).getTime();
+    const eEnd = e.endTime ? new Date(e.endTime).getTime() : Infinity;
+    return newStart < eEnd && eStart < newEnd;
+  });
+}
+
 export function useTimeEntriesData(
   enabled: boolean,
   uid: string | null,
@@ -69,6 +86,16 @@ export function useTimeEntriesData(
       description: string;
     }) => {
       if (!uid) return;
+      // Re-check against the freshest known entries, not just whatever
+      // state the caller happened to have — a stale tab (or a second
+      // device) can believe nothing's running when it actually is. The
+      // one_running_per_user DB index is the real backstop; this just
+      // gives an instant, friendly error instead of a round trip.
+      if (entries.some((e) => e.running)) {
+        throw new Error(
+          "You already have a timer running — stop it before starting another.",
+        );
+      }
       const project = projects.find((p) => p.id === projectId);
       const now = new Date();
       const { error } = await supabase.from("time_entries").insert({
@@ -81,10 +108,12 @@ export function useTimeEntriesData(
         is_billable: project?.billable ?? true,
         tag_ids: project?.tagIds ?? [],
       });
-      throwIf(error);
+      throwIf(error, {
+        "23505": "You already have a timer running — stop it before starting another.",
+      });
       invalidateEntries();
     },
-    [uid, projects, invalidateEntries],
+    [uid, projects, entries, invalidateEntries],
   );
 
   const stopTimer = useCallback(
@@ -142,6 +171,9 @@ export function useTimeEntriesData(
         const end = combineDateAndTime(date, endTime);
         const minutes = Math.round((end.getTime() - start.getTime()) / 60000);
         if (minutes <= 0) throw new Error("End time must be after start time.");
+        if (overlapsExisting(entries, start, end, entryId)) {
+          throw new Error("That overlaps with another entry you already have on this day.");
+        }
         dbPatch.entry_date = date;
         dbPatch.start_time = start.toISOString();
         dbPatch.end_time = end.toISOString();
@@ -149,7 +181,9 @@ export function useTimeEntriesData(
       }
 
       const { error } = await supabase.from("time_entries").update(dbPatch).eq("id", entryId);
-      throwIf(error);
+      throwIf(error, {
+        "23P01": "That overlaps with another entry you already have on this day.",
+      });
       invalidateEntries();
     },
     [entries, invalidateEntries],
@@ -170,6 +204,9 @@ export function useTimeEntriesData(
       const end = combineDateAndTime(input.date, input.endTime);
       const minutes = Math.round((end.getTime() - start.getTime()) / 60000);
       if (minutes <= 0) throw new Error("End time must be after start time.");
+      if (overlapsExisting(entries, start, end)) {
+        throw new Error("That overlaps with another entry you already have on this day.");
+      }
       const { error } = await supabase.from("time_entries").insert({
         user_id: uid,
         project_id: input.projectId,
@@ -182,10 +219,12 @@ export function useTimeEntriesData(
         is_billable: project?.billable ?? true,
         tag_ids: project?.tagIds ?? [],
       });
-      throwIf(error);
+      throwIf(error, {
+        "23P01": "That overlaps with another entry you already have on this day.",
+      });
       invalidateEntries();
     },
-    [uid, projects, invalidateEntries],
+    [uid, projects, entries, invalidateEntries],
   );
 
   const deleteEntry = useCallback(

@@ -8,6 +8,7 @@ import {
   toTimesheetStatus,
   type DbTimesheetStatus,
   type PendingApproval,
+  type PendingApprovalEntry,
   type WorkspaceTimesheet,
 } from "./types";
 
@@ -54,7 +55,7 @@ export function useTimesheetsData(enabled: boolean, uid: string | null) {
       );
       const { data, error } = await supabase
         .from("time_entries")
-        .select("user_id, entry_date, duration_minutes")
+        .select("id, user_id, project_id, task, description, entry_date, start_time, duration_minutes")
         .in("user_id", userIds)
         .gte("entry_date", earliest);
       if (error) throw error;
@@ -77,22 +78,54 @@ export function useTimesheetsData(enabled: boolean, uid: string | null) {
     [timesheetsQ.data],
   );
 
-  const pendingApprovals = useMemo<PendingApproval[]>(() => {
-    const rows = reviewEntriesQ.data ?? [];
-    return timesheets
-      .filter((t) => t.status === "Submitted")
-      .map((t) => {
-        const start = fromDateKey(t.weekStart);
-        const minutes = rows
-          .filter((r) => r.user_id === t.userId)
-          .filter((r) => {
-            const idx = dayIndexOf(r.entry_date, start);
-            return idx >= 0 && idx <= 6;
-          })
-          .reduce((sum, r) => sum + (r.duration_minutes ?? 0), 0);
-        return { ...t, minutes };
-      });
-  }, [timesheets, reviewEntriesQ.data]);
+  // The rows (from reviewEntriesQ) that belong to a given timesheet's
+  // person + week — shared by both the approval total and the per-entry
+  // breakdown so they can never disagree with each other.
+  const rowsForTimesheet = useCallback(
+    (t: WorkspaceTimesheet) => {
+      const start = fromDateKey(t.weekStart);
+      return (reviewEntriesQ.data ?? [])
+        .filter((r) => r.user_id === t.userId)
+        .filter((r) => {
+          const idx = dayIndexOf(r.entry_date, start);
+          return idx >= 0 && idx <= 6;
+        });
+    },
+    [reviewEntriesQ.data],
+  );
+
+  const pendingApprovals = useMemo<PendingApproval[]>(
+    () =>
+      timesheets
+        // A reviewer can never review their own timesheet (see
+        // review_timesheet's server-side self-check) — hiding it here too
+        // means the Approvals queue never even offers the button.
+        .filter((t) => t.status === "Submitted" && t.userId !== uid)
+        .map((t) => {
+          const minutes = rowsForTimesheet(t).reduce(
+            (sum, r) => sum + (r.duration_minutes ?? 0),
+            0,
+          );
+          return { ...t, minutes };
+        }),
+    [timesheets, uid, rowsForTimesheet],
+  );
+
+  /** The actual entries behind a pending approval's total, so a reviewer can see what they're approving instead of just a number. */
+  const entriesForApproval = useCallback(
+    (approval: PendingApproval): PendingApprovalEntry[] =>
+      rowsForTimesheet(approval)
+        .map((r) => ({
+          id: r.id,
+          projectId: r.project_id,
+          task: r.task ?? "",
+          description: r.description,
+          minutes: r.duration_minutes ?? 0,
+          startTime: r.start_time,
+        }))
+        .sort((a, b) => a.startTime.localeCompare(b.startTime)),
+    [rowsForTimesheet],
+  );
 
   const timesheetForWeek = useCallback(
     (weekStart: Date) => {
@@ -133,6 +166,7 @@ export function useTimesheetsData(enabled: boolean, uid: string | null) {
     reviewEntriesQ,
     timesheets,
     pendingApprovals,
+    entriesForApproval,
     timesheetForWeek,
     submitTimesheet,
     reviewTimesheet,

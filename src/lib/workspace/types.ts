@@ -114,6 +114,16 @@ export type WorkspaceTimesheet = {
 /** A submitted timesheet plus the hours it covers, for a manager/admin's review queue. */
 export type PendingApproval = WorkspaceTimesheet & { minutes: number };
 
+/** One line item behind a PendingApproval's total — lets a reviewer see what they're actually approving instead of just a sum. */
+export type PendingApprovalEntry = {
+  id: string;
+  projectId: string | null;
+  task: string;
+  description: string;
+  minutes: number;
+  startTime: string;
+};
+
 export const dotColors = [
   "oklch(0.62 0.15 256)",
   "oklch(0.65 0.16 320)",

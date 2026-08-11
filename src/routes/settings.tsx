@@ -12,6 +12,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
@@ -285,24 +286,40 @@ function UsersTab() {
     }
   };
 
-  const RoleCell = ({ m }: { m: { id: string; name: string; role: Role } }) => (
-    <Select
-      value={m.role}
-      onValueChange={(v) => changeRole(m, v as Role)}
-      disabled={busyId === m.id}
-    >
-      <SelectTrigger className="h-8 w-28">
-        <SelectValue />
-      </SelectTrigger>
-      <SelectContent>
-        {roles.map((r) => (
-          <SelectItem key={r} value={r}>
-            {r}
-          </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
-  );
+  const RoleCell = ({ m }: { m: { id: string; name: string; role: Role } }) => {
+    // Changing your own role — especially demoting yourself away from
+    // Admin — is exactly the kind of one-click accident that can lock the
+    // whole workspace out of admin functions. The database also refuses
+    // to demote the last remaining admin, but self-service role changes
+    // don't need to be a dropdown at all: an admin who wants to hand off
+    // their role to someone else should promote that person first, not
+    // demote themselves.
+    if (m.id === currentUser.id) {
+      return (
+        <Badge variant={m.role === "Admin" ? "default" : "secondary"} title="You can't change your own role">
+          {m.role}
+        </Badge>
+      );
+    }
+    return (
+      <Select
+        value={m.role}
+        onValueChange={(v) => changeRole(m, v as Role)}
+        disabled={busyId === m.id}
+      >
+        <SelectTrigger className="h-8 w-28">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {roles.map((r) => (
+            <SelectItem key={r} value={r}>
+              {r}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    );
+  };
 
   const TeamCell = ({ m }: { m: { id: string; name: string; teamIds: string[] } }) => {
     const toggleTeam = (teamId: string) => {

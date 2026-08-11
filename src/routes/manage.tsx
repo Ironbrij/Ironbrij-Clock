@@ -4,13 +4,14 @@ import {
   Activity,
   CalendarClock,
   CheckCheck,
+  ChevronDown,
   FileText,
   MonitorSmartphone,
   Receipt,
   type LucideIcon,
 } from "lucide-react";
 import { toast } from "sonner";
-import { AppShell } from "@/components/app-shell";
+import { AppShell, ProjectDot } from "@/components/app-shell";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -34,8 +35,15 @@ import {
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
-import { formatHours } from "@/lib/mock-data";
-import { formatWeekRange, fromDateKey, startOfWeek, toDateKey } from "@/lib/time-utils";
+import { formatHours, formatMinutes } from "@/lib/mock-data";
+import {
+  formatClock,
+  formatDayLong,
+  formatWeekRange,
+  fromDateKey,
+  startOfWeek,
+  toDateKey,
+} from "@/lib/time-utils";
 import {
   useThisWeekStart,
   useWorkspace,
@@ -228,6 +236,7 @@ function ApprovalsPanel() {
   const { pendingApprovals, memberById, reviewTimesheet } = useWorkspace();
   const [busyId, setBusyId] = useState<string | null>(null);
   const [rejecting, setRejecting] = useState<PendingApproval | null>(null);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
 
   const approve = async (id: string) => {
     setBusyId(id);
@@ -281,38 +290,54 @@ function ApprovalsPanel() {
           <ul className="divide-y divide-border">
             {pendingApprovals.map((a) => {
               const member = memberById(a.userId);
+              const expanded = expandedId === a.id;
               return (
-                <li
-                  key={a.id}
-                  className="flex flex-wrap items-center justify-between gap-4 px-6 py-4"
-                >
-                  <div className="flex min-w-0 items-center gap-3">
-                    <Avatar className="h-9 w-9 shrink-0">
-                      <AvatarFallback className="bg-secondary text-xs">
-                        {member?.initials ?? "—"}
-                      </AvatarFallback>
-                    </Avatar>
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-medium">{member?.name ?? "Unknown"}</p>
-                      <p className="truncate text-xs text-muted-foreground">
-                        {formatWeekRange(fromDateKey(a.weekStart))} · {formatHours(a.minutes / 60)}{" "}
-                        logged
-                      </p>
+                <li key={a.id}>
+                  <div className="flex flex-wrap items-center justify-between gap-4 px-6 py-4">
+                    <div className="flex min-w-0 items-center gap-3">
+                      <Avatar className="h-9 w-9 shrink-0">
+                        <AvatarFallback className="bg-secondary text-xs">
+                          {member?.initials ?? "—"}
+                        </AvatarFallback>
+                      </Avatar>
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-medium">
+                          {member?.name ?? "Unknown"}
+                        </p>
+                        <button
+                          type="button"
+                          className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+                          onClick={() => setExpandedId(expanded ? null : a.id)}
+                        >
+                          {formatWeekRange(fromDateKey(a.weekStart))} ·{" "}
+                          {formatHours(a.minutes / 60)} logged
+                          <ChevronDown
+                            className={
+                              "h-3 w-3 transition-transform " + (expanded ? "rotate-180" : "")
+                            }
+                          />
+                        </button>
+                      </div>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-2">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={busyId === a.id}
+                        onClick={() => setRejecting(a)}
+                      >
+                        Send back
+                      </Button>
+                      <Button
+                        size="sm"
+                        disabled={busyId === a.id}
+                        onClick={() => void approve(a.id)}
+                      >
+                        Approve
+                      </Button>
                     </div>
                   </div>
-                  <div className="flex shrink-0 items-center gap-2">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={busyId === a.id}
-                      onClick={() => setRejecting(a)}
-                    >
-                      Send back
-                    </Button>
-                    <Button size="sm" disabled={busyId === a.id} onClick={() => void approve(a.id)}>
-                      Approve
-                    </Button>
-                  </div>
+                  {expanded && <ApprovalEntries approval={a} />}
                 </li>
               );
             })}
@@ -325,6 +350,43 @@ function ApprovalsPanel() {
         onConfirm={reject}
       />
     </div>
+  );
+}
+
+/** The entries behind one pending approval's total — expanded inline so a reviewer can check what they're actually approving instead of trusting a single number. */
+function ApprovalEntries({ approval }: { approval: PendingApproval }) {
+  const { entriesForApproval, projectById } = useWorkspace();
+  const entries = entriesForApproval(approval);
+
+  if (entries.length === 0) {
+    return (
+      <p className="border-t border-border bg-muted/30 px-6 py-4 text-xs text-muted-foreground">
+        No individual entries found for this week.
+      </p>
+    );
+  }
+
+  return (
+    <ul className="divide-y divide-border border-t border-border bg-muted/30 px-6">
+      {entries.map((e) => {
+        const project = projectById(e.projectId);
+        return (
+          <li key={e.id} className="flex items-center gap-3 py-2.5 text-sm">
+            <ProjectDot color={project?.color ?? "var(--muted-foreground)"} />
+            <div className="min-w-0 flex-1">
+              <p className="truncate font-medium">{e.description || "No description"}</p>
+              <p className="truncate text-xs text-muted-foreground">
+                {project?.name ?? "No project"} · {e.task || "—"} ·{" "}
+                {formatDayLong(new Date(e.startTime))}, {formatClock(e.startTime)}
+              </p>
+            </div>
+            <span className="shrink-0 tabular-nums text-xs font-medium">
+              {formatMinutes(e.minutes)}
+            </span>
+          </li>
+        );
+      })}
+    </ul>
   );
 }
 

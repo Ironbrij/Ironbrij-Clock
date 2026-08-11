@@ -15,6 +15,7 @@ import {
   type DbTimesheetStatus,
   type EmploymentType,
   type PendingApproval,
+  type PendingApprovalEntry,
   type ProjectInput,
   type Role,
   type Team,
@@ -54,6 +55,7 @@ export {
   timezones,
   type EmploymentType,
   type PendingApproval,
+  type PendingApprovalEntry,
   type ProjectInput,
   type Role,
   type Team,
@@ -112,8 +114,10 @@ type WorkspaceContextValue = {
   runningEntry: WorkspaceEntry | null;
 
   timesheets: WorkspaceTimesheet[];
-  /** Submitted timesheets this person can review (empty for plain Members). */
+  /** Submitted timesheets this person can review (empty for plain Members, and never includes their own). */
   pendingApprovals: PendingApproval[];
+  /** The actual entries behind a pending approval's total — so a reviewer can see what they're approving, not just a number. */
+  entriesForApproval: (approval: PendingApproval) => PendingApprovalEntry[];
   /** Recent workspace activity for the Manage → Activity tab — empty for anyone who isn't a manager/admin. */
   activityLog: WorkspaceActivityEvent[];
   /** How many activity events happened since the person last opened the Activity tab. */
@@ -333,6 +337,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     reviewEntriesQ,
     timesheets,
     pendingApprovals,
+    entriesForApproval,
     timesheetForWeek,
     submitTimesheet,
     reviewTimesheet,
@@ -398,6 +403,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       runningEntry,
       timesheets,
       pendingApprovals,
+      entriesForApproval,
       activityLog,
       unseenActivityCount,
       markActivitySeen,
@@ -488,6 +494,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     entriesForTag,
     timesheets,
     pendingApprovals,
+    entriesForApproval,
     activityLog,
     unseenActivityCount,
     markActivitySeen,
