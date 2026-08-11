@@ -8,6 +8,9 @@ import type { WorkspaceEntry, WorkspaceProject } from "./types";
 
 type TimeEntryUpdate = Database["public"]["Tables"]["time_entries"]["Update"];
 
+const LOCKED_WEEK_MESSAGE =
+  "This week is locked because it's been submitted or approved — ask your manager to send it back if you need to make changes.";
+
 /** True if [start, end) would overlap any of `entries` other than `excludeId` — a still-running entry (no end_time yet) is treated as open-ended. */
 function overlapsExisting(
   entries: WorkspaceEntry[],
@@ -110,6 +113,7 @@ export function useTimeEntriesData(
       });
       throwIf(error, {
         "23505": "You already have a timer running — stop it before starting another.",
+        "42501": LOCKED_WEEK_MESSAGE,
       });
       invalidateEntries();
     },
@@ -125,11 +129,17 @@ export function useTimeEntriesData(
         1,
         Math.round((end.getTime() - new Date(entry.startTime).getTime()) / 60000),
       );
-      const { error } = await supabase
+      // A locked week doesn't make an UPDATE error — Postgres RLS just
+      // excludes the row from the USING clause, so this would otherwise
+      // report success while changing nothing. .select() plus checking for
+      // an empty result is what turns that silent no-op into a real error.
+      const { data, error } = await supabase
         .from("time_entries")
         .update({ end_time: end.toISOString(), duration_minutes: minutes })
-        .eq("id", entryId);
+        .eq("id", entryId)
+        .select("id");
       throwIf(error);
+      if (!data || data.length === 0) throw new Error(LOCKED_WEEK_MESSAGE);
       invalidateEntries();
     },
     [entries, invalidateEntries],
@@ -180,10 +190,20 @@ export function useTimeEntriesData(
         dbPatch.duration_minutes = minutes;
       }
 
-      const { error } = await supabase.from("time_entries").update(dbPatch).eq("id", entryId);
+      // Same silent-no-op risk as stopTimer: if entryId's week (old or new,
+      // whichever the row currently has) is locked, this UPDATE matches
+      // zero rows rather than erroring — .select() + the length check below
+      // is what catches that.
+      const { data, error } = await supabase
+        .from("time_entries")
+        .update(dbPatch)
+        .eq("id", entryId)
+        .select("id");
       throwIf(error, {
         "23P01": "That overlaps with another entry you already have on this day.",
+        "42501": LOCKED_WEEK_MESSAGE,
       });
+      if (!data || data.length === 0) throw new Error(LOCKED_WEEK_MESSAGE);
       invalidateEntries();
     },
     [entries, invalidateEntries],
@@ -221,6 +241,7 @@ export function useTimeEntriesData(
       });
       throwIf(error, {
         "23P01": "That overlaps with another entry you already have on this day.",
+        "42501": LOCKED_WEEK_MESSAGE,
       });
       invalidateEntries();
     },
@@ -229,8 +250,15 @@ export function useTimeEntriesData(
 
   const deleteEntry = useCallback(
     async (entryId: string) => {
-      const { error } = await supabase.from("time_entries").delete().eq("id", entryId);
+      // Deleting a row a locked week excludes from the DELETE policy's
+      // USING clause is the same silent-no-op case as stopTimer/updateEntry.
+      const { data, error } = await supabase
+        .from("time_entries")
+        .delete()
+        .eq("id", entryId)
+        .select("id");
       throwIf(error);
+      if (!data || data.length === 0) throw new Error(LOCKED_WEEK_MESSAGE);
       invalidateEntries();
     },
     [invalidateEntries],
