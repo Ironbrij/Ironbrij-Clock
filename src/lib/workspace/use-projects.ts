@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from "react";
+import { useCallback, useEffect, useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { throwIf } from "./utils";
@@ -10,6 +10,29 @@ export function useProjectsData(
   resolveClientId: (name: string) => string | null,
 ) {
   const qc = useQueryClient();
+
+  // L27: a rename/archive/tag/member change made on another tab or device
+  // used to sit invisible until something else (a window refocus, a
+  // navigation) triggered a refetch — time_entries and timesheets already
+  // had this, projects never did.
+  useEffect(() => {
+    if (!enabled) return;
+    const channel = supabase
+      .channel("projects_realtime")
+      .on("postgres_changes", { event: "*", schema: "public", table: "projects" }, () =>
+        qc.invalidateQueries({ queryKey: ["projects"] }),
+      )
+      .on("postgres_changes", { event: "*", schema: "public", table: "project_members" }, () =>
+        qc.invalidateQueries({ queryKey: ["project_members"] }),
+      )
+      .on("postgres_changes", { event: "*", schema: "public", table: "project_tags" }, () =>
+        qc.invalidateQueries({ queryKey: ["project_tags"] }),
+      )
+      .subscribe();
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [enabled, qc]);
 
   const projectsQ = useQuery({
     queryKey: ["projects"],

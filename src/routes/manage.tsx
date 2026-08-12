@@ -266,7 +266,19 @@ function WeekStatusPanel() {
 
 function ApprovalsPanel() {
   const { pendingApprovals, memberById, reviewTimesheet } = useWorkspace();
-  const [busyId, setBusyId] = useState<string | null>(null);
+  // L26: a single shared busyId string could only ever represent one row
+  // in flight at a time — approving row A, then acting on row B before A's
+  // request resolved, overwrote busyId to B and re-enabled A's buttons
+  // early (its `finally` cleared busyId unconditionally). A Set of ids
+  // lets any number of rows be in flight independently.
+  const [busyIds, setBusyIds] = useState<Set<string>>(new Set());
+  const startBusy = (id: string) => setBusyIds((prev) => new Set(prev).add(id));
+  const endBusy = (id: string) =>
+    setBusyIds((prev) => {
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
   const [rejecting, setRejecting] = useState<PendingApproval | null>(null);
   // Approve has no "unapprove" at all — review_timesheet() only ever
   // transitions a row that's currently 'submitted', with no exception for
@@ -280,14 +292,14 @@ function ApprovalsPanel() {
     if (!approving) return;
     const id = approving.id;
     setApproving(null);
-    setBusyId(id);
+    startBusy(id);
     try {
       await reviewTimesheet(id, "Approved");
       toast.success("Timesheet approved", { description: "That week is now locked for editing." });
     } catch (error) {
       toast.error("Couldn't approve that", { description: (error as Error).message });
     } finally {
-      setBusyId(null);
+      endBusy(id);
     }
   };
 
@@ -295,14 +307,14 @@ function ApprovalsPanel() {
     if (!rejecting) return;
     const id = rejecting.id;
     setRejecting(null);
-    setBusyId(id);
+    startBusy(id);
     try {
       await reviewTimesheet(id, "Rejected", note || undefined);
       toast.success("Sent back", { description: "They'll see your note on their Timesheet page." });
     } catch (error) {
       toast.error("Couldn't send that back", { description: (error as Error).message });
     } finally {
-      setBusyId(null);
+      endBusy(id);
     }
   };
 
@@ -362,12 +374,16 @@ function ApprovalsPanel() {
                       <Button
                         size="sm"
                         variant="outline"
-                        disabled={busyId === a.id}
+                        disabled={busyIds.has(a.id)}
                         onClick={() => setRejecting(a)}
                       >
                         Send back
                       </Button>
-                      <Button size="sm" disabled={busyId === a.id} onClick={() => setApproving(a)}>
+                      <Button
+                        size="sm"
+                        disabled={busyIds.has(a.id)}
+                        onClick={() => setApproving(a)}
+                      >
                         Approve
                       </Button>
                     </div>

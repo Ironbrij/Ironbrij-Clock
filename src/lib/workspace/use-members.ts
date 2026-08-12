@@ -28,6 +28,26 @@ const emptyUser: WorkspaceMember = {
 export function useMembersData(enabled: boolean, uid: string | null, session: Session | null) {
   const qc = useQueryClient();
 
+  // L27: a role change, name/title edit, approval, or team assignment made
+  // in another tab used to sit stale until something else triggered a
+  // refetch — time_entries and timesheets already had this, profiles and
+  // team_members never did.
+  useEffect(() => {
+    if (!enabled) return;
+    const channel = supabase
+      .channel("members_realtime")
+      .on("postgres_changes", { event: "*", schema: "public", table: "profiles" }, () =>
+        qc.invalidateQueries({ queryKey: ["profiles"] }),
+      )
+      .on("postgres_changes", { event: "*", schema: "public", table: "team_members" }, () =>
+        qc.invalidateQueries({ queryKey: ["team_members"] }),
+      )
+      .subscribe();
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [enabled, qc]);
+
   const profilesQ = useQuery({
     queryKey: ["profiles"],
     enabled,

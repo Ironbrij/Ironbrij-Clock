@@ -204,30 +204,30 @@ the staleness visible instead of silent.
 
 ### 9. Low-Priority Issues
 
-**L25. ⏳ Open.** Settings → Users → pending members' "Approve" and "Resend invite" buttons
-(`src/routes/settings.tsx`) have no busy/disabled state during their async call — unlike essentially
-every other action button in the app (Timer, Submit, Approve/Send back in Manage, entry
-Save/Delete), which all set a local `busy` flag before awaiting. A rapid double-click fires two
-concurrent RPCs. `approve_member` is a plain idempotent `UPDATE ... SET is_pending = false`, so
-double-approving is harmless, but `resendInvite` has no equivalent backstop — each extra click is a
-real extra `generateLink` call, so a burst of clicks sends the invitee several magic-link emails.
+**L25. ✅ Fixed.** Settings → Users → pending members' "Approve" and "Resend invite" buttons had no
+busy/disabled state during their async call — unlike essentially every other action button in the
+app. Fixed in `src/routes/settings.tsx`'s `UsersTab`: replaced the single shared `busyId` string
+(which had the same L26-class problem for the Role/Team dropdowns further down in this same file —
+fixed alongside this, not left as the one inconsistent spot) with a `busyKeys: Set<string>` keyed
+per row-and-action (`role:${id}`, `team:${id}`, `approve:${id}`, `resend:${id}`), so any number of
+independent actions can be in flight at once without one clearing another's disabled state early.
 
-**L26. ⏳ Open.** `ApprovalsPanel`'s `busyId` (`src/routes/manage.tsx`) is a single shared value
-covering the entire pending-approvals list, not per-row. Approving timesheet A sets `busyId = "A"`;
-if a manager then acts on a different timesheet B while A is still in flight, `busyId` gets
-overwritten to `"B"`, which un-disables A's buttons before A's request has actually resolved — its
-`finally` block later calls `setBusyId(null)` unconditionally, regardless of whether a newer action
-owns that slot. No data corruption results (`review_timesheet()`'s own `status = 'submitted'` guard
-rejects a stale re-click server-side), but the disabled/busy affordance briefly lies about what's
-safe to click during concurrent approvals.
+**L26. ✅ Fixed.** `ApprovalsPanel`'s `busyId` (`src/routes/manage.tsx`) was a single shared value
+covering the entire pending-approvals list, not per-row — acting on a second timesheet while a
+first was still in flight overwrote it and re-enabled the first row's buttons early. Fixed the same
+way as L25: `busyId` replaced with `busyIds: Set<string>`, so `disabled={busyIds.has(a.id)}` per row
+is accurate regardless of how many other rows are simultaneously in flight.
 
-**L27. ⏳ Open.** Projects, teams, clients, tags, task categories, members, and employment/schedule
-data have no Realtime subscription — only `time_entries` and `timesheets` do (grep
-`postgres_changes` under `src/lib/workspace/`: just `use-time-entries.ts` and `use-timesheets.ts`).
-An admin renaming/archiving a project, changing a hourly rate, or adding a teammate in one tab
-doesn't propagate to another open tab or device until something else triggers a refetch (window
-refocus, a route change). `CLAUDE.md` already flags this as something to "consider" for new mutable
-tables; it's equally true of several tables that predate that note.
+**L27. ✅ Fixed.** Projects, teams, clients, tags, task categories, members, and employment/schedule
+data had no Realtime subscription — only `time_entries` and `timesheets` did. Fixed in
+`supabase/migrations/20260812090000_enable_realtime_workspace_tables.sql` (adding `profiles`,
+`team_members`, `teams`, `clients`, `tags`, `projects`, `project_members`, `project_tags`,
+`task_categories`, and `member_employment` to the `supabase_realtime` publication — same
+existence-guarded pattern as H9's original `20260812010000_enable_realtime.sql`) plus a matching
+`postgres_changes` subscription added to each of `use-projects.ts`, `use-teams.ts`,
+`use-clients.ts`, `use-tags.ts`, `use-task-categories.ts`, `use-members.ts`, and
+`use-employment.ts` (the last gated on `canManage`, same as its query). `team_members` is
+subscribed to once, from `use-members.ts`, rather than duplicated in `use-teams.ts` too.
 
 ### 10. Edge Cases — This Pass
 
@@ -239,9 +239,9 @@ tables; it's equally true of several tables that predate that note.
 | Manual entry across midnight | ✅ Fixed | M21 — "Ends after midnight" checkbox, split into one row per day like the timer |
 | Empty timesheet submitted via direct API call | ✅ Fixed | M22 — `submit_timesheet()` now rejects a week with zero entries server-side |
 | Editing an approved week's entries (admin) | ✅ Fixed | M23 — still allowed (payroll corrections), now flags `entries_modified_at` and shows it on the employee's Timesheet page |
-| Double-clicking Approve/Resend invite (pending members) | ⚠️ Partial | L25 — no busy-state debounce; harmless for Approve, spammy for Resend invite |
-| Concurrent actions across two different pending approvals | ⚠️ Partial | L26 — shared `busyId` briefly mis-reports button state; backend still safe |
-| Multi-tab drift on projects/teams/clients/members | ⚠️ Partial | L27 — no Realtime; relies on refocus/refetch timing |
+| Double-clicking Approve/Resend invite (pending members) | ✅ Fixed | L25 — per-row-and-action busy keys instead of one shared string |
+| Concurrent actions across two different pending approvals | ✅ Fixed | L26 — `busyIds` is now a `Set`, not a single shared value |
+| Multi-tab drift on projects/teams/clients/members | ✅ Fixed | L27 — Realtime added to all of them |
 | Double-clicking Start/Stop Timer | ✅ OK | `busy` state + the `time_entries_one_running_per_user` index both hold |
 | Double-submitting Add/Edit entry dialog | ✅ OK | `busy` state + the no-overlap `EXCLUDE` constraint both hold |
 | Starting a timer with no project selected | ✅ Blocked in UI | `TimerBar.toggle()` rejects with a toast before calling `startTimer` |
@@ -260,8 +260,9 @@ tables; it's equally true of several tables that predate that note.
   overnight manual entries via a new checkbox that reuses H8's `splitByDay` (M21), a database-level
   backstop for empty-timesheet submission matching H12's pattern (M22), and a visible
   `entries_modified_at` flag for approved-week corrections (M23).
-- **Low (L25–L27):** all open — two UI debounce/state gaps around approvals and pending-member
-  actions, and a multi-tab staleness gap for the tables that predate this app's Realtime adoption.
+- **Low (L25–L27):** all fixed — per-row-and-action busy tracking (a `Set` instead of a single
+  shared id) closes both L25 and L26 with the same mechanism, and Realtime now covers every
+  workspace table that didn't already have it.
 - Several categories from the original QA checklist came back clean on this pass: duplicate
   timer/entry submissions, overlapping entries, moving entries into locked weeks, and starting a
   timer without a project are all already enforced at both the client and database layer.
@@ -278,6 +279,5 @@ tables; it's equally true of several tables that predate that note.
 `20260811010000_protect_last_admin_role_change.sql`.
 
 **Total issues found this pass: 10** (0 Critical, 3 High, 4 Medium, 3 Low — plus the edge-case
-table above covering both new gaps and confirmed-fixed behavior). **All 3 High findings (H13–H15)
-and all 4 Medium findings (M20–M23) are now fixed**; Low (L25–L27) remain open, pending
-prioritization.
+table above covering both new gaps and confirmed-fixed behavior). **All 10 findings from this pass
+(H13–H15, M20–M23, L25–L27) are now fixed.**

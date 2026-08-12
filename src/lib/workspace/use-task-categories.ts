@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from "react";
+import { useCallback, useEffect, useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { throwIf } from "./utils";
@@ -6,6 +6,26 @@ import type { WorkspaceTaskCategory } from "./types";
 
 export function useTaskCategoriesData(enabled: boolean) {
   const qc = useQueryClient();
+
+  const invalidate = useCallback(
+    () => qc.invalidateQueries({ queryKey: ["task_categories"] }),
+    [qc],
+  );
+
+  // L27: a task category added/renamed/removed in another tab used to sit
+  // stale until something else triggered a refetch.
+  useEffect(() => {
+    if (!enabled) return;
+    const channel = supabase
+      .channel("task_categories_realtime")
+      .on("postgres_changes", { event: "*", schema: "public", table: "task_categories" }, () =>
+        invalidate(),
+      )
+      .subscribe();
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [enabled, invalidate]);
 
   const taskCategoriesQ = useQuery({
     queryKey: ["task_categories"],
@@ -23,11 +43,6 @@ export function useTaskCategoriesData(enabled: boolean) {
   const taskCategories = useMemo<WorkspaceTaskCategory[]>(
     () => (taskCategoriesQ.data ?? []).map((t) => ({ id: t.id, name: t.name })),
     [taskCategoriesQ.data],
-  );
-
-  const invalidate = useCallback(
-    () => qc.invalidateQueries({ queryKey: ["task_categories"] }),
-    [qc],
   );
 
   const createTaskCategory = useCallback(

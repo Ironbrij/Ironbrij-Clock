@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from "react";
+import { useCallback, useEffect, useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { throwIf } from "./utils";
@@ -6,6 +6,22 @@ import type { WorkspaceClient } from "./types";
 
 export function useClientsData(enabled: boolean) {
   const qc = useQueryClient();
+
+  // L27: a name change, active/inactive toggle, or profile edit made in
+  // another tab used to sit stale until something else triggered a
+  // refetch.
+  useEffect(() => {
+    if (!enabled) return;
+    const channel = supabase
+      .channel("clients_realtime")
+      .on("postgres_changes", { event: "*", schema: "public", table: "clients" }, () =>
+        qc.invalidateQueries({ queryKey: ["clients"] }),
+      )
+      .subscribe();
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [enabled, qc]);
 
   const clientsQ = useQuery({
     queryKey: ["clients"],
