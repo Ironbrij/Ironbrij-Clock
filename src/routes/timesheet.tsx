@@ -77,6 +77,7 @@ function Timesheet() {
         status={timesheet?.status}
         reviewNote={timesheet?.reviewNote ?? null}
         hasEntries={weekEntries.length > 0}
+        hasRunningEntry={weekEntries.some((e) => e.running)}
       />
 
       {view === "grid" ? (
@@ -129,11 +130,13 @@ function SubmissionPanel({
   status,
   reviewNote,
   hasEntries,
+  hasRunningEntry,
 }: {
   weekStart: Date;
   status?: TimesheetStatus;
   reviewNote: string | null;
   hasEntries: boolean;
+  hasRunningEntry: boolean;
 }) {
   const { submitTimesheet } = useWorkspace();
   const [busy, setBusy] = useState(false);
@@ -170,9 +173,12 @@ function SubmissionPanel({
     return (
       <Card className="mb-4 shadow-card">
         <CardContent className="flex flex-wrap items-center justify-between gap-3 p-4">
-          <p className="text-sm font-medium text-muted-foreground">
-            Waiting on your manager to review it.
-          </p>
+          <div className="flex items-center gap-2">
+            <Lock className="h-4 w-4 text-muted-foreground" />
+            <p className="text-sm font-medium text-muted-foreground">
+              Locked while it's waiting on your manager to review it.
+            </p>
+          </div>
           <Badge variant="secondary">Submitted</Badge>
         </CardContent>
       </Card>
@@ -190,7 +196,9 @@ function SubmissionPanel({
             </>
           ) : (
             <p className="text-sm text-muted-foreground">
-              Ready to submit once this week looks right.
+              {hasRunningEntry
+                ? "Stop your timer before submitting this week."
+                : "Ready to submit once this week looks right."}
             </p>
           )}
         </div>
@@ -199,9 +207,15 @@ function SubmissionPanel({
           <Button
             size="sm"
             className="gap-2"
-            disabled={busy || !hasEntries}
+            disabled={busy || !hasEntries || hasRunningEntry}
             onClick={() => void submit()}
-            title={hasEntries ? undefined : "Log some time first"}
+            title={
+              hasRunningEntry
+                ? "Stop your timer before submitting this week"
+                : hasEntries
+                  ? undefined
+                  : "Log some time first"
+            }
           >
             <Send className="h-4 w-4" />
             {status === "Rejected" ? "Resubmit" : "Submit for approval"}

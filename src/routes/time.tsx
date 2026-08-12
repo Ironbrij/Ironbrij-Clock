@@ -1,6 +1,16 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ChevronLeft, ChevronRight, Pause, Pencil, Play, Plus, Repeat, Trash2 } from "lucide-react";
+import {
+  ChevronLeft,
+  ChevronRight,
+  Lock,
+  Pause,
+  Pencil,
+  Play,
+  Plus,
+  Repeat,
+  Trash2,
+} from "lucide-react";
 import { toast } from "sonner";
 import { AppShell, ProjectDot } from "@/components/app-shell";
 import {
@@ -339,7 +349,7 @@ function TimerBar() {
 }
 
 function EntryList({ entries }: { entries: WorkspaceEntry[] }) {
-  const { projectById, deleteEntry, startTimer, runningEntry } = useWorkspace();
+  const { projectById, deleteEntry, startTimer, runningEntry, timesheetForWeek } = useWorkspace();
   const [repeatingId, setRepeatingId] = useState<string | null>(null);
   const [editingEntry, setEditingEntry] = useState<WorkspaceEntry | null>(null);
   const [deletingEntry, setDeletingEntry] = useState<WorkspaceEntry | null>(null);
@@ -396,6 +406,8 @@ function EntryList({ entries }: { entries: WorkspaceEntry[] }) {
       <ul className="divide-y divide-border">
         {entries.map((entry) => {
           const p = projectById(entry.projectId);
+          const weekStatus = timesheetForWeek(startOfWeek(fromDateKey(entry.date)))?.status;
+          const locked = weekStatus === "Submitted" || weekStatus === "Approved";
           return (
             <li
               key={entry.id}
@@ -429,22 +441,33 @@ function EntryList({ entries }: { entries: WorkspaceEntry[] }) {
                     >
                       <Repeat className="h-4 w-4" />
                     </Button>
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      aria-label="Edit entry"
-                      onClick={() => setEditingEntry(entry)}
-                    >
-                      <Pencil className="h-4 w-4" />
-                    </Button>
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      aria-label="Delete entry"
-                      onClick={() => setDeletingEntry(entry)}
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
+                    {locked ? (
+                      <span
+                        className="flex h-9 w-9 items-center justify-center text-muted-foreground"
+                        title="This week is locked — ask your manager to send it back to edit this entry"
+                      >
+                        <Lock className="h-4 w-4" />
+                      </span>
+                    ) : (
+                      <>
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          aria-label="Edit entry"
+                          onClick={() => setEditingEntry(entry)}
+                        >
+                          <Pencil className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          aria-label="Delete entry"
+                          onClick={() => setDeletingEntry(entry)}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </>
+                    )}
                   </>
                 )}
               </div>
