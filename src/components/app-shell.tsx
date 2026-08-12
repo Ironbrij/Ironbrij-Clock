@@ -56,11 +56,14 @@ export function AppShell({
   const {
     session,
     authLoading,
+    loading,
+    loadError,
     currentUser,
     isAdmin,
     activeMembers,
     unseenActivityCount,
     signOut,
+    refreshAll,
   } = useWorkspace();
   const [moreOpen, setMoreOpen] = useState(false);
 
@@ -72,6 +75,38 @@ export function AppShell({
     return (
       <div className="flex min-h-screen items-center justify-center bg-background">
         <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  // The core "shell" data (profile, teams, projects, tags, settings,
+  // timesheets, task categories) is still in flight — block on it rather
+  // than letting every page underneath render with empty arrays and look
+  // like a workspace with nothing in it.
+  if (loading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-background">
+        <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  // Same data, but it came back an outright error rather than just being
+  // slow — without this, a dropped connection or a transient failure here
+  // renders exactly like an empty workspace on every single page, with no
+  // way to tell the difference or retry.
+  if (loadError) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-background px-4">
+        <div className="w-full max-w-sm rounded-xl border bg-card p-8 text-center shadow-sm">
+          <h1 className="text-lg font-semibold">Couldn't load your workspace</h1>
+          <p className="mt-2 text-sm text-muted-foreground">
+            Something went wrong loading your data. Check your connection and try again.
+          </p>
+          <Button className="mt-6 w-full" onClick={() => refreshAll()}>
+            Try again
+          </Button>
+        </div>
       </div>
     );
   }
