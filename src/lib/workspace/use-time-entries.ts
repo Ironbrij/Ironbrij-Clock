@@ -4,12 +4,26 @@ import { supabase } from "@/integrations/supabase/client";
 import type { Database } from "@/integrations/supabase/types";
 import { combineDateAndTime, ENTRIES_HISTORY_DAYS, toDateKey } from "@/lib/time-utils";
 import { throwIf } from "./utils";
-import type { WorkspaceEntry, WorkspaceProject } from "./types";
+import type { WorkspaceEntry, WorkspaceProject, WorkspaceSettings } from "./types";
 
 type TimeEntryUpdate = Database["public"]["Tables"]["time_entries"]["Update"];
 
 const LOCKED_WEEK_MESSAGE =
   "This week is locked because it's been submitted or approved — ask your manager to send it back if you need to make changes.";
+
+const REQUIRE_DESCRIPTION_MESSAGE =
+  "Add a description first — your admin has made descriptions required.";
+
+const MANUAL_ENTRY_DISABLED_MESSAGE =
+  "Your admin has turned off manual time entry — use the timer instead.";
+
+// The DB enforces the same rules (see the enforce_entry_policies migration)
+// as a backstop against a direct API call bypassing the checks below, but
+// a single RLS violation code can't say which of several WITH CHECK
+// clauses failed — this covers all of them rather than asserting a
+// specific (possibly wrong) cause.
+const POLICY_VIOLATION_MESSAGE =
+  "That couldn't be saved — check that this week isn't locked, that manual entries are still allowed, and that a description is included if your admin requires one.";
 
 /** True if [start, end) would overlap any of `entries` other than `excludeId` — a still-running entry (no end_time yet) is treated as open-ended. */
 function overlapsExisting(
@@ -32,6 +46,7 @@ export function useTimeEntriesData(
   enabled: boolean,
   uid: string | null,
   projects: WorkspaceProject[],
+  settings: WorkspaceSettings,
 ) {
   const qc = useQueryClient();
 
@@ -99,6 +114,9 @@ export function useTimeEntriesData(
           "You already have a timer running — stop it before starting another.",
         );
       }
+      if (settings.requireDescriptions && !description.trim()) {
+        throw new Error(REQUIRE_DESCRIPTION_MESSAGE);
+      }
       const project = projects.find((p) => p.id === projectId);
       const now = new Date();
       const { error } = await supabase.from("time_entries").insert({
@@ -113,11 +131,11 @@ export function useTimeEntriesData(
       });
       throwIf(error, {
         "23505": "You already have a timer running — stop it before starting another.",
-        "42501": LOCKED_WEEK_MESSAGE,
+        "42501": POLICY_VIOLATION_MESSAGE,
       });
       invalidateEntries();
     },
-    [uid, projects, entries, invalidateEntries],
+    [uid, projects, entries, settings, invalidateEntries],
   );
 
   const stopTimer = useCallback(
@@ -157,6 +175,14 @@ export function useTimeEntriesData(
         endTime?: string;
       },
     ) => {
+      if (
+        patch.description !== undefined &&
+        settings.requireDescriptions &&
+        !patch.description.trim()
+      ) {
+        throw new Error(REQUIRE_DESCRIPTION_MESSAGE);
+      }
+
       const dbPatch: TimeEntryUpdate = {};
       if (patch.projectId !== undefined) dbPatch.project_id = patch.projectId;
       if (patch.task !== undefined) dbPatch.task = patch.task;
@@ -201,12 +227,12 @@ export function useTimeEntriesData(
         .select("id");
       throwIf(error, {
         "23P01": "That overlaps with another entry you already have on this day.",
-        "42501": LOCKED_WEEK_MESSAGE,
+        "42501": POLICY_VIOLATION_MESSAGE,
       });
       if (!data || data.length === 0) throw new Error(LOCKED_WEEK_MESSAGE);
       invalidateEntries();
     },
-    [entries, invalidateEntries],
+    [entries, settings, invalidateEntries],
   );
 
   const createEntry = useCallback(
@@ -219,6 +245,12 @@ export function useTimeEntriesData(
       endTime: string;
     }) => {
       if (!uid) return;
+      if (!settings.allowManualEntry) {
+        throw new Error(MANUAL_ENTRY_DISABLED_MESSAGE);
+      }
+      if (settings.requireDescriptions && !input.description.trim()) {
+        throw new Error(REQUIRE_DESCRIPTION_MESSAGE);
+      }
       const project = projects.find((p) => p.id === input.projectId);
       const start = combineDateAndTime(input.date, input.startTime);
       const end = combineDateAndTime(input.date, input.endTime);
@@ -241,11 +273,11 @@ export function useTimeEntriesData(
       });
       throwIf(error, {
         "23P01": "That overlaps with another entry you already have on this day.",
-        "42501": LOCKED_WEEK_MESSAGE,
+        "42501": POLICY_VIOLATION_MESSAGE,
       });
       invalidateEntries();
     },
-    [uid, projects, entries, invalidateEntries],
+    [uid, projects, entries, settings, invalidateEntries],
   );
 
   const deleteEntry = useCallback(
