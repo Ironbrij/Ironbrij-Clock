@@ -29,7 +29,7 @@ export function useTeamsData(enabled: boolean) {
         .insert({ name, color })
         .select("id")
         .single();
-      throwIf(error);
+      throwIf(error, { "23505": "A team with that name already exists." });
       if (data && memberIds.length) {
         await supabase
           .from("team_members")
@@ -44,7 +44,7 @@ export function useTeamsData(enabled: boolean) {
   const updateTeam = useCallback(
     async (teamId: string, input: { name: string; color: string }) => {
       const { error } = await supabase.from("teams").update(input).eq("id", teamId);
-      throwIf(error);
+      throwIf(error, { "23505": "A team with that name already exists." });
       qc.invalidateQueries({ queryKey: ["teams"] });
     },
     [qc],

@@ -807,10 +807,20 @@ function AdminTab() {
           <div>
             <Button
               onClick={() => {
+                // Number("0") || fallback used to silently discard 0 (and
+                // any other invalid entry) and save the old value instead,
+                // with no indication the typed number wasn't what got
+                // saved. min={1} on the input is a UI hint only — nothing
+                // stopped it being bypassed by typing.
+                const parsedHours = Number(weeklyHours);
+                if (!weeklyHours.trim() || Number.isNaN(parsedHours) || parsedHours < 1) {
+                  toast.error("Weekly hours must be a number of 1 or more");
+                  return;
+                }
                 void updateSettings({
                   companyName: companyName.trim() || settings.companyName,
                   timezone,
-                  weeklyHours: Number(weeklyHours) || settings.weeklyHours,
+                  weeklyHours: parsedHours,
                   currency,
                   logoDataUrl: logo,
                   requireDescriptions,

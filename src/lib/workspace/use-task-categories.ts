@@ -33,7 +33,7 @@ export function useTaskCategoriesData(enabled: boolean) {
   const createTaskCategory = useCallback(
     async (name: string) => {
       const { error } = await supabase.from("task_categories").insert({ name: name.trim() });
-      throwIf(error);
+      throwIf(error, { "23505": "A task category with that name already exists." });
       invalidate();
     },
     [invalidate],
@@ -45,7 +45,7 @@ export function useTaskCategoriesData(enabled: boolean) {
         .from("task_categories")
         .update({ name: name.trim() })
         .eq("id", id);
-      throwIf(error);
+      throwIf(error, { "23505": "A task category with that name already exists." });
       invalidate();
     },
     [invalidate],
