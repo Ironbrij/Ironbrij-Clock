@@ -115,6 +115,7 @@ function Reports() {
     members,
     settings,
     canManage,
+    employmentByUser,
     projectHoursForRange,
     employeeHoursForRange,
     employeeClientHoursForRange,
@@ -218,13 +219,18 @@ function Reports() {
       const memberTeams = m.teamIds
         .map((id) => teams.find((t) => t.id === id))
         .filter((t): t is (typeof teams)[number] => !!t);
+      // There's no stored expected-hours-per-week for part-time staff (only
+      // a free-text schedule note), so comparing them against the
+      // workspace's full-time weeklyHours target would just be wrong — null
+      // means "not applicable," not "no overtime."
+      const isPartTime = employmentByUser.get(m.id)?.employmentType === "part_time";
       return {
         ...m,
         hours,
         // Overtime always reflects real total workload, even when a client
         // filter narrows which hours are shown — "overtime for one client"
         // isn't a meaningful figure on its own.
-        overtime: Math.max(0, totalHours - expectedHours),
+        overtime: isPartTime ? null : Math.max(0, totalHours - expectedHours),
         team: memberTeams.length ? memberTeams.map((t) => t.name).join(", ") : "",
         teamColor: memberTeams[0]?.color ?? "var(--muted-foreground)",
       };
@@ -233,7 +239,7 @@ function Reports() {
   const sortedEmployees = [...employeeRows].sort((a, b) => {
     const dir = empAsc ? 1 : -1;
     if (empSortKey === "hours") return (a.hours - b.hours) * dir;
-    if (empSortKey === "overtime") return (a.overtime - b.overtime) * dir;
+    if (empSortKey === "overtime") return ((a.overtime ?? -1) - (b.overtime ?? -1)) * dir;
     if (empSortKey === "team") return a.team.localeCompare(b.team) * dir;
     return a.name.localeCompare(b.name) * dir;
   });
@@ -278,7 +284,7 @@ function Reports() {
           r.name,
           r.team,
           r.hours.toFixed(2),
-          r.overtime.toFixed(2),
+          r.overtime == null ? "N/A" : r.overtime.toFixed(2),
           `${from} to ${to}`,
         ]),
       ]);
@@ -551,12 +557,13 @@ function Reports() {
                       <td
                         className={
                           "px-5 py-3 text-right tabular-nums " +
-                          (r.overtime > 0
+                          (r.overtime != null && r.overtime > 0
                             ? "font-medium text-destructive"
                             : "text-muted-foreground")
                         }
+                        title={r.overtime == null ? "Not tracked for part-time staff" : undefined}
                       >
-                        {r.overtime > 0 ? formatHours(r.overtime) : "—"}
+                        {r.overtime != null && r.overtime > 0 ? formatHours(r.overtime) : "—"}
                       </td>
                     </tr>
                   ))}

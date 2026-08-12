@@ -25,16 +25,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
@@ -45,6 +36,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { EntryFormDialog } from "@/components/entry-form-dialog";
 import { TimesheetGrid } from "@/components/timesheet-grid";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { formatHours, formatMinutes } from "@/lib/mock-data";
@@ -371,6 +363,15 @@ function EntryList({ entries }: { entries: WorkspaceEntry[] }) {
       });
       return;
     }
+    // The project pickers elsewhere only ever offer active projects
+    // (`!p.archived`) — repeat used to skip that check entirely and hand
+    // startTimer an archived project id directly.
+    if (projectById(entry.projectId)?.archived) {
+      toast.error("Can't repeat this entry", {
+        description: "Its project has been archived — pick an active project instead.",
+      });
+      return;
+    }
     if (runningEntry) {
       toast.error("A timer is already running", {
         description: "Stop it first, then repeat this entry.",
@@ -511,227 +512,6 @@ function EntryList({ entries }: { entries: WorkspaceEntry[] }) {
   );
 }
 
-type EntryFormValues = {
-  projectId: string;
-  task: string;
-  description: string;
-  date: string;
-  startTime: string;
-  endTime: string;
-};
-
-function toFormValues(entry: WorkspaceEntry | null, defaultTask: string): EntryFormValues {
-  if (!entry) {
-    return {
-      projectId: "",
-      task: defaultTask,
-      description: "",
-      date: toDateKey(new Date()),
-      startTime: "",
-      endTime: "",
-    };
-  }
-  const start = new Date(entry.startTime);
-  const end = entry.endTime ? new Date(entry.endTime) : start;
-  return {
-    projectId: entry.projectId ?? "",
-    task: entry.task || defaultTask,
-    description: entry.description,
-    date: entry.date,
-    startTime: `${pad(start.getHours())}:${pad(start.getMinutes())}`,
-    endTime: `${pad(end.getHours())}:${pad(end.getMinutes())}`,
-  };
-}
-
-/** Shared dialog for both adding a manual entry and editing an existing one — entry is null for "add". */
-function EntryFormDialog({
-  open,
-  onOpenChange,
-  entry,
-}: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  entry: WorkspaceEntry | null;
-}) {
-  const { projects, entries, createEntry, updateEntry, settings, taskCategories } = useWorkspace();
-  const active = projects.filter((p) => !p.archived);
-  const { recent: recentProjects, rest: otherProjects } = orderByRecency(active, entries);
-  const { recent: recentTasks, rest: otherTasks } = orderByRecencyName(taskCategories, entries);
-  const defaultTask = taskCategories[0]?.name ?? "";
-  const [values, setValues] = useState<EntryFormValues>(() => toFormValues(entry, defaultTask));
-  const [busy, setBusy] = useState(false);
-
-  useEffect(() => {
-    if (open) setValues(toFormValues(entry, defaultTask));
-    // defaultTask intentionally excluded — it should only affect the
-    // initial value when the dialog opens, not overwrite whatever the
-    // person has already picked while it's sitting open.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, entry]);
-
-  const submit = async () => {
-    if (!values.projectId) {
-      toast.error("Pick a project first");
-      return;
-    }
-    if (!values.startTime || !values.endTime) {
-      toast.error("Add a start and end time");
-      return;
-    }
-    if (settings.requireDescriptions && !values.description.trim()) {
-      toast.error("Add a description first", {
-        description: "Your admin has made descriptions required.",
-      });
-      return;
-    }
-    setBusy(true);
-    try {
-      if (entry) {
-        await updateEntry(entry.id, values);
-        toast.success("Entry updated");
-      } else {
-        await createEntry(values);
-        toast.success("Entry added", { description: "Logged to your timesheet." });
-      }
-      onOpenChange(false);
-    } catch (error) {
-      toast.error("Couldn't save that", { description: (error as Error).message });
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>{entry ? "Edit entry" : "Add a time entry"}</DialogTitle>
-          <DialogDescription>
-            {entry
-              ? "Update the project, times or details for this entry."
-              : "Log time you forgot to track live — for today or any earlier day."}
-          </DialogDescription>
-        </DialogHeader>
-        <div className="grid gap-4 py-2">
-          <div className="grid gap-2">
-            <Label htmlFor="entry-description">Description</Label>
-            <Input
-              id="entry-description"
-              placeholder="What did you work on?"
-              value={values.description}
-              onChange={(e) => setValues((v) => ({ ...v, description: e.target.value }))}
-            />
-          </div>
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div className="grid gap-2">
-              <Label>Project</Label>
-              <Select
-                value={values.projectId}
-                onValueChange={(projectId) => setValues((v) => ({ ...v, projectId }))}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Project" />
-                </SelectTrigger>
-                <SelectContent>
-                  {recentProjects.length > 0 && (
-                    <SelectGroup>
-                      <SelectLabel>Recent</SelectLabel>
-                      {recentProjects.map((p) => (
-                        <SelectItem key={p.id} value={p.id}>
-                          <span className="flex items-center gap-2">
-                            <ProjectDot color={p.color} />
-                            {p.name}
-                          </span>
-                        </SelectItem>
-                      ))}
-                    </SelectGroup>
-                  )}
-                  {recentProjects.length > 0 && otherProjects.length > 0 && <SelectSeparator />}
-                  {otherProjects.map((p) => (
-                    <SelectItem key={p.id} value={p.id}>
-                      <span className="flex items-center gap-2">
-                        <ProjectDot color={p.color} />
-                        {p.name}
-                      </span>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="grid gap-2">
-              <Label>Task</Label>
-              <Select
-                value={values.task}
-                onValueChange={(task) => setValues((v) => ({ ...v, task }))}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Task" />
-                </SelectTrigger>
-                <SelectContent>
-                  {recentTasks.length > 0 && (
-                    <SelectGroup>
-                      <SelectLabel>Recent</SelectLabel>
-                      {recentTasks.map((t) => (
-                        <SelectItem key={t.id} value={t.name}>
-                          {t.name}
-                        </SelectItem>
-                      ))}
-                    </SelectGroup>
-                  )}
-                  {recentTasks.length > 0 && otherTasks.length > 0 && <SelectSeparator />}
-                  {otherTasks.map((t) => (
-                    <SelectItem key={t.id} value={t.name}>
-                      {t.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-          <div className="grid gap-4 sm:grid-cols-3">
-            <div className="grid gap-2">
-              <Label htmlFor="entry-date">Date</Label>
-              <Input
-                id="entry-date"
-                type="date"
-                max={toDateKey(new Date())}
-                value={values.date}
-                onChange={(e) => setValues((v) => ({ ...v, date: e.target.value }))}
-              />
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor="entry-start">Start</Label>
-              <Input
-                id="entry-start"
-                type="time"
-                value={values.startTime}
-                onChange={(e) => setValues((v) => ({ ...v, startTime: e.target.value }))}
-              />
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor="entry-end">End</Label>
-              <Input
-                id="entry-end"
-                type="time"
-                value={values.endTime}
-                onChange={(e) => setValues((v) => ({ ...v, endTime: e.target.value }))}
-              />
-            </div>
-          </div>
-        </div>
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
-            Cancel
-          </Button>
-          <Button disabled={busy} onClick={() => void submit()}>
-            {entry ? "Save changes" : "Add entry"}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
 function ListView() {
   const { entries } = useWorkspace();
   const days = useMemo(() => Array.from({ length: 4 }, (_, i) => addDays(new Date(), -i)), []);
@@ -800,33 +580,81 @@ function GridView() {
 function CalendarView() {
   const { entries, projectById } = useWorkspace();
   const [mode, setMode] = useState("month");
+  // Independent per-mode offsets — switching Month/Week tabs shouldn't
+  // jumble what "forward/back" meant in the other one.
+  const [monthOffset, setMonthOffset] = useState(0);
+  const [weekOffset, setWeekOffset] = useState(0);
   const today = useMemo(() => new Date(), []);
-  const weekStart = useMemo(() => startOfWeek(today), [today]);
+
+  const viewMonth = useMemo(
+    () => new Date(today.getFullYear(), today.getMonth() + monthOffset, 1),
+    [today, monthOffset],
+  );
+  const weekStart = useMemo(
+    () => addDays(startOfWeek(today), weekOffset * 7),
+    [today, weekOffset],
+  );
 
   const monthDays = useMemo(() => {
-    const first = new Date(today.getFullYear(), today.getMonth(), 1);
-    const lead = (first.getDay() + 6) % 7;
-    const daysInMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate();
+    const lead = (viewMonth.getDay() + 6) % 7;
+    const daysInMonth = new Date(viewMonth.getFullYear(), viewMonth.getMonth() + 1, 0).getDate();
     return [
       ...Array.from({ length: lead }, () => null),
       ...Array.from(
         { length: daysInMonth },
-        (_, i) => new Date(today.getFullYear(), today.getMonth(), i + 1),
+        (_, i) => new Date(viewMonth.getFullYear(), viewMonth.getMonth(), i + 1),
       ),
     ];
-  }, [today]);
+  }, [viewMonth]);
 
   const weekDays = useMemo(() => weekdayNames.map((_, i) => addDays(weekStart, i)), [weekStart]);
   const cells = mode === "month" ? monthDays : weekDays;
 
+  // Same rule Grid/Timesheet already use: entries are only ever fetched
+  // back to oldestLoadedWeekStart(), so paging further back would silently
+  // render a page that looks empty but just isn't loaded.
+  const atOldestLoaded =
+    mode === "month" ? viewMonth <= oldestLoadedWeekStart() : weekStart <= oldestLoadedWeekStart();
+  const atNewest = mode === "month" ? monthOffset >= 0 : weekOffset >= 0;
+  const isToday = mode === "month" ? monthOffset === 0 : weekOffset === 0;
+
+  const goPrev = () =>
+    mode === "month" ? setMonthOffset((o) => o - 1) : setWeekOffset((o) => o - 1);
+  const goNext = () =>
+    mode === "month"
+      ? setMonthOffset((o) => Math.min(0, o + 1))
+      : setWeekOffset((o) => Math.min(0, o + 1));
+  const goToday = () => {
+    setMonthOffset(0);
+    setWeekOffset(0);
+  };
+
   return (
     <div className="grid gap-4">
-      <div className="flex items-center justify-between gap-4">
-        <span className="text-sm font-medium">
-          {mode === "month"
-            ? today.toLocaleDateString("en-AU", { month: "long", year: "numeric" })
-            : `${formatWeekRange(weekStart)} ${weekStart.getFullYear()}`}
-        </span>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <Button variant="outline" size="icon" disabled={atOldestLoaded} onClick={goPrev}>
+            <ChevronLeft className="h-4 w-4" />
+          </Button>
+          <span className="min-w-[10rem] text-sm font-medium">
+            {mode === "month"
+              ? viewMonth.toLocaleDateString("en-AU", { month: "long", year: "numeric" })
+              : `${formatWeekRange(weekStart)} ${weekStart.getFullYear()}`}
+          </span>
+          <Button variant="outline" size="icon" disabled={atNewest} onClick={goNext}>
+            <ChevronRight className="h-4 w-4" />
+          </Button>
+          {!isToday && (
+            <Button variant="ghost" size="sm" onClick={goToday}>
+              Today
+            </Button>
+          )}
+          {atOldestLoaded && (
+            <span className="text-xs text-muted-foreground">
+              That's as far back as this view loads — check Reports for anything older.
+            </span>
+          )}
+        </div>
         <Tabs value={mode} onValueChange={setMode}>
           <TabsList>
             <TabsTrigger value="month">Month</TabsTrigger>

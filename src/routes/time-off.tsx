@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { CalendarPlus } from "lucide-react";
+import { CalendarPlus, Info } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -37,11 +37,22 @@ function TimeOffPage() {
       title="Time off"
       subtitle="Your balances and requests — plan a break, we'll keep the hours straight."
       actions={
-        <Button className="gap-2">
+        <Button
+          className="gap-2"
+          disabled
+          title="Time off requests aren't available yet — this page is a preview."
+        >
           <CalendarPlus className="h-4 w-4" /> Request time off
         </Button>
       }
     >
+      <div className="mb-4 flex items-start gap-2 rounded-lg border border-border bg-muted/40 px-4 py-3 text-sm text-muted-foreground">
+        <Info className="mt-0.5 h-4 w-4 shrink-0" />
+        <p>
+          This page shows sample data — there's no real leave/attendance workflow yet, so nothing
+          here is connected to your actual balances or affects your timesheet.
+        </p>
+      </div>
       <div className="grid gap-4 sm:grid-cols-3">
         {timeOffBalances.map((b) => {
           const remaining = b.total - b.used;

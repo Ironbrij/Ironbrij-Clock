@@ -40,7 +40,7 @@ export function useTagsData(enabled: boolean) {
   const createTag = useCallback(
     async (name: string, color: string) => {
       const { error } = await supabase.from("tags").insert({ name: name.trim(), color });
-      throwIf(error);
+      throwIf(error, { "23505": "A tag with that name already exists." });
       qc.invalidateQueries({ queryKey: ["tags"] });
     },
     [qc],
@@ -52,7 +52,7 @@ export function useTagsData(enabled: boolean) {
         .from("tags")
         .update({ name: name.trim(), color })
         .eq("id", id);
-      throwIf(error);
+      throwIf(error, { "23505": "A tag with that name already exists." });
       qc.invalidateQueries({ queryKey: ["tags"] });
     },
     [qc],

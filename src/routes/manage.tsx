@@ -2,20 +2,38 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Activity,
+  AlertTriangle,
   CalendarClock,
   CheckCheck,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  Clock,
   FileText,
+  Lock,
   MonitorSmartphone,
+  Pencil,
   Receipt,
+  Trash2,
   type LucideIcon,
 } from "lucide-react";
 import { toast } from "sonner";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { AppShell, ProjectDot } from "@/components/app-shell";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { EntryFormDialog } from "@/components/entry-form-dialog";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -37,6 +55,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { formatHours, formatMinutes } from "@/lib/mock-data";
 import {
+  addDays,
   formatClock,
   formatDayLong,
   formatWeekRange,
@@ -45,12 +64,16 @@ import {
   toDateKey,
 } from "@/lib/time-utils";
 import {
+  useActiveTimers,
+  useMemberEntries,
   useThisWeekStart,
   useWorkspace,
+  type ActiveTimer,
   type EmploymentType,
   type PendingApproval,
   type WorkspaceActivityEvent,
   type WorkspaceEmployment,
+  type WorkspaceEntry,
 } from "@/lib/workspace-store";
 
 export const Route = createFileRoute("/manage")({
@@ -60,12 +83,12 @@ export const Route = createFileRoute("/manage")({
       {
         name: "description",
         content:
-          "Workspace management hub: schedule, expenses, approvals, activity, kiosks and invoices for Ironbrij teams.",
+          "Workspace management hub: schedule, entries, expenses, approvals, activity, kiosks and invoices for Ironbrij teams.",
       },
       { property: "og:title", content: "Manage — IronTrack" },
       {
         property: "og:description",
-        content: "Schedule, expenses, approvals, activity, kiosks and invoices in one hub.",
+        content: "Schedule, entries, expenses, approvals, activity, kiosks and invoices in one hub.",
       },
     ],
   }),
@@ -78,6 +101,12 @@ const sections: { id: string; label: string; icon: LucideIcon; description: stri
     label: "Schedule",
     icon: CalendarClock,
     description: "Each person's weekly schedule, hourly rate, and employment type.",
+  },
+  {
+    id: "entries",
+    label: "Entries",
+    icon: Clock,
+    description: "View or edit an individual team member's time entries.",
   },
   {
     id: "expenses",
@@ -142,6 +171,8 @@ function ManagePage() {
         <ActivityTab />
       ) : tab === "schedule" ? (
         <ScheduleTab />
+      ) : tab === "entries" ? (
+        <TeamEntriesTab />
       ) : (
         <Card className="mt-4 shadow-card">
           <CardContent className="flex flex-col items-center gap-3 px-6 py-16 text-center">
@@ -236,9 +267,18 @@ function ApprovalsPanel() {
   const { pendingApprovals, memberById, reviewTimesheet } = useWorkspace();
   const [busyId, setBusyId] = useState<string | null>(null);
   const [rejecting, setRejecting] = useState<PendingApproval | null>(null);
+  // Approve has no "unapprove" at all — review_timesheet() only ever
+  // transitions a row that's currently 'submitted', with no exception for
+  // admins on an already-approved one — unlike Send back, which already
+  // asked for confirmation via a dialog. Approve used to fire on a single
+  // click with no confirmation, the inverse of its actual risk.
+  const [approving, setApproving] = useState<PendingApproval | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
-  const approve = async (id: string) => {
+  const approve = async () => {
+    if (!approving) return;
+    const id = approving.id;
+    setApproving(null);
     setBusyId(id);
     try {
       await reviewTimesheet(id, "Approved");
@@ -331,7 +371,7 @@ function ApprovalsPanel() {
                       <Button
                         size="sm"
                         disabled={busyId === a.id}
-                        onClick={() => void approve(a.id)}
+                        onClick={() => setApproving(a)}
                       >
                         Approve
                       </Button>
@@ -349,6 +389,24 @@ function ApprovalsPanel() {
         onOpenChange={(open) => !open && setRejecting(null)}
         onConfirm={reject}
       />
+      <AlertDialog open={!!approving} onOpenChange={(open) => !open && setApproving(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Approve this timesheet?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {approving
+                ? `${memberById(approving.userId)?.name ?? "This person"}'s week of ${formatWeekRange(
+                    fromDateKey(approving.weekStart),
+                  )} (${formatHours(approving.minutes / 60)}) will be locked for editing. This can't be undone — there's no way to un-approve a timesheet once it's approved.`
+                : ""}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={() => void approve()}>Approve</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
@@ -428,6 +486,24 @@ function describeActivityEvent(
     }
     case "member_removed":
       return `${actor} removed ${target}'s access`;
+    case "time_entry_edited": {
+      const day =
+        typeof e.metadata.entry_date === "string"
+          ? formatDayLong(fromDateKey(e.metadata.entry_date))
+          : "an entry";
+      return `${actor} edited ${target}'s entry for ${day}`;
+    }
+    case "time_entry_deleted": {
+      const day =
+        typeof e.metadata.entry_date === "string"
+          ? formatDayLong(fromDateKey(e.metadata.entry_date))
+          : "an entry";
+      const description =
+        typeof e.metadata.description === "string" && e.metadata.description
+          ? ` — "${e.metadata.description}"`
+          : "";
+      return `${actor} deleted ${target}'s entry for ${day}${description}`;
+    }
     default:
       return `${actor} — ${e.action}`;
   }
@@ -685,6 +761,313 @@ function ScheduleRow({
         />
       </td>
     </tr>
+  );
+}
+
+/**
+ * H11: a manager/admin viewing or editing an individual team member's time
+ * entries — the RLS on time_entries already allowed this (admin on anyone,
+ * manager on a shared-team member), there was just no UI for it. Reuses
+ * updateEntry/deleteEntry from context as-is: neither is scoped to the
+ * signed-in user client-side, they rely entirely on RLS, so they already
+ * work correctly here. A manager (not admin) can't touch a locked
+ * (submitted/approved) week — same as the backend — an admin still can.
+ */
+function TeamEntriesTab() {
+  const { activeMembers, currentUser, isAdmin, canManage, timesheets, projectById, deleteEntry } =
+    useWorkspace();
+  const [memberId, setMemberId] = useState("");
+  const thisWeek = useThisWeekStart();
+  const [offset, setOffset] = useState(0);
+  const weekStart = useMemo(() => addDays(thisWeek, offset * 7), [thisWeek, offset]);
+
+  const relevantMembers = useMemo(() => {
+    const base = activeMembers.filter((m) => !m.pending && m.id !== currentUser.id);
+    return isAdmin
+      ? base
+      : base.filter((m) => m.teamIds.some((tid) => currentUser.teamIds.includes(tid)));
+  }, [activeMembers, currentUser, isAdmin]);
+
+  useEffect(() => {
+    if (memberId && relevantMembers.some((m) => m.id === memberId)) return;
+    setMemberId(relevantMembers[0]?.id ?? "");
+  }, [relevantMembers, memberId]);
+
+  const { entriesQ, entries } = useMemberEntries(memberId || null, weekStart);
+  const weekKey = toDateKey(weekStart);
+  const status = timesheets.find((t) => t.userId === memberId && t.weekStart === weekKey)?.status;
+  const locked = (status === "Submitted" || status === "Approved") && !isAdmin;
+
+  // M18: passive visibility only — this doesn't stop anything, it just
+  // lets a manager/admin notice a timer that's been running suspiciously
+  // long, same as they'd notice from a person's own Time page if they
+  // happened to be looking at it.
+  const { activeTimers } = useActiveTimers();
+  const relevantActiveTimers = useMemo(
+    () => activeTimers.filter((t) => relevantMembers.some((m) => m.id === t.userId)),
+    [activeTimers, relevantMembers],
+  );
+  const selectMember = (id: string) => {
+    setMemberId(id);
+    setOffset(0);
+  };
+
+  const [editingEntry, setEditingEntry] = useState<WorkspaceEntry | null>(null);
+  const [deletingEntry, setDeletingEntry] = useState<WorkspaceEntry | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
+  const confirmDelete = async () => {
+    if (!deletingEntry) return;
+    setDeleting(true);
+    try {
+      await deleteEntry(deletingEntry.id);
+      toast.success("Entry deleted");
+      setDeletingEntry(null);
+    } catch (error) {
+      toast.error("Couldn't delete that", { description: (error as Error).message });
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  if (!canManage) {
+    return (
+      <Card className="mt-4 shadow-card">
+        <CardContent className="flex flex-col items-center gap-3 px-6 py-16 text-center">
+          <Clock className="h-10 w-10 text-muted-foreground/50" />
+          <h2 className="text-lg font-semibold">Managers and admins only</h2>
+          <p className="max-w-md text-sm text-muted-foreground">
+            Only people who manage the workspace can view or edit someone else's time entries.
+          </p>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (relevantMembers.length === 0) {
+    return (
+      <Card className="mt-4 shadow-card">
+        <CardContent className="flex flex-col items-center gap-3 px-6 py-16 text-center">
+          <Clock className="h-10 w-10 text-muted-foreground/50" />
+          <h2 className="text-lg font-semibold">No one to show here yet</h2>
+          <p className="max-w-md text-sm text-muted-foreground">
+            {isAdmin
+              ? "Invite some teammates first."
+              : "No one on your teams to show here yet."}
+          </p>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const weekTotal = entries.reduce((s, e) => s + e.minutes, 0) / 60;
+
+  return (
+    <div className="mt-4 grid gap-4">
+      <ActiveTimersCard timers={relevantActiveTimers} onSelectMember={selectMember} />
+      <Card className="shadow-card">
+        <CardContent className="flex flex-wrap items-center justify-between gap-3 p-4">
+          <div className="flex flex-wrap items-center gap-3">
+            <Select value={memberId} onValueChange={setMemberId}>
+              <SelectTrigger className="w-56">
+                <SelectValue placeholder="Choose a team member" />
+              </SelectTrigger>
+              <SelectContent>
+                {relevantMembers.map((m) => (
+                  <SelectItem key={m.id} value={m.id}>
+                    {m.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <div className="flex items-center gap-1">
+              <Button variant="outline" size="icon" onClick={() => setOffset((o) => o - 1)}>
+                <ChevronLeft className="h-4 w-4" />
+              </Button>
+              <span className="min-w-[9rem] text-center text-sm font-medium">
+                {formatWeekRange(weekStart)}
+              </span>
+              <Button
+                variant="outline"
+                size="icon"
+                disabled={offset >= 0}
+                onClick={() => setOffset((o) => Math.min(0, o + 1))}
+              >
+                <ChevronRight className="h-4 w-4" />
+              </Button>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-muted-foreground">Total {formatHours(weekTotal)}</span>
+            {status && <Badge variant={statusBadgeVariant(status)}>{status}</Badge>}
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card className="shadow-card">
+        <CardContent className="p-0">
+          {entriesQ.isLoading ? (
+            <p className="px-6 py-8 text-sm text-muted-foreground">Loading…</p>
+          ) : entries.length === 0 ? (
+            <p className="px-6 py-8 text-sm text-muted-foreground">Nothing logged this week.</p>
+          ) : (
+            <ul className="divide-y divide-border">
+              {entries.map((entry) => {
+                const p = projectById(entry.projectId);
+                return (
+                  <li
+                    key={entry.id}
+                    className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 px-6 py-3.5"
+                  >
+                    <div className="flex min-w-0 items-center gap-3">
+                      <ProjectDot color={p?.color ?? "var(--muted-foreground)"} />
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-medium">
+                          {entry.description || "No description"}
+                        </p>
+                        <p className="truncate text-xs text-muted-foreground">
+                          {p?.name ?? "No project"} · {entry.task || "—"} ·{" "}
+                          {formatDayLong(fromDateKey(entry.date))}, {formatClock(entry.startTime)}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-1">
+                      <span className="tabular-nums text-sm font-medium">
+                        {entry.running ? "running" : formatMinutes(entry.minutes)}
+                      </span>
+                      {!entry.running &&
+                        (locked ? (
+                          <span
+                            className="flex h-9 w-9 items-center justify-center text-muted-foreground"
+                            title="This week is locked — only an admin can edit it"
+                          >
+                            <Lock className="h-4 w-4" />
+                          </span>
+                        ) : (
+                          <>
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              aria-label="Edit entry"
+                              onClick={() => setEditingEntry(entry)}
+                            >
+                              <Pencil className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              aria-label="Delete entry"
+                              onClick={() => setDeletingEntry(entry)}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </>
+                        ))}
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </CardContent>
+      </Card>
+
+      <EntryFormDialog
+        open={!!editingEntry}
+        onOpenChange={(open) => !open && setEditingEntry(null)}
+        entry={editingEntry}
+      />
+
+      <AlertDialog open={!!deletingEntry} onOpenChange={(open) => !open && setDeletingEntry(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete this entry?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {deletingEntry
+                ? `"${deletingEntry.description || "No description"}" — ${formatMinutes(
+                    deletingEntry.minutes,
+                  )} on ${formatDayLong(fromDateKey(deletingEntry.date))}. This can't be undone.`
+                : ""}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleting}>Keep it</AlertDialogCancel>
+            <AlertDialogAction disabled={deleting} onClick={() => void confirmDelete()}>
+              Delete entry
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </div>
+  );
+}
+
+/** How long a timer has to run before Manage > Entries flags it — matches the middle rung of the self-facing 4/8/12h warning in TimerBar. */
+const ACTIVE_TIMER_FLAG_HOURS = 8;
+
+/** M18: passive visibility into who currently has a timer running — not an action, just something a manager/admin can notice besides the forgetful person themselves. Renders nothing when there's nothing running. */
+function ActiveTimersCard({
+  timers,
+  onSelectMember,
+}: {
+  timers: ActiveTimer[];
+  onSelectMember: (userId: string) => void;
+}) {
+  const { memberById, projectById } = useWorkspace();
+
+  if (timers.length === 0) return null;
+
+  return (
+    <Card className="shadow-card">
+      <CardContent className="p-0">
+        <div className="border-b border-border px-6 py-3">
+          <h3 className="text-sm font-semibold">Active timers</h3>
+          <p className="text-xs text-muted-foreground">
+            Anyone on your teams with a timer currently running.
+          </p>
+        </div>
+        <ul className="divide-y divide-border">
+          {timers.map((t) => {
+            const member = memberById(t.userId);
+            const project = projectById(t.projectId);
+            const hoursRunning = (Date.now() - new Date(t.startTime).getTime()) / 3_600_000;
+            const flagged = hoursRunning >= ACTIVE_TIMER_FLAG_HOURS;
+            return (
+              <li key={t.entryId}>
+                <button
+                  type="button"
+                  className="flex w-full items-center justify-between gap-4 px-6 py-2.5 text-left hover:bg-muted/40"
+                  onClick={() => onSelectMember(t.userId)}
+                >
+                  <span className="flex min-w-0 items-center gap-3">
+                    <Avatar className="h-7 w-7 shrink-0">
+                      <AvatarFallback className="bg-secondary text-xs">
+                        {member?.initials ?? "—"}
+                      </AvatarFallback>
+                    </Avatar>
+                    <span className="min-w-0 truncate text-sm">
+                      <span className="font-medium">{member?.name ?? "Unknown"}</span>{" "}
+                      <span className="text-muted-foreground">
+                        · {project?.name ?? "No project"}
+                      </span>
+                    </span>
+                  </span>
+                  <span
+                    className={
+                      "flex shrink-0 items-center gap-1 text-xs tabular-nums " +
+                      (flagged ? "font-medium text-destructive" : "text-muted-foreground")
+                    }
+                  >
+                    {flagged && <AlertTriangle className="h-3.5 w-3.5" />}
+                    running {hoursRunning < 1 ? "<1h" : `${Math.floor(hoursRunning)}h`}
+                  </span>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      </CardContent>
+    </Card>
   );
 }
 

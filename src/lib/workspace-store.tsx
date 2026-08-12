@@ -37,7 +37,12 @@ import { useProjectsData } from "@/lib/workspace/use-projects";
 import { useActivityLogData, type WorkspaceActivityEvent } from "@/lib/workspace/use-activity-log";
 import { useSettingsData } from "@/lib/workspace/use-settings";
 import { useTeamsData } from "@/lib/workspace/use-teams";
-import { useTimeEntriesData } from "@/lib/workspace/use-time-entries";
+import {
+  useActiveTimersData,
+  useMemberEntriesData,
+  useTimeEntriesData,
+  type ActiveTimer,
+} from "@/lib/workspace/use-time-entries";
 import { useTimesheetsData } from "@/lib/workspace/use-timesheets";
 import { useTagsData } from "@/lib/workspace/use-tags";
 import { useTaskCategoriesData } from "@/lib/workspace/use-task-categories";
@@ -53,6 +58,7 @@ export {
   nameFromEmail,
   NO_CLIENT,
   timezones,
+  type ActiveTimer,
   type EmploymentType,
   type PendingApproval,
   type PendingApprovalEntry,
@@ -555,4 +561,16 @@ export function useWeekGrid(weekStart: Date) {
 
 export function useThisWeekStart() {
   return useMemo(() => startOfWeek(new Date()), []);
+}
+
+/** One team member's entries for one week — for Manage > Entries (H11). Gated to managers/admins; RLS further scopes a manager to people sharing a team with them. */
+export function useMemberEntries(userId: string | null, weekStart: Date) {
+  const { session, canManage } = useWorkspace();
+  return useMemberEntriesData(!!session && canManage, userId, weekStart);
+}
+
+/** Every currently-running timer visible to this manager/admin (M18) — passive flagging, not auto-stop. */
+export function useActiveTimers() {
+  const { session, canManage } = useWorkspace();
+  return useActiveTimersData(!!session && canManage);
 }

@@ -376,9 +376,12 @@ function ProjectsPage() {
           <AlertDialogHeader>
             <AlertDialogTitle>Permanently delete {projectToDelete?.name}?</AlertDialogTitle>
             <AlertDialogDescription>
-              This can't be undone. Any time entries already logged against it are kept, not deleted
-              — they'll just show as having no project from now on, which will change how past
-              reports for this project read. Type the project name to confirm.
+              This can't be undone.{" "}
+              {projectToDelete && projectToDelete.hours > 0
+                ? `${formatHours(projectToDelete.hours)} of time entries are logged against it —`
+                : "Any time entries already logged against it are"}{" "}
+              kept, not deleted — they'll just show as having no project from now on, which will
+              change how past reports for this project read. Type the project name to confirm.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <div className="grid gap-2">
@@ -1285,9 +1288,13 @@ function TagsTab({
           <AlertDialogHeader>
             <AlertDialogTitle>Delete {deleteTarget?.name}?</AlertDialogTitle>
             <AlertDialogDescription>
-              It'll be removed from any projects using it, and won't appear as a choice going
-              forward. Past time entries keep their own history regardless — nothing about them
-              changes.
+              {deleteTarget && deleteTarget.entryCount > 0
+                ? `Currently on ${deleteTarget.entryCount} time ${
+                    deleteTarget.entryCount === 1 ? "entry" : "entries"
+                  }. It'll be removed from any projects using it, and won't appear as a choice going
+                    forward. Past time entries keep their own history regardless — nothing about
+                    them changes.`
+                : "It'll be removed from any projects using it, and won't appear as a choice going forward."}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

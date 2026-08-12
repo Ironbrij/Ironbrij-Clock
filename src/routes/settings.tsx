@@ -93,6 +93,9 @@ function SettingsPage() {
         </TabsContent>
 
         <TabsContent value="notifications" className="mt-6">
+          <p className="mb-3 max-w-2xl text-xs text-muted-foreground">
+            Coming soon — these preferences aren't saved yet, so changes here won't persist.
+          </p>
           <Card className="max-w-2xl shadow-card">
             <CardContent className="p-0">
               <ul className="divide-y divide-border">
@@ -105,7 +108,7 @@ function SettingsPage() {
                       <p className="text-sm font-medium">{n.label}</p>
                       <p className="text-xs text-muted-foreground">{n.hint}</p>
                     </div>
-                    <Switch defaultChecked={n.on} />
+                    <Switch defaultChecked={n.on} disabled />
                   </li>
                 ))}
               </ul>
@@ -161,10 +164,17 @@ function ProfileTab() {
             </AvatarFallback>
           </Avatar>
           <div>
-            <Button variant="outline" size="sm">
+            <Button
+              variant="outline"
+              size="sm"
+              disabled
+              title="Avatar uploads aren't available yet."
+            >
               Change avatar
             </Button>
-            <p className="mt-2 text-xs text-muted-foreground">PNG or JPG, up to 2 MB.</p>
+            <p className="mt-2 text-xs text-muted-foreground">
+              PNG or JPG, up to 2 MB. Coming soon.
+            </p>
           </div>
         </div>
         <div className="grid gap-4 sm:grid-cols-2">
@@ -807,10 +817,20 @@ function AdminTab() {
           <div>
             <Button
               onClick={() => {
+                // Number("0") || fallback used to silently discard 0 (and
+                // any other invalid entry) and save the old value instead,
+                // with no indication the typed number wasn't what got
+                // saved. min={1} on the input is a UI hint only — nothing
+                // stopped it being bypassed by typing.
+                const parsedHours = Number(weeklyHours);
+                if (!weeklyHours.trim() || Number.isNaN(parsedHours) || parsedHours < 1) {
+                  toast.error("Weekly hours must be a number of 1 or more");
+                  return;
+                }
                 void updateSettings({
                   companyName: companyName.trim() || settings.companyName,
                   timezone,
-                  weeklyHours: Number(weeklyHours) || settings.weeklyHours,
+                  weeklyHours: parsedHours,
                   currency,
                   logoDataUrl: logo,
                   requireDescriptions,
