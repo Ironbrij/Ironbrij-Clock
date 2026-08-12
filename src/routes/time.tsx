@@ -54,6 +54,7 @@ import {
   formatDayLong,
   formatWeekRange,
   fromDateKey,
+  oldestLoadedWeekStart,
   orderByRecency,
   orderByRecencyName,
   startOfWeek,
@@ -761,17 +762,31 @@ function GridView() {
   const thisWeek = useThisWeekStart();
   const [offset, setOffset] = useState(0);
   const weekStart = useMemo(() => addDays(thisWeek, offset * 7), [thisWeek, offset]);
+  // Entries are only ever fetched back to oldestLoadedWeekStart() — past
+  // that, "no hours" would be a lie (unfetched, not empty), so navigation
+  // stops here instead of silently rendering a blank week.
+  const atOldestLoaded = weekStart <= oldestLoadedWeekStart();
 
   return (
     <div className="grid gap-4">
-      <div className="flex items-center gap-2">
-        <Button variant="outline" size="icon" onClick={() => setOffset((w) => w - 1)}>
+      <div className="flex flex-wrap items-center gap-2">
+        <Button
+          variant="outline"
+          size="icon"
+          disabled={atOldestLoaded}
+          onClick={() => setOffset((w) => w - 1)}
+        >
           <ChevronLeft className="h-4 w-4" />
         </Button>
         <span className="truncate text-sm font-medium">{formatWeekRange(weekStart)}</span>
         <Button variant="outline" size="icon" onClick={() => setOffset((w) => Math.min(0, w + 1))}>
           <ChevronRight className="h-4 w-4" />
         </Button>
+        {atOldestLoaded && (
+          <span className="text-xs text-muted-foreground">
+            That's as far back as this view loads — check Reports for anything older.
+          </span>
+        )}
       </div>
       <TimesheetGrid weekStart={weekStart} />
     </div>

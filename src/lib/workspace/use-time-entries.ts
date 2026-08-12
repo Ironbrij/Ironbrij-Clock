@@ -2,7 +2,7 @@ import { useCallback, useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import type { Database } from "@/integrations/supabase/types";
-import { combineDateAndTime, toDateKey } from "@/lib/time-utils";
+import { combineDateAndTime, ENTRIES_HISTORY_DAYS, toDateKey } from "@/lib/time-utils";
 import { throwIf } from "./utils";
 import type { WorkspaceEntry, WorkspaceProject } from "./types";
 
@@ -40,7 +40,7 @@ export function useTimeEntriesData(
     enabled,
     queryFn: async () => {
       const from = new Date();
-      from.setDate(from.getDate() - 60);
+      from.setDate(from.getDate() - ENTRIES_HISTORY_DAYS);
       const { data, error } = await supabase
         .from("time_entries")
         .select(

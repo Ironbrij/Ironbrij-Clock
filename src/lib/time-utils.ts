@@ -1,5 +1,13 @@
 export const weekdayNames = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
+/**
+ * How far back the entries query loads (see use-time-entries.ts). Shared
+ * with the UI so Grid/Timesheet navigation can stop honestly at the edge
+ * of what's actually loaded, instead of silently rendering an empty week
+ * that's indistinguishable from a genuinely empty one.
+ */
+export const ENTRIES_HISTORY_DAYS = 400;
+
 export function startOfWeek(date: Date) {
   const d = new Date(date);
   d.setHours(0, 0, 0, 0);
@@ -12,6 +20,11 @@ export function addDays(date: Date, days: number) {
   const d = new Date(date);
   d.setDate(d.getDate() + days);
   return d;
+}
+
+/** The start of the earliest week whose entries are actually loaded — anything before this is unfetched, not empty. */
+export function oldestLoadedWeekStart() {
+  return startOfWeek(addDays(new Date(), -ENTRIES_HISTORY_DAYS));
 }
 
 export function toDateKey(date: Date) {
