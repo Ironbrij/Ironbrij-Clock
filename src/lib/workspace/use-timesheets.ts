@@ -22,7 +22,7 @@ export function useTimesheetsData(enabled: boolean, uid: string | null) {
       const { data, error } = await supabase
         .from("timesheets")
         .select(
-          "id, user_id, week_start, status, submitted_at, reviewed_by, reviewed_at, review_note",
+          "id, user_id, week_start, status, submitted_at, reviewed_by, reviewed_at, review_note, entries_modified_at",
         )
         .order("week_start", { ascending: false });
       if (error) throw error;
@@ -41,10 +41,8 @@ export function useTimesheetsData(enabled: boolean, uid: string | null) {
     if (!enabled || !uid) return;
     const channel = supabase
       .channel(`timesheets_${uid}`)
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "timesheets" },
-        () => qc.invalidateQueries({ queryKey: ["timesheets"] }),
+      .on("postgres_changes", { event: "*", schema: "public", table: "timesheets" }, () =>
+        qc.invalidateQueries({ queryKey: ["timesheets"] }),
       )
       .subscribe();
     return () => {
@@ -77,7 +75,9 @@ export function useTimesheetsData(enabled: boolean, uid: string | null) {
       );
       const { data, error } = await supabase
         .from("time_entries")
-        .select("id, user_id, project_id, task, description, entry_date, start_time, duration_minutes")
+        .select(
+          "id, user_id, project_id, task, description, entry_date, start_time, duration_minutes",
+        )
         .in("user_id", userIds)
         .gte("entry_date", earliest);
       if (error) throw error;
@@ -96,6 +96,7 @@ export function useTimesheetsData(enabled: boolean, uid: string | null) {
         reviewedBy: t.reviewed_by,
         reviewedAt: t.reviewed_at,
         reviewNote: t.review_note,
+        entriesModifiedAt: t.entries_modified_at,
       })),
     [timesheetsQ.data],
   );

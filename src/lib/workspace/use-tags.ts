@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from "react";
+import { useCallback, useEffect, useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { throwIf } from "./utils";
@@ -6,6 +6,24 @@ import type { WorkspaceTag } from "./types";
 
 export function useTagsData(enabled: boolean) {
   const qc = useQueryClient();
+
+  // L27: a tag rename/recolor/delete made in another tab used to sit stale
+  // until something else triggered a refetch. tag_usage's own count
+  // already refreshes live via time_entries' existing subscription
+  // (use-time-entries.ts invalidates ["tag_usage"] on every change), so
+  // this only needs to cover the tags table itself.
+  useEffect(() => {
+    if (!enabled) return;
+    const channel = supabase
+      .channel("tags_realtime")
+      .on("postgres_changes", { event: "*", schema: "public", table: "tags" }, () =>
+        qc.invalidateQueries({ queryKey: ["tags"] }),
+      )
+      .subscribe();
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [enabled, qc]);
 
   const tagsQ = useQuery({
     queryKey: ["tags"],

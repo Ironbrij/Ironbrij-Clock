@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from "react";
+import { useCallback, useEffect, useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { throwIf } from "./utils";
@@ -6,6 +6,23 @@ import type { EmploymentType, WorkspaceEmployment } from "./types";
 
 export function useEmploymentData(enabled: boolean, canManage: boolean, uid: string | null) {
   const qc = useQueryClient();
+
+  // L27: a rate/schedule/employment-type edit made in another tab used to
+  // sit stale until something else triggered a refetch. Gated on
+  // `canManage` same as the query itself — RLS would block a Member from
+  // receiving these events anyway, so there's no reason to even try.
+  useEffect(() => {
+    if (!enabled || !canManage) return;
+    const channel = supabase
+      .channel("member_employment_realtime")
+      .on("postgres_changes", { event: "*", schema: "public", table: "member_employment" }, () =>
+        qc.invalidateQueries({ queryKey: ["member_employment"] }),
+      )
+      .subscribe();
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [enabled, canManage, qc]);
 
   const employmentQ = useQuery({
     queryKey: ["member_employment"],

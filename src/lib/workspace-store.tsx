@@ -217,6 +217,8 @@ type WorkspaceContextValue = {
     date: string;
     startTime: string;
     endTime: string;
+    /** M21: only needed for a shift that runs past midnight — defaults to `date` when omitted. */
+    endDate?: string;
   }) => Promise<void>;
   updateEntry: (
     entryId: string,

@@ -106,6 +106,7 @@ function Timesheet() {
         weekStart={weekStart}
         status={timesheet?.status}
         reviewNote={timesheet?.reviewNote ?? null}
+        entriesModifiedAt={timesheet?.entriesModifiedAt ?? null}
         hasEntries={weekEntries.length > 0}
         hasRunningEntry={weekEntries.some((e) => e.running)}
       />
@@ -159,12 +160,14 @@ function SubmissionPanel({
   weekStart,
   status,
   reviewNote,
+  entriesModifiedAt,
   hasEntries,
   hasRunningEntry,
 }: {
   weekStart: Date;
   status?: TimesheetStatus;
   reviewNote: string | null;
+  entriesModifiedAt: string | null;
   hasEntries: boolean;
   hasRunningEntry: boolean;
 }) {
@@ -208,7 +211,25 @@ function SubmissionPanel({
         <CardContent className="flex flex-wrap items-center justify-between gap-3 p-4">
           <div className="flex items-center gap-2">
             <Lock className="h-4 w-4 text-primary" />
-            <p className="text-sm font-medium">Approved — this week is locked</p>
+            <div>
+              <p className="text-sm font-medium">Approved — this week is locked</p>
+              {/* M23: an admin can still edit/delete entries in an approved
+                  week (payroll corrections) — this is the only signal that
+                  happened, since nothing else changes the "Approved" badge
+                  or the total shown here. */}
+              {entriesModifiedAt && (
+                <p className="mt-0.5 text-xs text-muted-foreground">
+                  An admin updated entries in this week on{" "}
+                  {new Date(entriesModifiedAt).toLocaleString(undefined, {
+                    month: "short",
+                    day: "numeric",
+                    hour: "numeric",
+                    minute: "2-digit",
+                  })}{" "}
+                  — after it was approved. The total above reflects that change.
+                </p>
+              )}
+            </div>
           </div>
           <Badge>Approved</Badge>
         </CardContent>

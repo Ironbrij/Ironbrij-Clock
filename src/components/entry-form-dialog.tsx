@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { ProjectDot } from "@/components/app-shell";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -22,7 +23,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { orderByRecency, orderByRecencyName, toDateKey } from "@/lib/time-utils";
+import {
+  addDays,
+  formatDayLong,
+  fromDateKey,
+  orderByRecency,
+  orderByRecencyName,
+  toDateKey,
+} from "@/lib/time-utils";
 import { useWorkspace, type WorkspaceEntry } from "@/lib/workspace-store";
 
 const pad = (n: number) => n.toString().padStart(2, "0");
@@ -83,14 +91,24 @@ export function EntryFormDialog({
   const defaultTask = taskCategories[0]?.name ?? "";
   const [values, setValues] = useState<EntryFormValues>(() => toFormValues(entry, defaultTask));
   const [busy, setBusy] = useState(false);
+  // M21: only meaningful for "add" (entry === null) — a stored entry never
+  // actually spans midnight (createEntry/stopTimer already split it at the
+  // day boundary before it's saved), so there's nothing to toggle back on
+  // when editing one.
+  const [endsNextDay, setEndsNextDay] = useState(false);
 
   useEffect(() => {
-    if (open) setValues(toFormValues(entry, defaultTask));
+    if (open) {
+      setValues(toFormValues(entry, defaultTask));
+      setEndsNextDay(false);
+    }
     // defaultTask intentionally excluded — it should only affect the
     // initial value when the dialog opens, not overwrite whatever the
     // person has already picked while it's sitting open.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, entry]);
+
+  const endDate = endsNextDay ? toDateKey(addDays(fromDateKey(values.date), 1)) : values.date;
 
   const submit = async () => {
     if (!values.projectId) {
@@ -113,7 +131,7 @@ export function EntryFormDialog({
         await updateEntry(entry.id, values);
         toast.success("Entry updated");
       } else {
-        await createEntry(values);
+        await createEntry({ ...values, endDate: endsNextDay ? endDate : undefined });
         toast.success("Entry added", { description: "Logged to your timesheet." });
       }
       onOpenChange(false);
@@ -241,6 +259,19 @@ export function EntryFormDialog({
               />
             </div>
           </div>
+          {!entry && (
+            <div className="flex items-center gap-2">
+              <Checkbox
+                id="entry-ends-next-day"
+                checked={endsNextDay}
+                onCheckedChange={(checked) => setEndsNextDay(checked === true)}
+              />
+              <Label htmlFor="entry-ends-next-day" className="cursor-pointer font-normal">
+                Ends after midnight, the next day
+                {endsNextDay && ` — ${formatDayLong(fromDateKey(endDate))}`}
+              </Label>
+            </div>
+          )}
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>

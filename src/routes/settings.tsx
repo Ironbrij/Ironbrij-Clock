@@ -240,7 +240,22 @@ function UsersTab() {
     addMemberToTeam,
     removeMemberFromTeam,
   } = useWorkspace();
-  const [busyId, setBusyId] = useState<string | null>(null);
+  // L25/L26-class fix: a single shared `busyId` string can only ever
+  // represent one in-flight action at a time — starting a second action on
+  // a different row (or a different action on the same row) overwrites it,
+  // which re-enables the first action's button before its request has
+  // actually resolved. A Set of independent keys (one per row+action) lets
+  // any number of actions be in flight at once without stepping on each
+  // other's disabled state.
+  const [busyKeys, setBusyKeys] = useState<Set<string>>(new Set());
+  const isBusy = (key: string) => busyKeys.has(key);
+  const startBusy = (key: string) => setBusyKeys((prev) => new Set(prev).add(key));
+  const endBusy = (key: string) =>
+    setBusyKeys((prev) => {
+      const next = new Set(prev);
+      next.delete(key);
+      return next;
+    });
   const [membersPage, setMembersPage] = useState(1);
   const MEMBERS_PAGE_SIZE = 10;
   const [removeTarget, setRemoveTarget] = useState<{
@@ -264,11 +279,12 @@ function UsersTab() {
   const teamName = (teamId: string) => teams.find((t) => t.id === teamId)?.name ?? "No team";
 
   const changeRole = (m: { id: string; name: string }, role: Role) => {
-    setBusyId(m.id);
+    const key = `role:${m.id}`;
+    startBusy(key);
     void updateMemberRole(m.id, role)
       .then(() => toast.success(`${m.name} is now ${role === "Admin" ? "an" : "a"} ${role}`))
       .catch((e: Error) => toast.error("Couldn't update role", { description: e.message }))
-      .finally(() => setBusyId(null));
+      .finally(() => endBusy(key));
   };
 
   const confirmRemove = async () => {
@@ -306,7 +322,10 @@ function UsersTab() {
     // demote themselves.
     if (m.id === currentUser.id) {
       return (
-        <Badge variant={m.role === "Admin" ? "default" : "secondary"} title="You can't change your own role">
+        <Badge
+          variant={m.role === "Admin" ? "default" : "secondary"}
+          title="You can't change your own role"
+        >
           {m.role}
         </Badge>
       );
@@ -315,7 +334,7 @@ function UsersTab() {
       <Select
         value={m.role}
         onValueChange={(v) => changeRole(m, v as Role)}
-        disabled={busyId === m.id}
+        disabled={isBusy(`role:${m.id}`)}
       >
         <SelectTrigger className="h-8 w-28">
           <SelectValue />
@@ -334,7 +353,8 @@ function UsersTab() {
   const TeamCell = ({ m }: { m: { id: string; name: string; teamIds: string[] } }) => {
     const toggleTeam = (teamId: string) => {
       const removing = m.teamIds.includes(teamId);
-      setBusyId(m.id);
+      const key = `team:${m.id}`;
+      startBusy(key);
       void (removing ? removeMemberFromTeam(m.id, teamId) : addMemberToTeam(m.id, teamId))
         .then(() =>
           toast.success(
@@ -344,7 +364,7 @@ function UsersTab() {
           ),
         )
         .catch((e: Error) => toast.error("Couldn't update teams", { description: e.message }))
-        .finally(() => setBusyId(null));
+        .finally(() => endBusy(key));
     };
 
     const label =
@@ -360,7 +380,7 @@ function UsersTab() {
           <Button
             variant="outline"
             size="sm"
-            disabled={busyId === m.id}
+            disabled={isBusy(`team:${m.id}`)}
             className="h-8 min-w-[9rem] justify-start font-normal"
           >
             {label}
@@ -428,12 +448,16 @@ function UsersTab() {
                           {m.id !== currentUser.id && (
                             <Button
                               size="sm"
+                              disabled={isBusy(`approve:${m.id}`)}
                               onClick={() => {
+                                const key = `approve:${m.id}`;
+                                startBusy(key);
                                 void approveMember(m.id)
                                   .then(() => toast.success(`${m.name} approved`))
                                   .catch((e: Error) =>
                                     toast.error("Approval failed", { description: e.message }),
-                                  );
+                                  )
+                                  .finally(() => endBusy(key));
                               }}
                             >
                               Approve
@@ -443,12 +467,16 @@ function UsersTab() {
                             <Button
                               size="sm"
                               variant="outline"
+                              disabled={isBusy(`resend:${m.id}`)}
                               onClick={() => {
+                                const key = `resend:${m.id}`;
+                                startBusy(key);
                                 void resendInvite(m.email!)
                                   .then(() => toast.success(`Invite resent to ${m.email}`))
                                   .catch((e: Error) =>
                                     toast.error("Couldn't resend that", { description: e.message }),
-                                  );
+                                  )
+                                  .finally(() => endBusy(key));
                               }}
                             >
                               Resend invite

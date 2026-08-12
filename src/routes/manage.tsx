@@ -88,7 +88,8 @@ export const Route = createFileRoute("/manage")({
       { property: "og:title", content: "Manage — IronTrack" },
       {
         property: "og:description",
-        content: "Schedule, entries, expenses, approvals, activity, kiosks and invoices in one hub.",
+        content:
+          "Schedule, entries, expenses, approvals, activity, kiosks and invoices in one hub.",
       },
     ],
   }),
@@ -265,7 +266,19 @@ function WeekStatusPanel() {
 
 function ApprovalsPanel() {
   const { pendingApprovals, memberById, reviewTimesheet } = useWorkspace();
-  const [busyId, setBusyId] = useState<string | null>(null);
+  // L26: a single shared busyId string could only ever represent one row
+  // in flight at a time — approving row A, then acting on row B before A's
+  // request resolved, overwrote busyId to B and re-enabled A's buttons
+  // early (its `finally` cleared busyId unconditionally). A Set of ids
+  // lets any number of rows be in flight independently.
+  const [busyIds, setBusyIds] = useState<Set<string>>(new Set());
+  const startBusy = (id: string) => setBusyIds((prev) => new Set(prev).add(id));
+  const endBusy = (id: string) =>
+    setBusyIds((prev) => {
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
   const [rejecting, setRejecting] = useState<PendingApproval | null>(null);
   // Approve has no "unapprove" at all — review_timesheet() only ever
   // transitions a row that's currently 'submitted', with no exception for
@@ -279,14 +292,14 @@ function ApprovalsPanel() {
     if (!approving) return;
     const id = approving.id;
     setApproving(null);
-    setBusyId(id);
+    startBusy(id);
     try {
       await reviewTimesheet(id, "Approved");
       toast.success("Timesheet approved", { description: "That week is now locked for editing." });
     } catch (error) {
       toast.error("Couldn't approve that", { description: (error as Error).message });
     } finally {
-      setBusyId(null);
+      endBusy(id);
     }
   };
 
@@ -294,14 +307,14 @@ function ApprovalsPanel() {
     if (!rejecting) return;
     const id = rejecting.id;
     setRejecting(null);
-    setBusyId(id);
+    startBusy(id);
     try {
       await reviewTimesheet(id, "Rejected", note || undefined);
       toast.success("Sent back", { description: "They'll see your note on their Timesheet page." });
     } catch (error) {
       toast.error("Couldn't send that back", { description: (error as Error).message });
     } finally {
-      setBusyId(null);
+      endBusy(id);
     }
   };
 
@@ -341,9 +354,7 @@ function ApprovalsPanel() {
                         </AvatarFallback>
                       </Avatar>
                       <div className="min-w-0">
-                        <p className="truncate text-sm font-medium">
-                          {member?.name ?? "Unknown"}
-                        </p>
+                        <p className="truncate text-sm font-medium">{member?.name ?? "Unknown"}</p>
                         <button
                           type="button"
                           className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
@@ -363,14 +374,14 @@ function ApprovalsPanel() {
                       <Button
                         size="sm"
                         variant="outline"
-                        disabled={busyId === a.id}
+                        disabled={busyIds.has(a.id)}
                         onClick={() => setRejecting(a)}
                       >
                         Send back
                       </Button>
                       <Button
                         size="sm"
-                        disabled={busyId === a.id}
+                        disabled={busyIds.has(a.id)}
                         onClick={() => setApproving(a)}
                       >
                         Approve
@@ -774,8 +785,16 @@ function ScheduleRow({
  * (submitted/approved) week — same as the backend — an admin still can.
  */
 function TeamEntriesTab() {
-  const { activeMembers, currentUser, isAdmin, canManage, timesheets, projectById, deleteEntry } =
-    useWorkspace();
+  const {
+    members,
+    activeMembers,
+    currentUser,
+    isAdmin,
+    canManage,
+    timesheets,
+    projectById,
+    deleteEntry,
+  } = useWorkspace();
   const [memberId, setMemberId] = useState("");
   const thisWeek = useThisWeekStart();
   const [offset, setOffset] = useState(0);
@@ -788,24 +807,43 @@ function TeamEntriesTab() {
       : base.filter((m) => m.teamIds.some((tid) => currentUser.teamIds.includes(tid)));
   }, [activeMembers, currentUser, isAdmin]);
 
+  // M20: the picker itself stays scoped to active members by default, but
+  // a selection made by clicking a removed/deactivated person's row in the
+  // Active Timers card below (see relevantActiveTimers) points at someone
+  // who's since dropped out of relevantMembers entirely. Without this,
+  // that leaves memberId set to an id the Select can't render — and
+  // nothing in the UI can reach that person's entries (or their still-
+  // running timer) at all, even though RLS already lets an admin see and
+  // edit them. Appending them here, labeled, keeps that reachable.
+  const selectableMembers = useMemo(() => {
+    if (!memberId || relevantMembers.some((m) => m.id === memberId)) return relevantMembers;
+    const extra = members.find((m) => m.id === memberId);
+    return extra ? [...relevantMembers, extra] : relevantMembers;
+  }, [relevantMembers, memberId, members]);
+
   useEffect(() => {
-    if (memberId && relevantMembers.some((m) => m.id === memberId)) return;
+    if (memberId && members.some((m) => m.id === memberId)) return;
     setMemberId(relevantMembers[0]?.id ?? "");
-  }, [relevantMembers, memberId]);
+  }, [relevantMembers, memberId, members]);
 
   const { entriesQ, entries } = useMemberEntries(memberId || null, weekStart);
   const weekKey = toDateKey(weekStart);
   const status = timesheets.find((t) => t.userId === memberId && t.weekStart === weekKey)?.status;
   const locked = (status === "Submitted" || status === "Approved") && !isAdmin;
 
-  // M18: passive visibility only — this doesn't stop anything, it just
-  // lets a manager/admin notice a timer that's been running suspiciously
-  // long, same as they'd notice from a person's own Time page if they
-  // happened to be looking at it.
+  // M18/M20: passive visibility only — this doesn't stop anything, it
+  // just lets a manager/admin notice a timer that's been running
+  // suspiciously long, same as they'd notice from a person's own Time
+  // page if they happened to be looking at it. Deliberately not filtered
+  // through relevantMembers (active members only): a timer left running
+  // by someone whose access was then removed is exactly the case this
+  // needs to catch, and RLS has already scoped `activeTimers` to whoever
+  // this viewer is allowed to see (everyone, for an admin; shared-team
+  // members, for a manager) regardless of that person's active flag.
   const { activeTimers } = useActiveTimers();
   const relevantActiveTimers = useMemo(
-    () => activeTimers.filter((t) => relevantMembers.some((m) => m.id === t.userId)),
-    [activeTimers, relevantMembers],
+    () => activeTimers.filter((t) => t.userId !== currentUser.id),
+    [activeTimers, currentUser.id],
   );
   const selectMember = (id: string) => {
     setMemberId(id);
@@ -844,16 +882,14 @@ function TeamEntriesTab() {
     );
   }
 
-  if (relevantMembers.length === 0) {
+  if (selectableMembers.length === 0) {
     return (
       <Card className="mt-4 shadow-card">
         <CardContent className="flex flex-col items-center gap-3 px-6 py-16 text-center">
           <Clock className="h-10 w-10 text-muted-foreground/50" />
           <h2 className="text-lg font-semibold">No one to show here yet</h2>
           <p className="max-w-md text-sm text-muted-foreground">
-            {isAdmin
-              ? "Invite some teammates first."
-              : "No one on your teams to show here yet."}
+            {isAdmin ? "Invite some teammates first." : "No one on your teams to show here yet."}
           </p>
         </CardContent>
       </Card>
@@ -873,9 +909,10 @@ function TeamEntriesTab() {
                 <SelectValue placeholder="Choose a team member" />
               </SelectTrigger>
               <SelectContent>
-                {relevantMembers.map((m) => (
+                {selectableMembers.map((m) => (
                   <SelectItem key={m.id} value={m.id}>
                     {m.name}
+                    {!m.active && " (inactive)"}
                   </SelectItem>
                 ))}
               </SelectContent>

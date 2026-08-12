@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from "react";
+import { useCallback, useEffect, useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { throwIf } from "./utils";
@@ -6,6 +6,23 @@ import type { Team } from "./types";
 
 export function useTeamsData(enabled: boolean) {
   const qc = useQueryClient();
+
+  // L27: team_members' own subscription lives in use-members.ts (it owns
+  // the "who's on what team" data members care about) — subscribing to it
+  // again here too would just be a second websocket listener invalidating
+  // the same query key.
+  useEffect(() => {
+    if (!enabled) return;
+    const channel = supabase
+      .channel("teams_realtime")
+      .on("postgres_changes", { event: "*", schema: "public", table: "teams" }, () =>
+        qc.invalidateQueries({ queryKey: ["teams"] }),
+      )
+      .subscribe();
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [enabled, qc]);
 
   const teamsQ = useQuery({
     queryKey: ["teams"],
