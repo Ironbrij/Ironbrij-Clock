@@ -330,7 +330,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     createEntry,
     deleteEntry,
     entriesForTag,
-  } = useTimeEntriesData(enabled, uid, projects);
+  } = useTimeEntriesData(enabled, uid, projects, settings);
 
   const {
     timesheetsQ,
