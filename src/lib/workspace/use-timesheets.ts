@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from "react";
+import { useCallback, useEffect, useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { dayIndexOf, fromDateKey, toDateKey } from "@/lib/time-utils";
@@ -29,6 +29,28 @@ export function useTimesheetsData(enabled: boolean, uid: string | null) {
       return data;
     },
   });
+
+  // Unfiltered on purpose, unlike time_entries' own subscription: a
+  // manager needs to hear about a team member's brand-new submission
+  // (a different user_id than their own), not just their own row
+  // changing. No client-side filter can express "any row RLS lets me
+  // see," so this relies on Realtime enforcing the same timesheets_select
+  // policy server-side — each subscriber only ever receives events for
+  // rows they're actually allowed to read.
+  useEffect(() => {
+    if (!enabled || !uid) return;
+    const channel = supabase
+      .channel(`timesheets_${uid}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "timesheets" },
+        () => qc.invalidateQueries({ queryKey: ["timesheets"] }),
+      )
+      .subscribe();
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [enabled, uid, qc]);
 
   const pendingReviewRaw = useMemo(
     () => (timesheetsQ.data ?? []).filter((t) => t.status === "submitted"),

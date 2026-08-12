@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from "react";
+import { useCallback, useEffect, useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import type { Database } from "@/integrations/supabase/types";
@@ -92,6 +92,26 @@ export function useTimeEntriesData(
     qc.invalidateQueries({ queryKey: ["project_hours"] });
     qc.invalidateQueries({ queryKey: ["tag_usage"] });
   }, [qc]);
+
+  // A second tab, a second device, or a manager acting on this person's
+  // behalf can all change these rows without this tab lifting a finger —
+  // without this, "is my timer running" only ever updated on the next
+  // window refocus. Filtered to this user's own rows: that's the only
+  // slice of time_entries this hook ever fetches anyway.
+  useEffect(() => {
+    if (!enabled || !uid) return;
+    const channel = supabase
+      .channel(`time_entries_${uid}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "time_entries", filter: `user_id=eq.${uid}` },
+        () => invalidateEntries(),
+      )
+      .subscribe();
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [enabled, uid, invalidateEntries]);
 
   const startTimer = useCallback(
     async ({
