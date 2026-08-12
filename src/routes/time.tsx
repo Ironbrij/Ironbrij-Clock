@@ -580,33 +580,81 @@ function GridView() {
 function CalendarView() {
   const { entries, projectById } = useWorkspace();
   const [mode, setMode] = useState("month");
+  // Independent per-mode offsets — switching Month/Week tabs shouldn't
+  // jumble what "forward/back" meant in the other one.
+  const [monthOffset, setMonthOffset] = useState(0);
+  const [weekOffset, setWeekOffset] = useState(0);
   const today = useMemo(() => new Date(), []);
-  const weekStart = useMemo(() => startOfWeek(today), [today]);
+
+  const viewMonth = useMemo(
+    () => new Date(today.getFullYear(), today.getMonth() + monthOffset, 1),
+    [today, monthOffset],
+  );
+  const weekStart = useMemo(
+    () => addDays(startOfWeek(today), weekOffset * 7),
+    [today, weekOffset],
+  );
 
   const monthDays = useMemo(() => {
-    const first = new Date(today.getFullYear(), today.getMonth(), 1);
-    const lead = (first.getDay() + 6) % 7;
-    const daysInMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate();
+    const lead = (viewMonth.getDay() + 6) % 7;
+    const daysInMonth = new Date(viewMonth.getFullYear(), viewMonth.getMonth() + 1, 0).getDate();
     return [
       ...Array.from({ length: lead }, () => null),
       ...Array.from(
         { length: daysInMonth },
-        (_, i) => new Date(today.getFullYear(), today.getMonth(), i + 1),
+        (_, i) => new Date(viewMonth.getFullYear(), viewMonth.getMonth(), i + 1),
       ),
     ];
-  }, [today]);
+  }, [viewMonth]);
 
   const weekDays = useMemo(() => weekdayNames.map((_, i) => addDays(weekStart, i)), [weekStart]);
   const cells = mode === "month" ? monthDays : weekDays;
 
+  // Same rule Grid/Timesheet already use: entries are only ever fetched
+  // back to oldestLoadedWeekStart(), so paging further back would silently
+  // render a page that looks empty but just isn't loaded.
+  const atOldestLoaded =
+    mode === "month" ? viewMonth <= oldestLoadedWeekStart() : weekStart <= oldestLoadedWeekStart();
+  const atNewest = mode === "month" ? monthOffset >= 0 : weekOffset >= 0;
+  const isToday = mode === "month" ? monthOffset === 0 : weekOffset === 0;
+
+  const goPrev = () =>
+    mode === "month" ? setMonthOffset((o) => o - 1) : setWeekOffset((o) => o - 1);
+  const goNext = () =>
+    mode === "month"
+      ? setMonthOffset((o) => Math.min(0, o + 1))
+      : setWeekOffset((o) => Math.min(0, o + 1));
+  const goToday = () => {
+    setMonthOffset(0);
+    setWeekOffset(0);
+  };
+
   return (
     <div className="grid gap-4">
-      <div className="flex items-center justify-between gap-4">
-        <span className="text-sm font-medium">
-          {mode === "month"
-            ? today.toLocaleDateString("en-AU", { month: "long", year: "numeric" })
-            : `${formatWeekRange(weekStart)} ${weekStart.getFullYear()}`}
-        </span>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <Button variant="outline" size="icon" disabled={atOldestLoaded} onClick={goPrev}>
+            <ChevronLeft className="h-4 w-4" />
+          </Button>
+          <span className="min-w-[10rem] text-sm font-medium">
+            {mode === "month"
+              ? viewMonth.toLocaleDateString("en-AU", { month: "long", year: "numeric" })
+              : `${formatWeekRange(weekStart)} ${weekStart.getFullYear()}`}
+          </span>
+          <Button variant="outline" size="icon" disabled={atNewest} onClick={goNext}>
+            <ChevronRight className="h-4 w-4" />
+          </Button>
+          {!isToday && (
+            <Button variant="ghost" size="sm" onClick={goToday}>
+              Today
+            </Button>
+          )}
+          {atOldestLoaded && (
+            <span className="text-xs text-muted-foreground">
+              That's as far back as this view loads — check Reports for anything older.
+            </span>
+          )}
+        </div>
         <Tabs value={mode} onValueChange={setMode}>
           <TabsList>
             <TabsTrigger value="month">Month</TabsTrigger>
