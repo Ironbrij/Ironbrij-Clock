@@ -9,7 +9,13 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { formatHours, formatMinutes } from "@/lib/mock-data";
-import { addDays, formatClock, formatWeekRange, toDateKey } from "@/lib/time-utils";
+import {
+  addDays,
+  formatClock,
+  formatWeekRange,
+  oldestLoadedWeekStart,
+  toDateKey,
+} from "@/lib/time-utils";
 import { useThisWeekStart, useWorkspace, type TimesheetStatus } from "@/lib/workspace-store";
 
 export const Route = createFileRoute("/timesheet")({
@@ -44,12 +50,21 @@ function Timesheet() {
     .sort((a, b) => a.startTime.localeCompare(b.startTime));
   const weekTotal = weekEntries.reduce((s, e) => s + e.minutes, 0) / 60;
   const timesheet = timesheetForWeek(weekStart);
+  // See GridView in time.tsx — entries older than this were never fetched,
+  // so nav stops here instead of rendering a week that looks empty but
+  // just isn't loaded.
+  const atOldestLoaded = weekStart <= oldestLoadedWeekStart();
 
   return (
     <AppShell title="Timesheet" subtitle="Everything you logged this week, in one place.">
       <div className="mb-4 grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4">
-        <div className="flex min-w-0 items-center gap-2">
-          <Button variant="outline" size="icon" onClick={() => setOffset((w) => w - 1)}>
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <Button
+            variant="outline"
+            size="icon"
+            disabled={atOldestLoaded}
+            onClick={() => setOffset((w) => w - 1)}
+          >
             <ChevronLeft className="h-4 w-4" />
           </Button>
           <span className="truncate text-sm font-medium">{formatWeekRange(weekStart)}</span>
@@ -63,6 +78,11 @@ function Timesheet() {
           <span className="ml-2 hidden text-sm text-muted-foreground sm:inline">
             Total {formatHours(weekTotal)}
           </span>
+          {atOldestLoaded && (
+            <span className="text-xs text-muted-foreground">
+              That's as far back as this view loads — check Reports for anything older.
+            </span>
+          )}
         </div>
         <Tabs value={view} onValueChange={setView}>
           <TabsList>
