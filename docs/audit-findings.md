@@ -151,7 +151,7 @@ technically expired yet.
 
 ### 8. Medium-Priority Issues
 
-**M20. ⏳ Open.** A running timer belonging to a member whose access has been removed (or who is
+**M20. ✅ Fixed.** A running timer belonging to a member whose access has been removed (or who is
 otherwise deactivated) becomes a permanently orphaned row that's invisible everywhere in the UI.
 `useActiveTimersData` (`src/lib/workspace/use-time-entries.ts`) queries `time_entries` directly for
 any row with `end_time IS NULL`, with no `is_active` filter — so the row itself is still fetched.
