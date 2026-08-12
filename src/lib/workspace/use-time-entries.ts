@@ -2,11 +2,41 @@ import { useCallback, useEffect, useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import type { Database } from "@/integrations/supabase/types";
-import { combineDateAndTime, ENTRIES_HISTORY_DAYS, splitByDay, toDateKey } from "@/lib/time-utils";
+import {
+  addDays,
+  combineDateAndTime,
+  ENTRIES_HISTORY_DAYS,
+  splitByDay,
+  toDateKey,
+} from "@/lib/time-utils";
 import { throwIf } from "./utils";
 import type { WorkspaceEntry, WorkspaceProject, WorkspaceSettings } from "./types";
 
 type TimeEntryUpdate = Database["public"]["Tables"]["time_entries"]["Update"];
+type TimeEntryRow = {
+  id: string;
+  project_id: string | null;
+  task: string | null;
+  description: string;
+  start_time: string;
+  end_time: string | null;
+  entry_date: string;
+  duration_minutes: number | null;
+};
+
+function mapEntryRow(e: TimeEntryRow): WorkspaceEntry {
+  return {
+    id: e.id,
+    projectId: e.project_id,
+    task: e.task ?? "",
+    description: e.description,
+    minutes: e.duration_minutes ?? 0,
+    startTime: e.start_time,
+    endTime: e.end_time,
+    date: e.entry_date,
+    running: !e.end_time,
+  };
+}
 
 const LOCKED_WEEK_MESSAGE =
   "This week is locked because it's been submitted or approved — ask your manager to send it back if you need to make changes.";
@@ -70,18 +100,7 @@ export function useTimeEntriesData(
   });
 
   const entries = useMemo<WorkspaceEntry[]>(
-    () =>
-      (entriesQ.data ?? []).map((e) => ({
-        id: e.id,
-        projectId: e.project_id,
-        task: e.task ?? "",
-        description: e.description,
-        minutes: e.duration_minutes ?? 0,
-        startTime: e.start_time,
-        endTime: e.end_time,
-        date: e.entry_date,
-        running: !e.end_time,
-      })),
+    () => (entriesQ.data ?? []).map(mapEntryRow),
     [entriesQ.data],
   );
 
@@ -91,6 +110,9 @@ export function useTimeEntriesData(
     qc.invalidateQueries({ queryKey: ["time_entries"] });
     qc.invalidateQueries({ queryKey: ["project_hours"] });
     qc.invalidateQueries({ queryKey: ["tag_usage"] });
+    // updateEntry/deleteEntry are also what Manage > Entries uses for a
+    // manager/admin editing someone else's entry — refresh that view too.
+    qc.invalidateQueries({ queryKey: ["member_entries"] });
   }, [qc]);
 
   // A second tab, a second device, or a manager acting on this person's
@@ -374,4 +396,42 @@ export function useTimeEntriesData(
     deleteEntry,
     entriesForTag,
   };
+}
+
+/**
+ * One specific person's entries for one week — separate from the
+ * signed-in-only `entries` above, for Manage > Entries (H11: a manager/
+ * admin viewing or editing an individual team member's time). RLS on
+ * time_entries already scopes this to admin (anyone) or manager (shared
+ * team only); `enabled` should additionally gate on canManage so a Member
+ * doesn't even issue the query (it would just come back empty).
+ */
+export function useMemberEntriesData(enabled: boolean, userId: string | null, weekStart: Date) {
+  const from = toDateKey(weekStart);
+  const to = toDateKey(addDays(weekStart, 6));
+
+  const entriesQ = useQuery({
+    queryKey: ["member_entries", userId, from],
+    enabled: enabled && !!userId,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("time_entries")
+        .select(
+          "id, project_id, task, description, start_time, end_time, entry_date, duration_minutes, is_billable",
+        )
+        .eq("user_id", userId!)
+        .gte("entry_date", from)
+        .lte("entry_date", to)
+        .order("start_time", { ascending: true });
+      if (error) throw error;
+      return data;
+    },
+  });
+
+  const entries = useMemo<WorkspaceEntry[]>(
+    () => (entriesQ.data ?? []).map(mapEntryRow),
+    [entriesQ.data],
+  );
+
+  return { entriesQ, entries };
 }
