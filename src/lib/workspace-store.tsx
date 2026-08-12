@@ -82,6 +82,8 @@ type WorkspaceContextValue = {
   session: Session | null;
   authLoading: boolean;
   loading: boolean;
+  /** True if one of the core "shell" queries (profile, teams, projects, tags, settings, timesheets, task categories) failed outright — distinct from `loading` so AppShell can show a real error instead of quietly rendering every page as if it were empty. */
+  loadError: boolean;
   signOut: () => Promise<void>;
 
   currentUser: WorkspaceMember;
@@ -360,6 +362,19 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       timesheetsQ.isLoading ||
       taskCategoriesQ.isLoading);
 
+  // Same query set `loading` watches — if one of these comes back an
+  // outright error (not just slow), AppShell needs to say so instead of
+  // rendering every page as if the workspace were simply empty.
+  const loadError =
+    enabled &&
+    (profilesQ.isError ||
+      teamsQ.isError ||
+      projectsQ.isError ||
+      tagsQ.isError ||
+      settingsQ.isError ||
+      timesheetsQ.isError ||
+      taskCategoriesQ.isError);
+
   const value = useMemo<WorkspaceContextValue>(() => {
     const throwIf = (error: { message: string } | null) => {
       if (error) throw new Error(error.message);
@@ -369,6 +384,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       session,
       authLoading,
       loading,
+      loadError,
       signOut: async () => {
         await qc.cancelQueries();
         qc.clear();
@@ -447,6 +463,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     session,
     authLoading,
     loading,
+    loadError,
     currentUser,
     isAdmin,
     canManage,

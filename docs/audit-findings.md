@@ -98,3 +98,180 @@ Original audit performed 2026-08-11 against `src/lib/workspace/*`, `src/routes/*
 - **High (H6–H12):** all fixed.
 - **Medium (M13–M19):** all fixed — M18 improved (manager visibility) rather than fully closed (no auto-stop, by product decision).
 - **Low (L20–L24):** all fixed.
+
+---
+
+## QA / Break the Application Audit
+
+Adversarial pass performed 2026-08-12 against `src/lib/workspace/*`, `src/routes/*`,
+`src/components/entry-form-dialog.tsx`, `src/lib/admin.functions.ts`,
+`src/integrations/supabase/auth-middleware.ts`, and `supabase/migrations/*`, specifically trying
+to break time tracking, timesheets, and permissions rather than review them line by line. Numbering
+continues from the original audit above. No code was changed during the audit pass itself; the
+three High findings (H13–H15) were fixed in a follow-up pass once reviewed — see each entry below.
+
+### 7. High-Priority Issues
+
+**H13. ✅ Fixed.** A failed background fetch was indistinguishable from a legitimate empty state
+everywhere in the app — no global `onError`, no `isError` handling anywhere. Fixed at two levels:
+`src/router.tsx` now constructs `QueryClient` with a `QueryCache({ onError })` that toasts
+"Couldn't load the latest data" (deduped to one toast via a fixed `id`) whenever *any* query fails,
+so a background failure is never silent. Separately, `workspace-store.tsx` now exposes `loadError`
+alongside the existing (previously unused) `loading` flag — both derived from the same "core shell"
+query set (profile, teams, projects, tags, settings, timesheets, task categories) — and `AppShell`
+blocks on them: a spinner while loading, a dedicated "Couldn't load your workspace" screen with a
+Try again button (calling `refreshAll()`) if one of them errored outright. That covers the worst
+case (initial load failing makes every page look genuinely empty) app-wide in one place; the toast
+covers everything else (entries, timesheet actions, etc.) that isn't part of the core shell set.
+
+**H14. ✅ Fixed.** Submitting the current, still in-progress week was allowed with no guard,
+silently locking out further time tracking for the rest of that week. `SubmissionPanel`
+(`src/routes/timesheet.tsx`) now computes `weekInProgress` (`Date.now() < addDays(weekStart, 7)`)
+and, if true, opens a confirmation dialog ("This week isn't over yet…") explaining exactly what
+submitting now will do — no timer, no manual entries, for the rest of the week, until a manager
+reviews it — before calling `submitTimesheet`. Deliberately not a hard block: someone going on leave
+for the rest of the week is a legitimate reason to submit early, so this only adds the missing
+warning, matching the confirm-before-Approve pattern already established for M19.
+
+**H15. ✅ Fixed.** `profiles.is_active` was never checked by any RLS policy, `has_role()`, or
+`can_manage()` — access revocation relied entirely on `deleteUser()` invalidating an already-issued
+token, with no app-level backstop. Fixed in
+`supabase/migrations/20260812060000_require_active_for_privileged_access.sql`: a new
+`is_active_user()` helper, folded directly into `has_role()`/`can_manage()` (every call site across
+every migration invokes them as `has_role(auth.uid(), ...)`/`can_manage(auth.uid())` — always a
+check on the *caller*, never a target — so this strengthens every policy built on them for free:
+every `*_write_manage` policy, `settings_write_admin`, `set_member_role`, `approve_member`,
+`review_timesheet`, and the admin/manager branches of every `time_entries`/`timesheets` policy).
+The remaining gap those two functions can't cover — the plain `user_id = auth.uid()` self-access
+branch — is closed directly on `time_entries` (select/insert/update/delete) and `timesheets_select`,
+the two payroll-critical tables this audit's other findings are already about, by wrapping each
+policy in `is_active_user(auth.uid()) AND (...)`. A removed member — admin, manager, or plain
+member — now loses all access the instant `is_active` flips, regardless of whether their token has
+technically expired yet.
+
+### 8. Medium-Priority Issues
+
+**M20. ⏳ Open.** A running timer belonging to a member whose access has been removed (or who is
+otherwise deactivated) becomes a permanently orphaned row that's invisible everywhere in the UI.
+`useActiveTimersData` (`src/lib/workspace/use-time-entries.ts`) queries `time_entries` directly for
+any row with `end_time IS NULL`, with no `is_active` filter — so the row itself is still fetched.
+But both places that surface it filter to `activeMembers` first: `ActiveTimersCard`'s
+`relevantActiveTimers` in `src/routes/manage.tsx` (`activeTimers.filter((t) =>
+relevantMembers.some((m) => m.id === t.userId))`) and `TeamEntriesTab`'s member picker
+(`relevantMembers = activeMembers.filter(...)`) both derive from `members.filter((m) => m.active)`.
+Once `removeUserAccess` sets `is_active = false`, that person drops out of `relevantMembers`
+entirely, so a manager/admin can no longer even select them in Manage → Entries, let alone see or
+stop their still-running timer in the Active Timers card. The row just sits with `end_time = null`
+forever — nobody can log in as that user again (their auth account is deleted), and nobody with
+access can reach it through the app.
+
+**M21. ⏳ Open.** Manual time entries have no way to represent a shift that crosses midnight.
+`EntryFormDialog` (`src/components/entry-form-dialog.tsx`) has a single `date` field applied to
+both `startTime` and `endTime` (`toFormValues`, `combineDateAndTime(date, startTime)` /
+`combineDateAndTime(date, endTime)` in `createEntry`/`updateEntry`,
+`src/lib/workspace/use-time-entries.ts`). Entering e.g. 22:00 as the start and 02:00 as the end
+computes an end instant before the start on the same calendar date, so it always hits
+`if (minutes <= 0) throw new Error("End time must be after start time.")`. The live timer handles
+this correctly via `splitByDay` (H8) when you stop it after midnight, but there is no equivalent
+path for someone logging an overnight shift after the fact — "Add manual entry" and Manage →
+Entries' edit dialog can only represent it as two separate entries entered on two separate days,
+which isn't obvious from the form itself (no hint, no split-add-a-second-entry affordance).
+
+**M22. ⏳ Open.** `submit_timesheet()` has no server-side check that the week being submitted
+actually has any entries — only the client's `hasEntries` flag in `SubmissionPanel`
+(`src/routes/timesheet.tsx`) stops an empty-week submission. The RPC itself
+(`supabase/migrations/20260811040000_lock_on_submit.sql`) only guards against a running timer and
+an already-submitted/approved week; nothing stops a direct call to `submit_timesheet` for a week
+with zero `time_entries` rows. That week can then sit in — and be approved from — the Approvals
+queue as a real, zero-hour "Approved" timesheet. This is the same category of gap H12 closed for
+"require descriptions"/"allow manual entry": a business rule enforced only in the client, contrary
+to this project's own stated defense-in-depth principle (see `CLAUDE.md`, "Authorization model").
+
+**M23. ⏳ Open.** An admin correcting entries inside an already-approved week (which RLS explicitly
+permits — `week_is_locked()`'s admin override) never resets or even flags that week's timesheet
+status. `TeamEntriesTab` in `src/routes/manage.tsx` lets an admin edit/delete entries in a locked
+week same as any other; nothing calls back into `timesheets` at all. The employee's own
+`SubmissionPanel` keeps showing "Approved — this week is locked" with whatever total it originally
+had — there's no re-approval step, no "modified after approval" flag, and no notification to the
+employee that their signed-off hours changed underneath them. The only trace is a separate
+`time_entry_edited`/`time_entry_deleted` row in `activity_log` (from the H11-era trigger), which a
+manager would have to go looking for in Manage → Activity to notice — it's disconnected from the
+approval itself.
+
+### 9. Low-Priority Issues
+
+**L25. ⏳ Open.** Settings → Users → pending members' "Approve" and "Resend invite" buttons
+(`src/routes/settings.tsx`) have no busy/disabled state during their async call — unlike essentially
+every other action button in the app (Timer, Submit, Approve/Send back in Manage, entry
+Save/Delete), which all set a local `busy` flag before awaiting. A rapid double-click fires two
+concurrent RPCs. `approve_member` is a plain idempotent `UPDATE ... SET is_pending = false`, so
+double-approving is harmless, but `resendInvite` has no equivalent backstop — each extra click is a
+real extra `generateLink` call, so a burst of clicks sends the invitee several magic-link emails.
+
+**L26. ⏳ Open.** `ApprovalsPanel`'s `busyId` (`src/routes/manage.tsx`) is a single shared value
+covering the entire pending-approvals list, not per-row. Approving timesheet A sets `busyId = "A"`;
+if a manager then acts on a different timesheet B while A is still in flight, `busyId` gets
+overwritten to `"B"`, which un-disables A's buttons before A's request has actually resolved — its
+`finally` block later calls `setBusyId(null)` unconditionally, regardless of whether a newer action
+owns that slot. No data corruption results (`review_timesheet()`'s own `status = 'submitted'` guard
+rejects a stale re-click server-side), but the disabled/busy affordance briefly lies about what's
+safe to click during concurrent approvals.
+
+**L27. ⏳ Open.** Projects, teams, clients, tags, task categories, members, and employment/schedule
+data have no Realtime subscription — only `time_entries` and `timesheets` do (grep
+`postgres_changes` under `src/lib/workspace/`: just `use-time-entries.ts` and `use-timesheets.ts`).
+An admin renaming/archiving a project, changing a hourly rate, or adding a teammate in one tab
+doesn't propagate to another open tab or device until something else triggers a refetch (window
+refocus, a route change). `CLAUDE.md` already flags this as something to "consider" for new mutable
+tables; it's equally true of several tables that predate that note.
+
+### 10. Edge Cases — This Pass
+
+| Edge case | Status | Note |
+|---|---|---|
+| Query/network failure surfaced to the user | ✅ Fixed | H13 — global toast on any query error, plus a dedicated error+retry screen for core-shell load failures |
+| Submitting the current (unfinished) week | ✅ Fixed | H14 — confirmation dialog explains the lock-out before submitting; not a hard block |
+| Removed user's orphaned running timer | ❌ Fail | M20 — invisible in Active Timers and the Manage → Entries picker alike |
+| Manual entry across midnight | ❌ Fail | M21 — rejected outright, no split path like the live timer has |
+| Empty timesheet submitted via direct API call | ⚠️ Client-only | M22 — UI blocks it, RPC doesn't |
+| Editing an approved week's entries (admin) | ⚠️ Partial | M23 — allowed and audit-logged, but status/total go stale with no re-approval |
+| Double-clicking Approve/Resend invite (pending members) | ⚠️ Partial | L25 — no busy-state debounce; harmless for Approve, spammy for Resend invite |
+| Concurrent actions across two different pending approvals | ⚠️ Partial | L26 — shared `busyId` briefly mis-reports button state; backend still safe |
+| Multi-tab drift on projects/teams/clients/members | ⚠️ Partial | L27 — no Realtime; relies on refocus/refetch timing |
+| Double-clicking Start/Stop Timer | ✅ OK | `busy` state + the `time_entries_one_running_per_user` index both hold |
+| Double-submitting Add/Edit entry dialog | ✅ OK | `busy` state + the no-overlap `EXCLUDE` constraint both hold |
+| Starting a timer with no project selected | ✅ Blocked in UI | `TimerBar.toggle()` rejects with a toast before calling `startTimer` |
+| Starting a timer with no task selected | ⚠️ Unenforced | `startTimer`/DB never require a non-empty `task`; only reachable if a workspace has zero task categories |
+| Moving an entry into a locked week via edit | ✅ Blocked | `time_entries_update`'s `WITH CHECK` re-checks `week_is_locked()` against the *new* `entry_date` |
+| Un-approving an approved timesheet | ✅ By design (documented) | Still true post-audit — `review_timesheet()` only ever transitions rows currently `'submitted'`, no admin override (see original M19) |
+
+### 11. Status Summary
+
+- **High (H13–H15):** all fixed — a global query-error toast plus a core-shell loading/error gate in
+  AppShell (H13), a confirmation dialog before submitting an unfinished week (H14), and
+  `is_active` now enforced via `has_role()`/`can_manage()` plus the `time_entries`/`timesheets`
+  self-access policies directly, closing the app-level gap that previously relied solely on
+  Supabase's own token lifecycle (H15).
+- **Medium (M20–M23):** all open — an invisible orphaned timer for removed users, a real gap in
+  what manual entry can represent, one more client-only business rule in the same family as the
+  original H12, and a stale-approval-after-correction gap.
+- **Low (L25–L27):** all open — two UI debounce/state gaps around approvals and pending-member
+  actions, and a multi-tab staleness gap for the tables that predate this app's Realtime adoption.
+- Several categories from the original QA checklist came back clean on this pass: duplicate
+  timer/entry submissions, overlapping entries, moving entries into locked weeks, and starting a
+  timer without a project are all already enforced at both the client and database layer.
+
+### Files/components inspected this pass
+
+`src/lib/workspace/use-time-entries.ts`, `use-timesheets.ts`, `use-members.ts`, `use-employment.ts`,
+`use-settings.ts`; `src/routes/time.tsx`, `timesheet.tsx`, `manage.tsx`, `reports.tsx`, `settings.tsx`,
+`login.tsx`, `__root.tsx`; `src/components/entry-form-dialog.tsx`; `src/lib/workspace-store.tsx`;
+`src/lib/admin.functions.ts`; `src/integrations/supabase/auth-middleware.ts`; and the full
+`supabase/migrations/*` history, with particular attention to `20260804110000_timesheet_approvals.sql`,
+`20260811040000_lock_on_submit.sql`, `20260812000000_enforce_entry_policies.sql`,
+`20260811030000_time_entries_no_overlap.sql`, `20260805070000_profiles_is_active.sql`, and
+`20260811010000_protect_last_admin_role_change.sql`.
+
+**Total issues found this pass: 10** (0 Critical, 3 High, 4 Medium, 3 Low — plus the edge-case
+table above covering both new gaps and confirmed-fixed behavior). **All 3 High findings (H13–H15)
+are now fixed**; Medium (M20–M23) and Low (L25–L27) remain open, pending prioritization.

@@ -2,6 +2,16 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 import { ChevronLeft, ChevronRight, Lock, Send } from "lucide-react";
 import { toast } from "sonner";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { AppShell, ProjectDot } from "@/components/app-shell";
 import { TimesheetGrid } from "@/components/timesheet-grid";
 import { Badge } from "@/components/ui/badge";
@@ -160,6 +170,15 @@ function SubmissionPanel({
 }) {
   const { submitTimesheet } = useWorkspace();
   const [busy, setBusy] = useState(false);
+  const [confirmEarly, setConfirmEarly] = useState(false);
+
+  // H14: submitting a week that hasn't finished yet used to be a silent
+  // trap — the moment it's submitted, week_is_locked() covers today too,
+  // so the very next timer start or manual entry that same week fails with
+  // no warning this was coming. This doesn't block it (someone going on
+  // leave for the rest of the week is a legitimate reason to submit
+  // early), it just makes sure they know what they're choosing.
+  const weekInProgress = Date.now() < addDays(weekStart, 7).getTime();
 
   const submit = async () => {
     setBusy(true);
@@ -173,6 +192,14 @@ function SubmissionPanel({
     } finally {
       setBusy(false);
     }
+  };
+
+  const handleSubmitClick = () => {
+    if (weekInProgress) {
+      setConfirmEarly(true);
+      return;
+    }
+    void submit();
   };
 
   if (status === "Approved") {
@@ -228,7 +255,7 @@ function SubmissionPanel({
             size="sm"
             className="gap-2"
             disabled={busy || !hasEntries || hasRunningEntry}
-            onClick={() => void submit()}
+            onClick={handleSubmitClick}
             title={
               hasRunningEntry
                 ? "Stop your timer before submitting this week"
@@ -242,6 +269,29 @@ function SubmissionPanel({
           </Button>
         </div>
       </CardContent>
+      <AlertDialog open={confirmEarly} onOpenChange={setConfirmEarly}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>This week isn't over yet</AlertDialogTitle>
+            <AlertDialogDescription>
+              Submitting now locks this week for editing right away — including today and any days
+              still to come. You won't be able to start a timer or log time for the rest of the week
+              until your manager reviews it (or sends it back). Submit anyway?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Not yet</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                setConfirmEarly(false);
+                void submit();
+              }}
+            >
+              Submit anyway
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Card>
   );
 }
