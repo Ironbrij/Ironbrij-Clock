@@ -152,9 +152,7 @@ export function useTimeEntriesData(
       // one_running_per_user DB index is the real backstop; this just
       // gives an instant, friendly error instead of a round trip.
       if (entries.some((e) => e.running)) {
-        throw new Error(
-          "You already have a timer running — stop it before starting another.",
-        );
+        throw new Error("You already have a timer running — stop it before starting another.");
       }
       if (settings.requireDescriptions && !description.trim()) {
         throw new Error(REQUIRE_DESCRIPTION_MESSAGE);
@@ -290,8 +288,7 @@ export function useTimeEntriesData(
         const date = patch.date ?? existing?.date;
         const startTime =
           patch.startTime ??
-          (existingStart &&
-            `${pad(existingStart.getHours())}:${pad(existingStart.getMinutes())}`);
+          (existingStart && `${pad(existingStart.getHours())}:${pad(existingStart.getMinutes())}`);
         const endTime =
           patch.endTime ??
           (existingEnd && `${pad(existingEnd.getHours())}:${pad(existingEnd.getMinutes())}`);
@@ -341,6 +338,8 @@ export function useTimeEntriesData(
       date: string;
       startTime: string;
       endTime: string;
+      /** M21: only needed for a shift that runs past midnight — defaults to `date` when omitted. */
+      endDate?: string;
     }) => {
       if (!uid) return;
       if (!settings.allowManualEntry) {
@@ -351,24 +350,35 @@ export function useTimeEntriesData(
       }
       const project = projects.find((p) => p.id === input.projectId);
       const start = combineDateAndTime(input.date, input.startTime);
-      const end = combineDateAndTime(input.date, input.endTime);
+      const end = combineDateAndTime(input.endDate ?? input.date, input.endTime);
       const minutes = Math.round((end.getTime() - start.getTime()) / 60000);
       if (minutes <= 0) throw new Error("End time must be after start time.");
       if (overlapsExisting(entries, start, end)) {
         throw new Error("That overlaps with another entry you already have on this day.");
       }
-      const { error } = await supabase.from("time_entries").insert({
+      // M21: a manual entry that crosses midnight is stored as one row per
+      // calendar day it touches — the same convention stopTimer/splitByDay
+      // already established for the live timer (H8) — so day/week views
+      // that bucket strictly by entry_date attribute each day's share
+      // correctly instead of dumping the whole duration on the start day.
+      // A same-day entry (the overwhelming majority) still produces exactly
+      // one segment, so this is a no-op for the existing behavior. Inserted
+      // as a single multi-row statement rather than one insert per segment
+      // so it's atomic — either the whole shift is saved, or none of it is.
+      const segments = splitByDay(start, end);
+      const rows = segments.map((seg) => ({
         user_id: uid,
         project_id: input.projectId,
         task: input.task,
         description: input.description,
-        start_time: start.toISOString(),
-        end_time: end.toISOString(),
-        entry_date: input.date,
-        duration_minutes: minutes,
+        start_time: seg.start.toISOString(),
+        end_time: seg.end.toISOString(),
+        entry_date: seg.date,
+        duration_minutes: Math.max(1, seg.minutes),
         is_billable: project?.billable ?? true,
         tag_ids: project?.tagIds ?? [],
-      });
+      }));
+      const { error } = await supabase.from("time_entries").insert(rows);
       throwIf(error, {
         "23P01": "That overlaps with another entry you already have on this day.",
         "42501": POLICY_VIOLATION_MESSAGE,

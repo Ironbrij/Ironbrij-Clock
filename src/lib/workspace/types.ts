@@ -109,6 +109,8 @@ export type WorkspaceTimesheet = {
   reviewedBy: string | null;
   reviewedAt: string | null;
   reviewNote: string | null;
+  /** M23: set server-side whenever an admin edits/deletes an entry inside this week after it was already approved — surfaced so the stale total isn't mistaken for the one that was actually signed off. */
+  entriesModifiedAt: string | null;
 };
 
 /** A submitted timesheet plus the hours it covers, for a manager/admin's review queue. */

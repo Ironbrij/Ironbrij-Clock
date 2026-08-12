@@ -155,48 +155,52 @@ technically expired yet.
 otherwise deactivated) becomes a permanently orphaned row that's invisible everywhere in the UI.
 `useActiveTimersData` (`src/lib/workspace/use-time-entries.ts`) queries `time_entries` directly for
 any row with `end_time IS NULL`, with no `is_active` filter — so the row itself is still fetched.
-But both places that surface it filter to `activeMembers` first: `ActiveTimersCard`'s
-`relevantActiveTimers` in `src/routes/manage.tsx` (`activeTimers.filter((t) =>
-relevantMembers.some((m) => m.id === t.userId))`) and `TeamEntriesTab`'s member picker
-(`relevantMembers = activeMembers.filter(...)`) both derive from `members.filter((m) => m.active)`.
-Once `removeUserAccess` sets `is_active = false`, that person drops out of `relevantMembers`
-entirely, so a manager/admin can no longer even select them in Manage → Entries, let alone see or
-stop their still-running timer in the Active Timers card. The row just sits with `end_time = null`
-forever — nobody can log in as that user again (their auth account is deleted), and nobody with
-access can reach it through the app.
+But both places that surface it filtered through `activeMembers` first. Fixed in
+`src/routes/manage.tsx`'s `TeamEntriesTab`: `relevantActiveTimers` now only excludes the viewer's
+own timer (`activeTimers.filter((t) => t.userId !== currentUser.id)`) rather than re-filtering
+through `relevantMembers` — RLS already scopes `activeTimers` correctly (everyone, for an admin;
+shared-team members, for a manager — and a removed person drops out of a manager's shared-team scope
+anyway, since `removeUserAccess` deletes their `team_members` rows), so that second, client-side
+filter was redundant except for the harm it did here. The member picker's `<Select>` now renders
+from a new `selectableMembers` list — `relevantMembers` plus, if the current `memberId` selection
+falls outside it (e.g. clicked from the Active Timers card), that specific member appended and
+labeled "(inactive)" — so clicking through from the timer card no longer leaves the dropdown
+pointing at a value it can't render. The reset effect that used to snap `memberId` back to the
+default the moment it left `relevantMembers` now only resets when the id doesn't match any known
+member at all, so an explicit selection like this sticks.
 
-**M21. ⏳ Open.** Manual time entries have no way to represent a shift that crosses midnight.
-`EntryFormDialog` (`src/components/entry-form-dialog.tsx`) has a single `date` field applied to
-both `startTime` and `endTime` (`toFormValues`, `combineDateAndTime(date, startTime)` /
-`combineDateAndTime(date, endTime)` in `createEntry`/`updateEntry`,
-`src/lib/workspace/use-time-entries.ts`). Entering e.g. 22:00 as the start and 02:00 as the end
-computes an end instant before the start on the same calendar date, so it always hits
-`if (minutes <= 0) throw new Error("End time must be after start time.")`. The live timer handles
-this correctly via `splitByDay` (H8) when you stop it after midnight, but there is no equivalent
-path for someone logging an overnight shift after the fact — "Add manual entry" and Manage →
-Entries' edit dialog can only represent it as two separate entries entered on two separate days,
-which isn't obvious from the form itself (no hint, no split-add-a-second-entry affordance).
+**M21. ✅ Fixed.** Manual time entries had no way to represent a shift that crosses midnight —
+`EntryFormDialog` combined both `startTime` and `endTime` against the same single `date`, so
+22:00→02:00 always computed a negative duration. Fixed with an "Ends after midnight, the next day"
+checkbox (add-entry only — an existing stored entry never actually spans midnight in the first
+place, since creation already splits it, so there's nothing to toggle back on when editing one).
+When checked, `createEntry` (`src/lib/workspace/use-time-entries.ts`) now runs the same
+`splitByDay` H8 already established for the live timer, and inserts the resulting one-row-per-day
+segments as a single atomic multi-row `insert()` — either the whole shift saves, or none of it
+does, avoiding the partial-write risk a per-segment insert loop would have had.
 
-**M22. ⏳ Open.** `submit_timesheet()` has no server-side check that the week being submitted
-actually has any entries — only the client's `hasEntries` flag in `SubmissionPanel`
-(`src/routes/timesheet.tsx`) stops an empty-week submission. The RPC itself
-(`supabase/migrations/20260811040000_lock_on_submit.sql`) only guards against a running timer and
-an already-submitted/approved week; nothing stops a direct call to `submit_timesheet` for a week
-with zero `time_entries` rows. That week can then sit in — and be approved from — the Approvals
-queue as a real, zero-hour "Approved" timesheet. This is the same category of gap H12 closed for
-"require descriptions"/"allow manual entry": a business rule enforced only in the client, contrary
-to this project's own stated defense-in-depth principle (see `CLAUDE.md`, "Authorization model").
+**M22. ✅ Fixed.** `submit_timesheet()` had no server-side check that the week being submitted
+actually had any entries — only the client's `hasEntries` flag in `SubmissionPanel` stopped an
+empty-week submission. Fixed in
+`supabase/migrations/20260812070000_require_entries_to_submit.sql`: the RPC now raises "Log some
+time before submitting this week" if there isn't a single `time_entries` row in range, checked
+before the existing running-timer guard. Same category of fix as H12 — a business rule that only
+existed client-side now has its database backstop too.
 
-**M23. ⏳ Open.** An admin correcting entries inside an already-approved week (which RLS explicitly
-permits — `week_is_locked()`'s admin override) never resets or even flags that week's timesheet
-status. `TeamEntriesTab` in `src/routes/manage.tsx` lets an admin edit/delete entries in a locked
-week same as any other; nothing calls back into `timesheets` at all. The employee's own
-`SubmissionPanel` keeps showing "Approved — this week is locked" with whatever total it originally
-had — there's no re-approval step, no "modified after approval" flag, and no notification to the
-employee that their signed-off hours changed underneath them. The only trace is a separate
-`time_entry_edited`/`time_entry_deleted` row in `activity_log` (from the H11-era trigger), which a
-manager would have to go looking for in Manage → Activity to notice — it's disconnected from the
-approval itself.
+**M23. ✅ Fixed.** An admin correcting entries inside an already-approved week never reset or
+flagged that week's timesheet status, so the employee's own `SubmissionPanel` kept showing
+"Approved — this week is locked" with a total that had silently gone stale. Fixed in
+`supabase/migrations/20260812080000_flag_approved_week_modified.sql`: a new
+`entries_modified_at` column on `timesheets`, set by an `AFTER INSERT OR UPDATE OR DELETE` trigger
+on `time_entries` whenever a completed write touches an entry inside a week that's currently
+`'approved'` (checked for both the old and new `entry_date` on an update, so moving an entry into
+or out of an approved week is caught either way). Since `week_is_locked()` blocks everyone but an
+admin from writing into an approved week at all, this only ever fires for exactly the case M23
+describes. The employee's Timesheet page now shows "An admin updated entries in this week on
+[date] — after it was approved. The total above reflects that change." underneath the Approved
+badge when the flag is set. Deliberately doesn't re-open the week or force re-approval — same
+reasoning as M18: that's a real product decision this fix isn't making unprompted, it just makes
+the staleness visible instead of silent.
 
 ### 9. Low-Priority Issues
 
@@ -231,10 +235,10 @@ tables; it's equally true of several tables that predate that note.
 |---|---|---|
 | Query/network failure surfaced to the user | ✅ Fixed | H13 — global toast on any query error, plus a dedicated error+retry screen for core-shell load failures |
 | Submitting the current (unfinished) week | ✅ Fixed | H14 — confirmation dialog explains the lock-out before submitting; not a hard block |
-| Removed user's orphaned running timer | ❌ Fail | M20 — invisible in Active Timers and the Manage → Entries picker alike |
-| Manual entry across midnight | ❌ Fail | M21 — rejected outright, no split path like the live timer has |
-| Empty timesheet submitted via direct API call | ⚠️ Client-only | M22 — UI blocks it, RPC doesn't |
-| Editing an approved week's entries (admin) | ⚠️ Partial | M23 — allowed and audit-logged, but status/total go stale with no re-approval |
+| Removed user's orphaned running timer | ✅ Fixed | M20 — Active Timers card and Manage → Entries picker both reach it now |
+| Manual entry across midnight | ✅ Fixed | M21 — "Ends after midnight" checkbox, split into one row per day like the timer |
+| Empty timesheet submitted via direct API call | ✅ Fixed | M22 — `submit_timesheet()` now rejects a week with zero entries server-side |
+| Editing an approved week's entries (admin) | ✅ Fixed | M23 — still allowed (payroll corrections), now flags `entries_modified_at` and shows it on the employee's Timesheet page |
 | Double-clicking Approve/Resend invite (pending members) | ⚠️ Partial | L25 — no busy-state debounce; harmless for Approve, spammy for Resend invite |
 | Concurrent actions across two different pending approvals | ⚠️ Partial | L26 — shared `busyId` briefly mis-reports button state; backend still safe |
 | Multi-tab drift on projects/teams/clients/members | ⚠️ Partial | L27 — no Realtime; relies on refocus/refetch timing |
@@ -252,9 +256,10 @@ tables; it's equally true of several tables that predate that note.
   `is_active` now enforced via `has_role()`/`can_manage()` plus the `time_entries`/`timesheets`
   self-access policies directly, closing the app-level gap that previously relied solely on
   Supabase's own token lifecycle (H15).
-- **Medium (M20–M23):** all open — an invisible orphaned timer for removed users, a real gap in
-  what manual entry can represent, one more client-only business rule in the same family as the
-  original H12, and a stale-approval-after-correction gap.
+- **Medium (M20–M23):** all fixed — the orphaned-timer visibility gap for removed users (M20),
+  overnight manual entries via a new checkbox that reuses H8's `splitByDay` (M21), a database-level
+  backstop for empty-timesheet submission matching H12's pattern (M22), and a visible
+  `entries_modified_at` flag for approved-week corrections (M23).
 - **Low (L25–L27):** all open — two UI debounce/state gaps around approvals and pending-member
   actions, and a multi-tab staleness gap for the tables that predate this app's Realtime adoption.
 - Several categories from the original QA checklist came back clean on this pass: duplicate
@@ -274,4 +279,5 @@ tables; it's equally true of several tables that predate that note.
 
 **Total issues found this pass: 10** (0 Critical, 3 High, 4 Medium, 3 Low — plus the edge-case
 table above covering both new gaps and confirmed-fixed behavior). **All 3 High findings (H13–H15)
-are now fixed**; Medium (M20–M23) and Low (L25–L27) remain open, pending prioritization.
+and all 4 Medium findings (M20–M23) are now fixed**; Low (L25–L27) remain open, pending
+prioritization.
