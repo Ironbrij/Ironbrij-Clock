@@ -39,25 +39,35 @@ Original audit performed 2026-08-11 against `src/lib/workspace/*`, `src/routes/*
 
 ---
 
-## 3. Medium-Priority Issues — open
+## 3. Medium-Priority Issues — all fixed
 
-- **M13.** "Repeat" (↻ on a past entry) bypasses the archived-project guard — it calls `startTimer` directly with the old `projectId` with no archived check, unlike the normal project pickers which filter `!p.archived`. (`time.tsx`)
-- **M14.** `updateEntry` has a latent bug for running entries: if a date/start-time patch is ever applied to a running entry (no UI path does this today, but the function is public), `existingEnd` falls back to `existingStart`, forcing `minutes = 0` and throwing the misleading "End time must be after start time." (`use-time-entries.ts`)
-- **M15.** Reports' overtime column uses one workspace-wide `weeklyHours` for everyone, ignoring `member_employment.employment_type` (full/part-time) that already exists specifically to distinguish this. Part-time staff get judged against a full-time baseline. (`reports.tsx`)
-- **M16.** Deleting a project/client/team is destructive-by-null (orphans historical entries/projects) and irreversible, but none of the confirmation dialogs state how many entries/projects will be affected.
-- **M17.** No duplicate-name protection for teams, tags, or task categories (clients alone have a DB `UNIQUE`). Since `task` on a time entry is free text, duplicate task-category names actively collide in the "recent tasks" grouping (`orderByRecencyName`, keyed by name).
-- **M18.** Forgotten-clock-out protection is entirely client-side (`setInterval` warning at 4/8/12h) — nothing server-side ever auto-stops or flags an abandoned timer if the tab/browser is closed.
-- **M19.** "Approve" fires immediately with no confirmation, while "Send back" (Reject) opens a dialog — inverted risk framing, since Approve is the irreversible one (no "unapprove" exists for non-admins).
+**M13. ✅ Fixed.** "Repeat" (↻ on a past entry) called `startTimer` directly with the old `projectId`, with no archived check — unlike the normal project pickers, which always filter `!p.archived`. Now blocked with a clear error.
+
+**M14. ✅ Fixed.** `updateEntry` had a latent bug for running entries — a date/start-time patch with no explicit end fell back `existingEnd` to `existingStart`, forcing `minutes = 0` and throwing the misleading "End time must be after start time." Fixing this also uncovered a real bug it was hiding: `updateEntry`'s fallback lookup only ever checked the *caller's own* entries, which broke every manager/admin edit of someone else's entry (H11) the moment the dialog supplied a full patch. Both fixed together — see `use-time-entries.ts`.
+
+**M15. ✅ Fixed.** Reports' overtime column compared everyone against one workspace-wide `weeklyHours`, ignoring `member_employment.employment_type`. Per product decision, there's no stored expected-hours-per-week for part-time staff (only a free-text schedule note), so overtime is now `null` ("—" / "N/A") for anyone marked part-time rather than guessing a fraction of the full-time number.
+
+**M16. ✅ Fixed.** Delete confirmations for a project, tag, and team didn't say how many records they'd affect. Project delete now shows total hours that will lose their project attribution; tag delete shows the entry count; team delete shows member and project counts (deleting a team also `SET NULL`s any of its projects' `team_id`, which the dialog never mentioned before). Client delete already showed its project count.
+
+**M17. ✅ Fixed.** No duplicate-name protection existed for teams, tags, or task categories (clients alone had a DB `UNIQUE`). Added case-insensitive unique indexes plus friendly error messages on create/update.
+
+**M18. ⚠️ Improved, not fully closed.** Forgotten-clock-out protection was entirely client-side. Per product decision, no auto-stop was added (no pg_cron/Edge Functions infra in this repo, and silently closing out payroll-adjacent records isn't a call to make unprompted) — instead, Manage → Entries now shows an "Active timers" card: every currently-running timer visible to a manager/admin under existing RLS, flagged past 8h, polling every 60s. Passive visibility only, not a fix for the underlying gap.
+
+**M19. ✅ Fixed.** "Approve" fired immediately with no confirmation, while "Send back" already opened one — inverted risk framing, since `review_timesheet()` has no admin exception for un-approving an already-approved row (nothing can undo Approve at all, not even for admins). Approve now opens a confirmation dialog naming the person, week, and hours involved.
 
 ---
 
-## 4. Low-Priority Issues — open
+## 4. Low-Priority Issues — all fixed
 
-- **L20.** No future-dated entry validation — the date input's `max` is a UI hint only; nothing server-side rejects it.
-- **L21.** **"Time off" is 100% mock/non-functional** — static sample data, and "Request time off" has no `onClick` at all. There is no real leave/attendance workflow in this codebase. Also decorative/non-functional: Settings → Notifications toggles (no persistence), "Change avatar," and Manage → Expenses/Kiosks/Invoices ("coming soon").
-- **L22.** Calendar view (Time page) has no month/week navigation at all — hardcoded to "today," unlike Grid view and the Timesheet page which both have prev/next controls.
-- **L23.** Settings → Admin: entering `0` for weekly hours is treated as falsy (`Number(weeklyHours) || settings.weeklyHours`) and silently reverts on save.
-- **L24.** `member_employment.hourly_rate` has only client-side non-negative validation; no DB `CHECK` constraint backs it.
+**L20. ✅ Fixed.** No future-dated entry validation — the date input's `max` was a UI hint only. Added a DB `CHECK` bounding `time_entries.start_time` to no more than a day past `now()` (bounded on the instant, not `entry_date`, to tolerate timezone skew without false rejections).
+
+**L21. ✅ Fixed (labeling, not a real feature).** "Time off" was 100% mock data with a dead "Request time off" button. Building a real leave/attendance workflow is well beyond a low-priority fix, so this was made honest instead, matching the pattern Settings → Admin → Danger zone already used: a banner explaining the page is sample data, the button disabled with an explanatory title. Settings → Notifications toggles and "Change avatar" got the same treatment (previously silently non-functional, no indication why).
+
+**L22. ✅ Fixed.** Calendar view (Time page) had no navigation at all, hardcoded to "today." Added independent month/week paging plus a "Today" reset, bounded by the same `oldestLoadedWeekStart()` rule Grid/Timesheet already use.
+
+**L23. ✅ Fixed.** Settings → Admin: entering `0` for weekly hours was treated as falsy (`Number(weeklyHours) || settings.weeklyHours`) and silently reverted on save. Now validated explicitly, with an error message instead of a silent revert.
+
+**L24. ✅ Fixed.** `member_employment.hourly_rate` had only client-side non-negative validation. Added a DB `CHECK` constraint (nullable still allowed).
 
 ---
 
@@ -69,12 +79,12 @@ Original audit performed 2026-08-11 against `src/lib/workspace/*`, `src/routes/*
 | Overlapping time entries | ✅ Fixed | C4 — EXCLUDE constraint |
 | Double clock-in (same tab) | ✅ OK | Button state is server-derived |
 | Clocking out without clocking in | ✅ OK | `stopTimer` is a no-op if no matching entry is found |
-| Forgotten clock-outs | ⚠️ Weak | M18 — client-only warning, nothing server-side |
+| Forgotten clock-outs | ⚠️ Improved | M18 — manager/admin visibility added, still no server-side auto-stop |
 | Browser refresh during active timer | ✅ OK | Elapsed time correctly reconstructed from stored `start_time` |
 | Browser closing during active timer | ⚠️ Partial | Data is safe, but no warning fires anywhere (ties to M18) |
 | Network failure during tracking | ⚠️ Partial | Throws a toast, leaves state as-is (safe default), but no retry/offline queue |
 | Switching projects while tracking | ⚠️ By design, unclear | Pickers are `disabled={running}`; not explained to the user why |
-| Editing an active timer | ⚠️ Latent bug | Not reachable via current UI, but M14 breaks if ever wired up |
+| Editing an active timer | ✅ Fixed | M14 — running entries now rejected with a clear error instead of a silent 0-minute bug |
 | Deleting an active timer | ✅ Blocked in UI | Delete button hidden while running |
 | Working across midnight | ✅ Fixed | H8 — split at day boundaries |
 | Editing approved/submitted timesheets | ✅ Fixed | H6 — locked at submission, admin override remains |
@@ -86,5 +96,5 @@ Original audit performed 2026-08-11 against `src/lib/workspace/*`, `src/routes/*
 
 - **Critical (C1–C5):** all fixed.
 - **High (H6–H12):** all fixed.
-- **Medium (M13–M19):** all open.
-- **Low (L20–L24):** all open.
+- **Medium (M13–M19):** all fixed — M18 improved (manager visibility) rather than fully closed (no auto-stop, by product decision).
+- **Low (L20–L24):** all fixed.
