@@ -264,9 +264,18 @@ function ApprovalsPanel() {
   const { pendingApprovals, memberById, reviewTimesheet } = useWorkspace();
   const [busyId, setBusyId] = useState<string | null>(null);
   const [rejecting, setRejecting] = useState<PendingApproval | null>(null);
+  // Approve has no "unapprove" at all — review_timesheet() only ever
+  // transitions a row that's currently 'submitted', with no exception for
+  // admins on an already-approved one — unlike Send back, which already
+  // asked for confirmation via a dialog. Approve used to fire on a single
+  // click with no confirmation, the inverse of its actual risk.
+  const [approving, setApproving] = useState<PendingApproval | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
-  const approve = async (id: string) => {
+  const approve = async () => {
+    if (!approving) return;
+    const id = approving.id;
+    setApproving(null);
     setBusyId(id);
     try {
       await reviewTimesheet(id, "Approved");
@@ -359,7 +368,7 @@ function ApprovalsPanel() {
                       <Button
                         size="sm"
                         disabled={busyId === a.id}
-                        onClick={() => void approve(a.id)}
+                        onClick={() => setApproving(a)}
                       >
                         Approve
                       </Button>
@@ -377,6 +386,24 @@ function ApprovalsPanel() {
         onOpenChange={(open) => !open && setRejecting(null)}
         onConfirm={reject}
       />
+      <AlertDialog open={!!approving} onOpenChange={(open) => !open && setApproving(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Approve this timesheet?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {approving
+                ? `${memberById(approving.userId)?.name ?? "This person"}'s week of ${formatWeekRange(
+                    fromDateKey(approving.weekStart),
+                  )} (${formatHours(approving.minutes / 60)}) will be locked for editing. This can't be undone — there's no way to un-approve a timesheet once it's approved.`
+                : ""}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={() => void approve()}>Approve</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

@@ -81,6 +81,7 @@ function TeamsPage() {
     activeMembers,
     membersByTeam,
     teamMemberCount,
+    projects,
     isAdmin,
     canManage,
     invitePeople,
@@ -318,8 +319,22 @@ function TeamsPage() {
           <AlertDialogHeader>
             <AlertDialogTitle>Delete {deletingTeam?.name}?</AlertDialogTitle>
             <AlertDialogDescription>
-              This removes the team from the workspace. People in it stay, but they'll need
-              reassigning to another team.
+              {deletingTeam &&
+                (() => {
+                  const memberCount = teamMemberCount(deletingTeam.id);
+                  const projectCount = projects.filter((p) => p.teamId === deletingTeam.id).length;
+                  const parts = [
+                    memberCount > 0
+                      ? `${memberCount} member${memberCount === 1 ? "" : "s"} (they'll need reassigning to another team)`
+                      : null,
+                    projectCount > 0
+                      ? `${projectCount} project${projectCount === 1 ? "" : "s"} (they'll show as having no team)`
+                      : null,
+                  ].filter(Boolean);
+                  return parts.length > 0
+                    ? `This removes the team from the workspace. It's currently attached to ${parts.join(" and ")}.`
+                    : "This removes the team from the workspace. Nothing is currently attached to it.";
+                })()}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
