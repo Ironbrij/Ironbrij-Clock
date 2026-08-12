@@ -200,7 +200,8 @@ type WorkspaceContextValue = {
   }) => Promise<void>;
 
   startTimer: (input: { projectId: string; task: string; description: string }) => Promise<void>;
-  stopTimer: (entryId: string) => Promise<void>;
+  /** Stops a running entry, splitting it into one row per calendar day if it ran past midnight. */
+  stopTimer: (entryId: string) => Promise<{ splitAcrossDays: boolean }>;
   createEntry: (input: {
     projectId: string;
     task: string;

@@ -2,7 +2,7 @@ import { useCallback, useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import type { Database } from "@/integrations/supabase/types";
-import { combineDateAndTime, ENTRIES_HISTORY_DAYS, toDateKey } from "@/lib/time-utils";
+import { combineDateAndTime, ENTRIES_HISTORY_DAYS, splitByDay, toDateKey } from "@/lib/time-utils";
 import { throwIf } from "./utils";
 import type { WorkspaceEntry, WorkspaceProject, WorkspaceSettings } from "./types";
 
@@ -139,28 +139,57 @@ export function useTimeEntriesData(
   );
 
   const stopTimer = useCallback(
-    async (entryId: string) => {
+    async (entryId: string): Promise<{ splitAcrossDays: boolean }> => {
       const entry = entries.find((e) => e.id === entryId);
-      if (!entry) return;
-      const end = new Date();
-      const minutes = Math.max(
-        1,
-        Math.round((end.getTime() - new Date(entry.startTime).getTime()) / 60000),
-      );
+      if (!entry || !uid) return { splitAcrossDays: false };
+      const [firstSegment, ...laterSegments] = splitByDay(new Date(entry.startTime), new Date());
+      const splitAcrossDays = laterSegments.length > 0;
+
+      // Insert any later-day segments *before* touching the original row —
+      // if one of these fails partway through (e.g. it collides with
+      // another entry someone added for the new day while this timer was
+      // still running), the original entry is left exactly as it was:
+      // still running and visible, not silently missing time.
+      if (splitAcrossDays) {
+        const project = projects.find((p) => p.id === entry.projectId);
+        for (const seg of laterSegments) {
+          const { error } = await supabase.from("time_entries").insert({
+            user_id: uid,
+            project_id: entry.projectId,
+            task: entry.task,
+            description: entry.description,
+            start_time: seg.start.toISOString(),
+            end_time: seg.end.toISOString(),
+            entry_date: seg.date,
+            duration_minutes: Math.max(1, seg.minutes),
+            is_billable: project?.billable ?? true,
+            tag_ids: project?.tagIds ?? [],
+          });
+          throwIf(error, {
+            "23P01": "That overlaps with another entry you already have on this day.",
+            "42501": POLICY_VIOLATION_MESSAGE,
+          });
+        }
+      }
+
       // A locked week doesn't make an UPDATE error — Postgres RLS just
       // excludes the row from the USING clause, so this would otherwise
       // report success while changing nothing. .select() plus checking for
       // an empty result is what turns that silent no-op into a real error.
       const { data, error } = await supabase
         .from("time_entries")
-        .update({ end_time: end.toISOString(), duration_minutes: minutes })
+        .update({
+          end_time: firstSegment.end.toISOString(),
+          duration_minutes: Math.max(1, firstSegment.minutes),
+        })
         .eq("id", entryId)
         .select("id");
       throwIf(error);
       if (!data || data.length === 0) throw new Error(LOCKED_WEEK_MESSAGE);
       invalidateEntries();
+      return { splitAcrossDays };
     },
-    [entries, invalidateEntries],
+    [entries, uid, projects, invalidateEntries],
   );
 
   const updateEntry = useCallback(

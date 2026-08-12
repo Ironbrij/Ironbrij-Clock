@@ -166,8 +166,12 @@ function TimerBar() {
     setBusy(true);
     try {
       if (runningEntry) {
-        await stopTimer(runningEntry.id);
-        toast.success("Timer stopped", { description: "Entry saved to your timesheet." });
+        const result = await stopTimer(runningEntry.id);
+        toast.success("Timer stopped", {
+          description: result.splitAcrossDays
+            ? "This ran past midnight, so it's been split into a separate entry for each day."
+            : "Entry saved to your timesheet.",
+        });
         setDescription("");
       } else {
         if (!project) {

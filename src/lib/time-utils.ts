@@ -38,6 +38,40 @@ export function fromDateKey(dateKey: string) {
   return new Date(y, (m ?? 1) - 1, d ?? 1);
 }
 
+/**
+ * Splits [start, end) into one segment per calendar day it touches, using
+ * local time — the same notion of "day" toDateKey already uses everywhere
+ * else in this app, not UTC. A timer run 11pm-3am produces two segments,
+ * one ending at local midnight and one starting there, instead of one
+ * entry whose full duration gets misattributed to the day it started on.
+ * A span that never crosses midnight returns a single segment covering
+ * the whole range unchanged.
+ */
+export function splitByDay(start: Date, end: Date) {
+  const segments: { date: string; start: Date; end: Date; minutes: number }[] = [];
+  let segStart = start;
+  while (segStart < end) {
+    const dayEnd = new Date(
+      segStart.getFullYear(),
+      segStart.getMonth(),
+      segStart.getDate() + 1,
+      0,
+      0,
+      0,
+      0,
+    );
+    const segEnd = dayEnd < end ? dayEnd : end;
+    segments.push({
+      date: toDateKey(segStart),
+      start: segStart,
+      end: segEnd,
+      minutes: Math.round((segEnd.getTime() - segStart.getTime()) / 60000),
+    });
+    segStart = segEnd;
+  }
+  return segments;
+}
+
 export function combineDateAndTime(dateKey: string, time: string) {
   const date = fromDateKey(dateKey);
   const [h, m] = time.split(":").map(Number);
