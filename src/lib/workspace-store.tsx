@@ -37,7 +37,12 @@ import { useProjectsData } from "@/lib/workspace/use-projects";
 import { useActivityLogData, type WorkspaceActivityEvent } from "@/lib/workspace/use-activity-log";
 import { useSettingsData } from "@/lib/workspace/use-settings";
 import { useTeamsData } from "@/lib/workspace/use-teams";
-import { useMemberEntriesData, useTimeEntriesData } from "@/lib/workspace/use-time-entries";
+import {
+  useActiveTimersData,
+  useMemberEntriesData,
+  useTimeEntriesData,
+  type ActiveTimer,
+} from "@/lib/workspace/use-time-entries";
 import { useTimesheetsData } from "@/lib/workspace/use-timesheets";
 import { useTagsData } from "@/lib/workspace/use-tags";
 import { useTaskCategoriesData } from "@/lib/workspace/use-task-categories";
@@ -53,6 +58,7 @@ export {
   nameFromEmail,
   NO_CLIENT,
   timezones,
+  type ActiveTimer,
   type EmploymentType,
   type PendingApproval,
   type PendingApprovalEntry,
@@ -561,4 +567,10 @@ export function useThisWeekStart() {
 export function useMemberEntries(userId: string | null, weekStart: Date) {
   const { session, canManage } = useWorkspace();
   return useMemberEntriesData(!!session && canManage, userId, weekStart);
+}
+
+/** Every currently-running timer visible to this manager/admin (M18) — passive flagging, not auto-stop. */
+export function useActiveTimers() {
+  const { session, canManage } = useWorkspace();
+  return useActiveTimersData(!!session && canManage);
 }

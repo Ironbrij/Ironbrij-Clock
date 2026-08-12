@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Activity,
+  AlertTriangle,
   CalendarClock,
   CheckCheck,
   ChevronDown,
@@ -63,9 +64,11 @@ import {
   toDateKey,
 } from "@/lib/time-utils";
 import {
+  useActiveTimers,
   useMemberEntries,
   useThisWeekStart,
   useWorkspace,
+  type ActiveTimer,
   type EmploymentType,
   type PendingApproval,
   type WorkspaceActivityEvent,
@@ -795,6 +798,20 @@ function TeamEntriesTab() {
   const status = timesheets.find((t) => t.userId === memberId && t.weekStart === weekKey)?.status;
   const locked = (status === "Submitted" || status === "Approved") && !isAdmin;
 
+  // M18: passive visibility only — this doesn't stop anything, it just
+  // lets a manager/admin notice a timer that's been running suspiciously
+  // long, same as they'd notice from a person's own Time page if they
+  // happened to be looking at it.
+  const { activeTimers } = useActiveTimers();
+  const relevantActiveTimers = useMemo(
+    () => activeTimers.filter((t) => relevantMembers.some((m) => m.id === t.userId)),
+    [activeTimers, relevantMembers],
+  );
+  const selectMember = (id: string) => {
+    setMemberId(id);
+    setOffset(0);
+  };
+
   const [editingEntry, setEditingEntry] = useState<WorkspaceEntry | null>(null);
   const [deletingEntry, setDeletingEntry] = useState<WorkspaceEntry | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -847,6 +864,7 @@ function TeamEntriesTab() {
 
   return (
     <div className="mt-4 grid gap-4">
+      <ActiveTimersCard timers={relevantActiveTimers} onSelectMember={selectMember} />
       <Card className="shadow-card">
         <CardContent className="flex flex-wrap items-center justify-between gap-3 p-4">
           <div className="flex flex-wrap items-center gap-3">
@@ -981,6 +999,75 @@ function TeamEntriesTab() {
         </AlertDialogContent>
       </AlertDialog>
     </div>
+  );
+}
+
+/** How long a timer has to run before Manage > Entries flags it — matches the middle rung of the self-facing 4/8/12h warning in TimerBar. */
+const ACTIVE_TIMER_FLAG_HOURS = 8;
+
+/** M18: passive visibility into who currently has a timer running — not an action, just something a manager/admin can notice besides the forgetful person themselves. Renders nothing when there's nothing running. */
+function ActiveTimersCard({
+  timers,
+  onSelectMember,
+}: {
+  timers: ActiveTimer[];
+  onSelectMember: (userId: string) => void;
+}) {
+  const { memberById, projectById } = useWorkspace();
+
+  if (timers.length === 0) return null;
+
+  return (
+    <Card className="shadow-card">
+      <CardContent className="p-0">
+        <div className="border-b border-border px-6 py-3">
+          <h3 className="text-sm font-semibold">Active timers</h3>
+          <p className="text-xs text-muted-foreground">
+            Anyone on your teams with a timer currently running.
+          </p>
+        </div>
+        <ul className="divide-y divide-border">
+          {timers.map((t) => {
+            const member = memberById(t.userId);
+            const project = projectById(t.projectId);
+            const hoursRunning = (Date.now() - new Date(t.startTime).getTime()) / 3_600_000;
+            const flagged = hoursRunning >= ACTIVE_TIMER_FLAG_HOURS;
+            return (
+              <li key={t.entryId}>
+                <button
+                  type="button"
+                  className="flex w-full items-center justify-between gap-4 px-6 py-2.5 text-left hover:bg-muted/40"
+                  onClick={() => onSelectMember(t.userId)}
+                >
+                  <span className="flex min-w-0 items-center gap-3">
+                    <Avatar className="h-7 w-7 shrink-0">
+                      <AvatarFallback className="bg-secondary text-xs">
+                        {member?.initials ?? "—"}
+                      </AvatarFallback>
+                    </Avatar>
+                    <span className="min-w-0 truncate text-sm">
+                      <span className="font-medium">{member?.name ?? "Unknown"}</span>{" "}
+                      <span className="text-muted-foreground">
+                        · {project?.name ?? "No project"}
+                      </span>
+                    </span>
+                  </span>
+                  <span
+                    className={
+                      "flex shrink-0 items-center gap-1 text-xs tabular-nums " +
+                      (flagged ? "font-medium text-destructive" : "text-muted-foreground")
+                    }
+                  >
+                    {flagged && <AlertTriangle className="h-3.5 w-3.5" />}
+                    running {hoursRunning < 1 ? "<1h" : `${Math.floor(hoursRunning)}h`}
+                  </span>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      </CardContent>
+    </Card>
   );
 }
 

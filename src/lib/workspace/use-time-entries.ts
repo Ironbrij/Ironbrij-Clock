@@ -462,3 +462,54 @@ export function useMemberEntriesData(enabled: boolean, userId: string | null, we
 
   return { entriesQ, entries };
 }
+
+export type ActiveTimer = {
+  entryId: string;
+  userId: string;
+  projectId: string | null;
+  task: string;
+  description: string;
+  startTime: string;
+};
+
+/**
+ * M18: forgotten clock-outs previously had no server-side visibility at
+ * all — only a client-side setInterval warning the owner's own tab showed
+ * itself. This doesn't auto-stop anything (that's a real policy decision,
+ * not made here); it just gives a manager/admin passive visibility into
+ * every currently-running timer RLS lets them see (admin: everyone;
+ * manager: shared-team only), same as everywhere else in this app. Polls
+ * every minute so a manager who leaves this open actually notices a new
+ * or still-running timer without a manual refresh.
+ */
+export function useActiveTimersData(enabled: boolean) {
+  const activeTimersQ = useQuery({
+    queryKey: ["active_timers"],
+    enabled,
+    refetchInterval: enabled ? 60_000 : false,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("time_entries")
+        .select("id, user_id, project_id, task, description, start_time")
+        .is("end_time", null)
+        .order("start_time", { ascending: true });
+      if (error) throw error;
+      return data;
+    },
+  });
+
+  const activeTimers = useMemo<ActiveTimer[]>(
+    () =>
+      (activeTimersQ.data ?? []).map((e) => ({
+        entryId: e.id,
+        userId: e.user_id,
+        projectId: e.project_id,
+        task: e.task ?? "",
+        description: e.description,
+        startTime: e.start_time,
+      })),
+    [activeTimersQ.data],
+  );
+
+  return { activeTimersQ, activeTimers };
+}
