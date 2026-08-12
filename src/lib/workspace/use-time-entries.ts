@@ -264,21 +264,48 @@ export function useTimeEntriesData(
         patch.startTime !== undefined ||
         patch.endTime !== undefined
       ) {
-        const existing = entries.find((e) => e.id === entryId);
-        if (!existing) throw new Error("Entry not found.");
-        const date = patch.date ?? existing.date;
-        const existingStart = new Date(existing.startTime);
-        const existingEnd = existing.endTime ? new Date(existing.endTime) : existingStart;
+        // `entries` here is only ever the signed-in caller's own rows — for
+        // a self-edit that's the entry being edited, but for a manager/
+        // admin editing someone else's entry (Manage > Entries), it never
+        // is. Only look the entry up in `entries` when a gap actually needs
+        // filling from it; a caller (like EntryFormDialog) that already
+        // supplies date/startTime/endTime in full never needs that lookup,
+        // so it can't wrongly 404 on an entry that just isn't the caller's.
+        const needsExisting =
+          patch.date === undefined || patch.startTime === undefined || patch.endTime === undefined;
+        const existing = needsExisting ? entries.find((e) => e.id === entryId) : undefined;
+        if (needsExisting && !existing) throw new Error("Entry not found.");
+        // A running entry (no end_time) has no real "end" to fall back to —
+        // defaulting it to the start, as this used to, silently forced
+        // minutes to 0 and surfaced as the misleading "End time must be
+        // after start time." No UI reaches this today (edit is hidden while
+        // running), but the function is public, so guard it directly.
+        if (existing && !existing.endTime) {
+          throw new Error("Stop the timer before changing its date or time.");
+        }
+
         const pad = (n: number) => String(n).padStart(2, "0");
+        const existingStart = existing ? new Date(existing.startTime) : null;
+        const existingEnd = existing?.endTime ? new Date(existing.endTime) : null;
+        const date = patch.date ?? existing?.date;
         const startTime =
-          patch.startTime ?? `${pad(existingStart.getHours())}:${pad(existingStart.getMinutes())}`;
+          patch.startTime ??
+          (existingStart &&
+            `${pad(existingStart.getHours())}:${pad(existingStart.getMinutes())}`);
         const endTime =
-          patch.endTime ?? `${pad(existingEnd.getHours())}:${pad(existingEnd.getMinutes())}`;
+          patch.endTime ??
+          (existingEnd && `${pad(existingEnd.getHours())}:${pad(existingEnd.getMinutes())}`);
+        if (!date || !startTime || !endTime) throw new Error("Entry not found.");
+
         const start = combineDateAndTime(date, startTime);
         const end = combineDateAndTime(date, endTime);
         const minutes = Math.round((end.getTime() - start.getTime()) / 60000);
         if (minutes <= 0) throw new Error("End time must be after start time.");
-        if (overlapsExisting(entries, start, end, entryId)) {
+        // Only meaningful for the caller's own entry — for someone else's
+        // (existing is undefined in that case), `entries` can't answer
+        // "does this overlap," so this is skipped and the DB's EXCLUDE
+        // constraint (mapped to a friendly message below) is the real check.
+        if (existing && overlapsExisting(entries, start, end, entryId)) {
           throw new Error("That overlaps with another entry you already have on this day.");
         }
         dbPatch.entry_date = date;

@@ -363,6 +363,15 @@ function EntryList({ entries }: { entries: WorkspaceEntry[] }) {
       });
       return;
     }
+    // The project pickers elsewhere only ever offer active projects
+    // (`!p.archived`) — repeat used to skip that check entirely and hand
+    // startTimer an archived project id directly.
+    if (projectById(entry.projectId)?.archived) {
+      toast.error("Can't repeat this entry", {
+        description: "Its project has been archived — pick an active project instead.",
+      });
+      return;
+    }
     if (runningEntry) {
       toast.error("A timer is already running", {
         description: "Stop it first, then repeat this entry.",
