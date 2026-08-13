@@ -1,10 +1,19 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { ArrowRight, Users } from "lucide-react";
+import { useState } from "react";
+import { ArrowRight, Clock, Users, X } from "lucide-react";
 import { AppShell, ProjectDot } from "@/components/app-shell";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatHours, formatMinutes } from "@/lib/mock-data";
-import { addDays, formatDayLong, toDateKey, weekdayNames } from "@/lib/time-utils";
+import {
+  addDays,
+  formatDayLong,
+  formatWeekRange,
+  fromDateKey,
+  startOfWeek,
+  toDateKey,
+  weekdayNames,
+} from "@/lib/time-utils";
 import { useThisWeekStart, useWorkspace } from "@/lib/workspace-store";
 
 export const Route = createFileRoute("/")({
@@ -34,11 +43,35 @@ function greeting() {
 }
 
 function Dashboard() {
-  const { settings, currentUser, entries, projects, isAdmin, activeMembers } = useWorkspace();
+  const { settings, currentUser, entries, projects, isAdmin, activeMembers, timesheetForWeek } =
+    useWorkspace();
   const weekStart = useThisWeekStart();
   const dailyGoal = settings.weeklyHours / 5;
+  const [unsubmittedDismissed, setUnsubmittedDismissed] = useState(false);
 
   const pendingCount = isAdmin ? activeMembers.filter((m) => m.pending).length : 0;
+
+  // H19: nudges the person who actually needs to act — Manage > Approvals
+  // already shows a manager which of their team hasn't submitted this
+  // week, but nothing surfaced *past* weeks with logged-but-unsubmitted
+  // time to the employee themselves. A week with zero entries is never
+  // included: submit_timesheet() already rejects an empty week server-side
+  // (M22), so "has entries" alone is enough to exclude genuine time off
+  // without needing a real leave calendar.
+  const pastWeekKeys = Array.from(
+    new Set(
+      entries
+        .map((e) => toDateKey(startOfWeek(fromDateKey(e.date))))
+        .filter((key) => fromDateKey(key) < weekStart),
+    ),
+  );
+  const unsubmittedPastWeeks = pastWeekKeys
+    .map((key) => {
+      const start = fromDateKey(key);
+      return { weekStart: start, status: timesheetForWeek(start)?.status };
+    })
+    .filter((w) => w.status !== "Submitted" && w.status !== "Approved")
+    .sort((a, b) => b.weekStart.getTime() - a.weekStart.getTime());
 
   const todayKey = toDateKey(new Date());
   const todayEntries = entries.filter((e) => e.date === todayKey);
@@ -97,6 +130,43 @@ function Dashboard() {
             </div>
             <Button asChild size="sm" variant="outline">
               <Link to="/settings">Review</Link>
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+
+      {!unsubmittedDismissed && unsubmittedPastWeeks.length > 0 && (
+        <Card className="border-amber-500/30 bg-amber-50/50 shadow-card dark:bg-amber-950/20">
+          <CardContent className="flex items-center gap-4 p-4">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-amber-500/10">
+              <Clock className="h-5 w-5 text-amber-600 dark:text-amber-400" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-semibold">
+                {unsubmittedPastWeeks.length === 1
+                  ? "1 week is still waiting on you"
+                  : `${unsubmittedPastWeeks.length} weeks are still waiting on you`}
+              </p>
+              <p className="truncate text-xs text-muted-foreground">
+                {unsubmittedPastWeeks
+                  .map(
+                    (w) =>
+                      formatWeekRange(w.weekStart) + (w.status === "Rejected" ? " (sent back)" : ""),
+                  )
+                  .join(" · ")}
+              </p>
+            </div>
+            <Button asChild size="sm" variant="outline">
+              <Link to="/timesheet">Review</Link>
+            </Button>
+            <Button
+              size="icon"
+              variant="ghost"
+              className="h-8 w-8 shrink-0"
+              aria-label="Dismiss"
+              onClick={() => setUnsubmittedDismissed(true)}
+            >
+              <X className="h-4 w-4" />
             </Button>
           </CardContent>
         </Card>

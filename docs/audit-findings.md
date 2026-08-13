@@ -518,3 +518,236 @@ display it.
   role-based user management (invite/approve/remove, last-admin protection, self-role-change
   blocked), Reports summary views with CSV export, and Realtime sync across tabs/devices for every
   mutable table in the workspace.
+
+---
+
+## Smart Automation Audit
+
+Performed 2026-08-14 against the same surfaces as the parity pass (`src/routes/*`,
+`src/lib/workspace/*`, `src/components/entry-form-dialog.tsx`), asking a third question: not
+"is this correct" and not "is this complete relative to Clockify," but "what small, low-risk
+automation would make the daily grind of using this app — starting a timer, submitting a week,
+clearing an approvals queue — measurably faster." No code was changed. Numbering continues from
+the parity pass above; all findings start `⏳ Open`.
+
+**Ground rule applied throughout:** an automation only made this list if it saves real, repeated
+clicks/attention *and* is low-risk to get wrong. Anything that would need real AI, a background job
+scheduler, email infrastructure that doesn't exist yet, or guesses at things the app has no data to
+know for certain (who's on leave, whether a short entry was a mistake) either got downgraded in
+priority with the risk spelled out, or moved to the rejected list at the end.
+
+### 17. Recommendations
+
+**H19. ✅ Fixed.** No proactive reminder for unsubmitted past weeks. Nothing in the app told the
+person themselves "you have time logged in a past week that was never submitted." Manage →
+Approvals has `WeekStatusPanel` (`src/routes/manage.tsx`), but it's manager-facing, scoped to *this*
+week only, and requires a manager to go looking — there was no equivalent pull for an employee's own
+Dashboard, and no push at all. Fixed in `src/routes/index.tsx`: a dismissible amber Dashboard banner
+(same visual pattern as the existing "N people waiting for approval" one) listing every past week
+that has logged entries but isn't `Submitted`/`Approved` yet, distinguishing a `Rejected` week
+("sent back") from one that was simply never submitted, linking to `/timesheet` to act on it.
+- **Trigger:** Dashboard (`src/routes/index.tsx`) render, for the signed-in user.
+- **Logic:** every distinct past `weekStart` (before `useThisWeekStart()`) present in `entries` where
+  `timesheetForWeek(weekStart)?.status` is not `"Submitted"` or `"Approved"` — both values already
+  available from `useWorkspace()`, no new query. A week with zero entries never needs this (nothing
+  to submit), so the "has entries" condition already excludes genuine time off with no self-service
+  changes needed.
+- **Result:** a banner naming the week(s), e.g. "2 weeks are still waiting on you — week of Jul 28,
+  week of Aug 4," linking straight to that week on the Timesheet page.
+- **UX:** reuse the exact amber banner pattern already on the Dashboard for "N people waiting for
+  approval" (`index.tsx`, `pendingCount`) — same visual language, same place, costs almost nothing
+  to feel native.
+- **Edge cases:** a `Rejected` week already has its own distinct "sent back, resubmit" messaging on
+  the Timesheet page (`SubmissionPanel`) — worth a slightly different banner phrasing ("needs
+  fixing" vs. "never submitted") rather than lumping both under one word. A brand-new user with no
+  history shows nothing, correctly.
+- **Complexity:** Low — pure client-side computation over `entries`/`timesheets`, both already
+  loaded; no new query, no schema change.
+- **Risks:** Low. Purely informational, changes no state. Worth making it dismissible per-session
+  (not permanently silenced) so it doesn't turn into wallpaper for someone deliberately holding a
+  week open pending a correction.
+
+**M30. ⏳ Open. No "you haven't logged anything today" nudge.** Distinct from H19 (which is about
+already-logged time never submitted) — this is about a day going by with nothing tracked at all.
+- **Trigger:** it's a weekday, past some cutoff local to the person's own timezone (`profiles
+  .timezone`, already stored and shown in Settings → Profile), and today has zero entries.
+- **Logic:** `entries.filter(e => e.date === todayKey).length === 0`, gated on time-of-day computed
+  against the user's stored timezone rather than the browser's.
+- **Result:** a soft, dismissible line on the Dashboard — "Nothing logged today yet" — not a modal,
+  not a toast that interrupts anything.
+- **UX:** low-key by design; this is the one in the list most likely to be wrong some days, so it
+  should never feel like it's accusing anyone of slacking off.
+- **Edge cases:** this is the real caveat — weekends, public holidays, and approved leave all look
+  identical to "forgot to log time" from the app's point of view, because the Time Off page is still
+  mock data with no real calendar behind it (see the parity audit's M24). Without that, this either
+  false-positives on every non-working day, or has to be scoped so narrowly (e.g. only Mon–Fri,
+  only after the person's own history shows they normally log time by that hour) that it's only
+  marginally useful. Per-user timezones also mean "past 3pm" isn't one global cutoff.
+- **Complexity:** Low-Medium — the timezone-aware time check is the only fiddly part.
+- **Risks:** Medium — the main risk here is annoyance/false positives, not correctness or data
+  safety. Recommend shipping this only as an easily-dismissed, easy-to-permanently-turn-off nudge,
+  not something that reappears every day regardless of feedback — and holding off entirely until/
+  unless a real leave calendar exists (M24) to suppress it on days off.
+
+**M31. ⏳ Open. Approvals has no bulk action — every timesheet is approved or sent back one at a
+time.** `ApprovalsPanel` (`src/routes/manage.tsx`) already tracks per-row busy state independently
+(`busyIds`, a `Set` — see L26), so nothing stops two actions running concurrently, but there's no
+way to act on more than one row from a single click.
+- **Trigger:** a manager/admin on Manage → Approvals with several pending timesheets that all look
+  routine.
+- **Logic:** add row checkboxes and a "select all visible" control; "Approve selected" loops the
+  *existing* `reviewTimesheet(id, "Approved")` RPC per selected id — no new backend, since it's
+  already a single-timesheet-scoped call with self-review already blocked server-side. Each call
+  needs its own try/catch so one failure doesn't abort the rest of the batch.
+- **Result:** one confirmation dialog listing every person/week/hours about to be approved (not just
+  a count), then N approvals fire; a single summary toast reports success vs. any that failed.
+- **UX:** the per-row "expand to see entries" detail (`ApprovalEntries`) should stay available before
+  selecting — bulk should mean "skip the repetitive clicking after you've already looked," never
+  "skip looking."
+- **Edge cases:** a timesheet whose status changed underneath the batch (another manager on a shared
+  team approved it first, via Realtime) should skip cleanly with its own error, not fail the whole
+  batch. Same for anything that trips a server-side check (self-review, in the unlikely case a
+  manager's own row somehow got selected — it's already filtered out of `pendingApprovals`, but the
+  batch loop should still treat a rejection from the RPC as a per-item failure, not a crash).
+- **Complexity:** Medium — mostly UI (selection state, confirmation dialog listing every affected
+  row) plus a loop with per-item error handling; no migration.
+- **Risks:** Medium-High, and worth being explicit about: `review_timesheet()` has **no undo** —
+  M19 in the original audit added a confirmation dialog specifically because approving is
+  irreversible. A bulk "select all → approve" that's too easy to fire blindly cuts directly against
+  that existing safeguard. Don't build this as a one-click "approve all" — the confirmation must
+  name every person and week, not just say "12 timesheets," so a bulk click stays an informed
+  decision rather than a rubber stamp.
+
+**M32. ⏳ Open. The Task field's default doesn't use recency, even though Project's already does.**
+Both `TimerBar` (`time.tsx`) and `EntryFormDialog` already compute `orderByRecencyName(taskCategories,
+entries)` to build the dropdown's "Recent" group — but the *default* selection on open falls back to
+`taskCategories[0]` (first in creation/alphabetical order), not the most recently used one, even
+though `recentProjects[0]` is exactly what the *project* field's default already does. Small,
+concrete inconsistency: `time.tsx`'s two `useEffect`s (project vs. task default) literally use
+different logic for what should be the same behavior.
+- **Trigger:** opening TimerBar with no running entry, or opening the Add-entry dialog, for the
+  first time in a session.
+- **Logic:** change the task-default effect to `recentTasks[0]?.name ?? taskCategories[0]?.name ?? ""`
+  — the exact pattern the project field already uses one function away.
+- **Result:** one fewer click for the common case of mostly logging the same 1–2 task types.
+- **UX:** invisible when it works — it's just the right thing pre-selected instead of the first
+  alphabetical one.
+- **Edge cases:** a brand-new workspace/user with no entries yet falls back to `taskCategories[0]`,
+  identical to today's behavior. Someone who genuinely alternates tasks constantly gets no benefit,
+  but no harm either — it's still just a default, always changeable before starting.
+- **Complexity:** Very low — `recentTasks` already exists in both components; this changes which
+  array feeds one `useEffect`.
+- **Risks:** Negligible.
+
+**M33. ⏳ Open (expands on L30). "Copy previous day" — full breakdown.** The parity audit's L30
+already flagged the absence of a bulk-duplicate action; this pass adds the trigger/logic/edge-case
+detail that pass didn't go into, since "quick duplicate previous entry" was explicitly one of the
+categories asked about here.
+- **Trigger:** a "Copy yesterday" button on `ListView`'s "Today" card (`time.tsx`) — visible whenever
+  yesterday had entries and today doesn't already fully match them.
+- **Logic:** clone each of yesterday's entries onto today via the existing `createEntry` call per
+  entry (same function `repeatEntry`'s single-entry ↻ already uses), preserving project/task/
+  description/duration but re-dating to today.
+- **Result:** a full duplicate day-of-entries in one click, instead of recreating each one by hand or
+  using ↻ Repeat (which starts a *live timer*, not a completed duplicate entry) one at a time.
+- **UX:** should show what it's about to copy before committing (a short list, not a blind action),
+  and respect `settings.allowManualEntry` the same way the existing Add-entry button already hides
+  itself when manual entry is off.
+- **Edge cases:** the DB's overlap `EXCLUDE` constraint and `overlapsExisting` client check both
+  already guard against double-booking if today already has something in the same time slot —
+  copying should surface that per-entry, not fail the whole batch, same reasoning as M31's bulk
+  approve. A locked (submitted/approved) *today* should disable the button entirely, same as the
+  existing manual-entry gating.
+- **Complexity:** Low — no new mutation, just multiple calls to `createEntry`, which already exists.
+- **Risks:** Low. Worst case is a duplicate entry someone has to delete — already a one-click action
+  everywhere else in the app.
+
+**L33. ⏳ Open. No lightweight "last week" recap.** The Dashboard (`src/routes/index.tsx`) already
+computes `weekTotal`/`dayTotals`/`topProjects` for the *current* week — there's no equivalent
+glance-back at the week that just ended, which is exactly when someone's about to decide whether
+their timesheet looks right before submitting it.
+- **Trigger:** Dashboard render, Monday/Tuesday of a new week (i.e., last week has ended).
+- **Logic:** the same aggregation `Dashboard` already does, just pointed at `addDays(weekStart, -7)`
+  instead of `weekStart`, plus that week's `timesheetForWeek(...)?.status` for a one-word status.
+- **Result:** a small card — "Last week: 38.5h across 4 projects · Submitted" — no email, no new
+  infrastructure, purely a read of data already in context.
+- **UX:** informational only, easy to ignore, no action required.
+- **Edge cases:** first week of using the app has no "last week" — card simply doesn't render.
+- **Complexity:** Low.
+- **Risks:** Negligible.
+
+### 18. Considered and Rejected
+
+- **Auto-stop or auto-submit a timer/timesheet.** Already explicitly rejected in the original audit
+  (M18) for the same reason it stays rejected here: silently closing out a payroll-adjacent record
+  isn't a call any automation should make unprompted, no matter how "obviously forgotten" a
+  12-hour timer looks. The existing 4/8/12h warning + manager-facing Active Timers card is the right
+  amount of automation for this — visibility, not action.
+- **AI-suggested descriptions or auto-categorized tasks/projects based on time of day, past patterns,
+  etc.** Explicitly out of scope per this audit's own instructions, and also just not needed — the
+  existing recency-based "Recent" grouping already gets someone to their usual project/task in one
+  click without any inference involved.
+- **Idle/away detection with an auto-prompt.** Already rejected in the parity audit — needs a native
+  desktop agent a browser tab structurally can't provide; the running-timer warning already covers
+  the practical "did you forget this" case.
+- **Keyboard shortcuts to switch between recent projects/tasks (e.g., number keys).** Marginal value
+  for the added cognitive cost of memorizing bindings for an action (switching project) that's
+  already one click via the "Recent" dropdown group — not worth the complexity for how rarely it'd
+  actually save time over the mouse.
+- **Automatic anomaly flagging (unusually short/long entries, e.g. under 1 minute or over 12
+  hours).** The 12-hour case is already covered by the existing running-timer warning; a "this looks
+  like a mis-click" flag for short entries would need a tuned threshold with no real basis (a
+  genuine 30-second entry and a mis-click look identical to the app), and getting it wrong just adds
+  friction to something that was already correct. Not worth building on a guess.
+- **Recently-used projects/tasks surfaced when starting a timer.** Worth naming explicitly since it's
+  one of the categories this audit was asked to look for: this is **already implemented** —
+  `orderByRecency`/`orderByRecencyName` (`time-utils.ts`) already group both the TimerBar and
+  Add-entry dialog's project/task pickers into "Recent" vs. the rest, based on real entry history.
+  The only gap found in that area is M32 above (the task field's *default selection*, not the
+  dropdown grouping, doesn't use that same recency data yet).
+
+### 19. Already Automated — No Action Needed
+
+Cross-checking every category this audit was asked to look for, so the list above isn't mistaken
+for the full picture:
+
+- **Recently used projects** — done (`orderByRecency`, TimerBar + Add-entry dialog).
+- **Recently used tasks** — the dropdown grouping is done (`orderByRecencyName`); only the *default
+  selection* isn't (M32).
+- **Remembering previous selections** — effectively covered by the above: the project/task pickers
+  default to what was most recently used, recomputed from real entries rather than a separate
+  "remembered" setting that could drift from reality.
+- **Forgotten timer detection** — done: self-facing 4/8/12h toast warnings (`TimerBar`) plus a
+  manager/admin-facing Active Timers card flagging anything past 8h (`manage.tsx`).
+- **Missing clock-out detection** — same mechanism as above; deliberately visibility-only, not
+  auto-stop (see Rejected, above).
+- **Overlapping time warnings** — done at both layers: a client-side pre-check (`overlapsExisting`)
+  for an instant, friendly error, and a Postgres `EXCLUDE` constraint as the real backstop.
+- **Automatic duration calculation** — done: every entry's minutes are computed from start/end time,
+  never typed in directly, both for the live timer and manual entries.
+- **Automatic overtime calculation** — done: Reports' employee view computes overtime against the
+  workspace's weekly-hours target automatically, correctly excluding part-time staff (M15) rather
+  than guessing.
+
+### 20. Status Summary
+
+- **Highest-value, lowest-risk automation in this pass (H19):** a Dashboard banner for unsubmitted
+  past weeks. Pure client-side computation over data the app already has loaded, purely
+  informational, and closes a real gap — right now nothing tells the person who actually needs to
+  act (as opposed to their manager, who can already see this in Manage → Approvals) that a week is
+  sitting unsubmitted.
+- **Genuinely useful but needs care (M30, M31):** a "log time today" nudge is only as good as the
+  app's ability to tell a real day off from forgetfulness, which it currently can't (no real leave
+  calendar); bulk-approve is valuable for a manager clearing a routine queue but has to be built so
+  a bulk click stays as informed as today's one-at-a-time click, given approving is irreversible.
+- **Small, clearly worth doing (M32, M33, L33):** the task-field default is a one-line inconsistency
+  fix; copy-previous-day and a last-week recap are both low-complexity, low-risk, and reuse
+  functions/data that already exist.
+- **Explicitly rejected, and why:** auto-stop/auto-submit (payroll risk, already decided against),
+  AI-suggested content (out of scope, unnecessary given recency-sorting already works), idle
+  detection (needs infrastructure a browser can't provide), keyboard shortcuts for project-switching
+  (not enough time saved to justify), and anomaly-flagging short/long entries (no reliable basis to
+  flag on).
+- **Already automated, no new work needed:** recently-used projects, overlap detection, automatic
+  duration/overtime calculation, and forgotten-timer visibility are all already real, not mocked —
+  this pass's job was mostly finding the gaps *around* those, not rebuilding them.
