@@ -281,3 +281,240 @@ subscribed to once, from `use-members.ts`, rather than duplicated in `use-teams.
 **Total issues found this pass: 10** (0 Critical, 3 High, 4 Medium, 3 Low — plus the edge-case
 table above covering both new gaps and confirmed-fixed behavior). **All 10 findings from this pass
 (H13–H15, M20–M23, L25–L27) are now fixed.**
+
+---
+
+## Clockify Feature Parity Audit
+
+Performed 2026-08-14 against the same surfaces as prior passes (`src/routes/*`,
+`src/lib/workspace/*`, `src/components/entry-form-dialog.tsx`, `supabase/migrations/*`), this time
+asking a different question: not "is this correct," but "is this enough for Ironbrij to
+comfortably stop using Clockify." No code was changed — this is a feature-inventory pass, not a
+bug hunt. Numbering continues from the QA audit above; all findings start `⏳ Open`.
+
+**Method:** read every route (`index`, `time`, `timesheet`, `projects`, `teams`, `manage`,
+`reports`, `settings`, `time-off`) and every `workspace/use-*` hook end to end, then compared what
+exists against Clockify's core feature set — Time Tracking, Timesheets, Projects, Tasks,
+Attendance, Breaks, Reports, Teams, User management, Approvals — filtering out anything that's
+billing/SaaS/enterprise/integration-shaped and therefore out of scope for an internal tool.
+
+### Framing
+
+The prior audits already established that time tracking, timesheets, and approvals are the
+strongest part of this app — timer + manual entry, midnight-splitting, overlap/locking
+enforcement, submit → review → approve/reject, and an activity log are all real, defense-in-depth
+implementations, not prototypes. This pass found no new correctness bugs in that core. What's
+below is genuinely about **feature completeness relative to Clockify**, not robustness.
+
+One piece of context that shapes several calls below: this account has Xero MCP tools configured,
+which means Ironbrij already runs its accounting/invoicing through Xero. That's treated as a hard
+constraint on scope, not a coincidence — see the "Unnecessary" section.
+
+### 12. Must-Have Gaps
+
+**H16. ⏳ Open. No entry-level ("Detailed") time report.** Reports (`src/routes/reports.tsx`) only
+ever offers two *aggregated* views — hours-by-project and hours-by-employee, both pre-summed by
+`project_hours_range`/`employee_hours_range` RPCs — with CSV export of those summary rows. There is
+no view anywhere in the app that lists individual time entries across people/projects/date ranges
+with filters, the way Clockify's Detailed report does. Manage → Entries (`TeamEntriesTab`) and the
+Approvals expand-row (`ApprovalEntries`) both show entry-level detail, but only one person/week at
+a time — neither is a searchable, exportable, cross-team report.
+**Why it matters:** a digital agency billing clients by the hour needs entry-level backup (what was
+worked on, by whom, when, described how) to justify an invoice or answer a client's "what did we
+pay for" question — a project total alone doesn't support that. This is the single biggest
+functional gap relative to Clockify's reporting.
+**Recommended behavior:** a third Reports tab — "Detailed" — listing raw entries (date, person,
+project, task, description, duration, billable) for the selected range/team/client filters already
+on the page, with the same CSV export pattern (`downloadCsv`) the other two tabs use.
+**Priority:** High. **Complexity:** Medium — mostly UI; the data (`time_entries`) and filters
+already exist, this is a new query + table, not new policy work.
+
+**H17. ⏳ Open. No cost/billing ($) report.** `member_employment.hourly_rate` (Schedule tab,
+`manage.tsx`), `projects.is_billable`, and `clients.subscription_hours` all already exist and are
+each shown in isolation (Schedule tab, project badges, Client profile dialog) — but nothing
+multiplies hours × rate, or rolls billable hours up by client into a dollar figure. Reports shows
+hours, never money.
+**Why it matters:** Ironbrij is a staffing/VA agency — "how many billable hours did we log for
+Client X this month, and what's that worth" is a core operational question, and the underlying data
+is already captured. Given the Xero integration noted above, this doesn't need to become an
+invoicing feature (see H18/Unnecessary) — it needs to produce a number someone can hand to Xero or
+a client, not generate the invoice itself.
+**Recommended behavior:** extend the Reports "By employee" and/or a new "By client" view with a
+$-amount column (billable hours × that person's `hourly_rate`, workspace `currency`), and surface
+subscription-hours remaining (already computed per-client in `ClientProfileDialog`) as a report
+filter/column rather than something only visible one client at a time.
+**Priority:** High. **Complexity:** Medium — new RPC(s) to join `time_entries` with
+`member_employment` and `projects.is_billable`, respecting the same RLS scoping
+`employee_hours_range` already does.
+
+**H18. ⏳ Open. No path to bring historical Clockify data across.** There's no CSV/API import
+anywhere in the app — every time entry starts empty at rollout.
+**Why it matters:** "stop using Clockify" implies Ironbrij's historical hours (for reports,
+client history, payroll reference) either migrate or are lost. This blocks the actual cutover more
+than any in-app feature gap does.
+**Recommended behavior:** doesn't need to be a permanent UI feature — a one-time admin-run import
+script (Clockify's own CSV export → `time_entries` rows, mapped by email/project name) is enough,
+run once during cutover and then deleted. Flagging it here so it's a deliberate decision, not a
+surprise on migration day.
+**Priority:** High (blocks cutover). **Complexity:** Low, as a one-off script — avoid building a
+permanent importer UI for a need that only exists once.
+
+### 13. Useful Improvements
+
+**M24. ⏳ Open. Time off / leave page is entirely mock data.** `src/routes/time-off.tsx` renders
+`timeOffBalances`/`timeOffHistory` from `@/lib/mock-data`, with an honest banner ("this page shows
+sample data") and a disabled "Request time off" button — same honesty pattern the original audit's
+L21 applied. It's still zero real functionality: no balances table, no request/approve workflow, no
+tie-in to the timesheet.
+**Why it matters:** Clockify's leave tracking is a real feature Ironbrij may currently rely on; if
+so this is a gap, not a nice-to-have. If Ironbrij doesn't actually use Clockify for leave today,
+this page is pure clutter pointing at nothing.
+**Recommended behavior:** a product decision, not an engineering one — either build a minimal real
+version (a `time_off_balances`/`time_off_requests` table, request → manager approve, mirroring the
+timesheet approval pattern already proven out) or remove the nav entry entirely. Leaving it
+half-real (styled, honest, but non-functional) is the worst of both options long-term.
+**Priority:** Medium. **Complexity:** Medium-High if built for real (new tables, RLS, balance
+accrual rules); Low if the decision is to remove it.
+
+**M25. ⏳ Open. Task categories are a flat, workspace-wide list — not scoped to a project.**
+`task_categories` (Settings → Admin → Task categories, `use-task-categories.ts`) is a single global
+list every project shares; `WorkspaceEntry.task` is a free-text label with no `task_id`, estimate,
+assignee, or completion state. Clockify's Tasks live *inside* a Project, each with their own
+estimate/assignee/status, and a time entry links to a specific task within its project.
+**Why it matters:** if Ironbrij's 13 teams work across many client projects with genuinely
+different task breakdowns per project (not just "Design / Dev / QA" shared workspace-wide), the
+current model can't express that — every project offers the identical task list.
+**Recommended behavior:** only worth doing if task lists actually differ meaningfully by project
+today in Clockify — worth confirming with the team before building. If so: a `project_task_categories`
+join (or per-project override list) rather than a global table.
+**Priority:** Medium — contingent on confirming the need first. **Complexity:** Medium.
+
+**M26. ⏳ Open. A time entry's billable status can't be overridden per entry.** `is_billable` is
+set once, at insert time, from the project's `is_billable` flag (`use-time-entries.ts`:
+`is_billable: project?.billable ?? true`) and is never editable afterward in
+`EntryFormDialog`/`updateEntry`. Clockify lets any entry be flagged billable/non-billable
+independent of its project's default.
+**Why it matters:** a billable project still has genuinely non-billable moments (internal syncs,
+rework, training) that currently can't be excluded from that project's billable total without
+moving them to a different (non-billable) project, which pollutes project-level reporting.
+**Recommended behavior:** add a billable toggle to `EntryFormDialog`, defaulting to the project's
+setting but overridable per entry; `updateEntry`/`createEntry` already accept a patch object, so
+this is additive.
+**Priority:** Medium. **Complexity:** Low — one new column is already present (`is_billable` sits
+on `time_entries` already), this is UI + wiring, not schema work.
+
+**M27. ⏳ Open. No project-level budget or estimated-hours tracking.** Clients already have this
+(`subscription_hours` + rendered-hours-remaining math in `ClientProfileDialog`,
+`src/routes/projects.tsx`), but individual projects don't — a project has no estimate to compare
+logged hours against, no progress bar, no "over budget" signal anywhere `projects.tsx` or
+`reports.tsx` renders.
+**Why it matters:** for fixed-scope or capped-hours project work (as opposed to open retainers,
+which the client-level subscription hours already cover), knowing you're approaching or over budget
+*before* the invoice is the main reason Clockify's budget feature gets used day to day.
+**Recommended behavior:** an optional `budget_hours` (or `budget_amount`) column on `projects`,
+surfaced the same way client subscription hours already are — a remaining/over indicator on the
+project card and in Reports.
+**Priority:** Medium. **Complexity:** Medium.
+
+**M28. ⏳ Open. Reports has no billable vs. non-billable breakdown.** The Dashboard computes a
+personal "billable share" percentage (`src/routes/index.tsx`), but Reports — the actual
+cross-team, exportable view — never splits hours by billable status at all, on either the project
+or employee tab.
+**Why it matters:** billable/non-billable is one of the first things anyone reviewing agency
+utilization looks for; right now getting that number for anyone but yourself requires no tool at
+all in this app.
+**Recommended behavior:** an extra column (or stacked-bar split) on both Reports tabs using the
+`is_billable` flag already on every entry/project.
+**Priority:** Medium. **Complexity:** Low.
+
+**M29. ⏳ Open. Notifications tab is entirely non-functional.** Every switch in Settings →
+Notifications (`src/routes/settings.tsx`) is `disabled`, backed by a hardcoded local array, with an
+explicit "Coming soon — these preferences aren't saved yet" disclaimer. Nothing in the app sends an
+email/push notification for anything — a submitted timesheet, an approval, a long-running timer —
+today; awareness relies entirely on someone opening Manage → Approvals or Manage → Entries and
+looking.
+**Why it matters:** the two entries that would matter most operationally are "a timesheet is
+waiting on your review" (closes the loop on Approvals without a manager needing to remember to
+check) and the existing "timer still running" warning (already implemented as an in-tab toast in
+`TimerBar` — just never leaves the browser tab that started it).
+**Recommended behavior:** doesn't need all five listed preferences — start with real delivery
+(email, via Supabase's own auth/email infra or a lightweight edge function) for just "timesheet
+submitted for your review" and drop the rest of the mocked list until there's a real transport to
+back them.
+**Priority:** Medium. **Complexity:** Medium — needs an actual email-sending path, which doesn't
+exist anywhere in this codebase yet.
+
+### 14. Lower-Priority / Polish
+
+**L30. ⏳ Open. No "copy previous day" or duplicate-entry shortcut.** Repeating a whole day's set of
+entries (common for people whose Tuesday looks like their Monday) currently means re-creating each
+entry by hand or using the single-entry ↻ Repeat action (`EntryList` in `time.tsx`) one at a time.
+**Recommended behavior:** a "Copy yesterday" action on `ListView` that clones the prior day's
+entries onto today via `createEntry`, same pattern `repeatEntry` already uses per-entry.
+**Priority:** Low. **Complexity:** Low.
+
+**L31. ⏳ Open. Avatar upload is still a disabled placeholder.** `ProfileTab`
+(`src/routes/settings.tsx`) shows "Change avatar" disabled with a "coming soon" title — unchanged
+since the original audit's L21 pass made the *messaging* honest without building the feature.
+**Priority:** Low. **Complexity:** Low (file upload to Supabase Storage + `avatar_url` column,
+which already exists on `profiles`).
+
+**L32. ⏳ Open. Weekly schedule is a free-text note, not structured data.** `member_employment
+.weekly_schedule` (Manage → Schedule tab) is a single text field ("e.g. Mon–Fri, 9am–5pm") with no
+per-day start/end times — fine for display, but nothing can compute against it (e.g., "is this
+person rostered right now").
+**Priority:** Low. **Complexity:** Low-Medium if structured (per-weekday start/end columns) — not
+worth it unless something downstream actually needs to compute against a schedule rather than just
+display it.
+
+### 15. Unnecessary — Considered and Rejected
+
+- **In-app Invoices / Expenses** (both currently "coming soon" placeholder tabs in
+  Manage — `src/routes/manage.tsx`, `sections` array). Ironbrij already has Xero configured for
+  accounting; duplicating invoicing/expense tracking inside IronTrack would compete with, not
+  complement, that. The useful subset of "invoices" — a billable-hours-to-dollars figure per client
+  — is covered by H17 above without building an invoicing system.
+- **Kiosks** (shared PIN clock-in terminals, also a "coming soon" placeholder tab). This is a
+  feature for on-site/retail staff clocking in on a shared device; Ironbrij is a VA/staffing agency
+  with remote staff, each already signing in individually. No fit.
+- **Idle-time / away detection.** Clockify's desktop app detects OS-level idle time and prompts
+  "were you away?" — this requires a native/desktop agent process a browser tab structurally can't
+  provide. The existing 4/8/12h "still running" toast (`TimerBar`, `time.tsx`) already covers the
+  practical case (forgotten timers) this would address.
+- **Time rounding / minimum-increment rules.** A real Clockify feature (round entries to nearest 15
+  min, etc.) aimed at reducing invoice disputes at scale — unnecessary complexity for an internal
+  tool where the underlying entries are the source of truth, not a customer-facing rounded number.
+- **A discrete "Break" control.** Clockify offers an explicit pause/break button within a shift.
+  This app's model — stop the timer, start a new one later — already expresses a break as the gap
+  between two entries with no extra UI needed; adding a dedicated break concept wouldn't change
+  what gets recorded, just how it's clicked.
+- **Recommendation, not just rejection:** given three of Manage's seven tabs (Expenses, Kiosks,
+  Invoices) are permanent "coming soon" placeholders with no build plan, consider removing them
+  from the nav rather than leaving dead tabs that promise functionality the team has decided not to
+  build — this is the "should be simplified" call-out for this audit. `sections` in `manage.tsx` is
+  a single array; deleting three entries is the entire change.
+
+### 16. Status Summary
+
+- **Must-have gaps (H16–H18):** an entry-level Detailed report for client billing backup, a
+  cost/billing ($) report joining hours to `hourly_rate`, and a one-time historical-data import path
+  from Clockify. None of these are correctness bugs — the underlying data (`time_entries`,
+  `hourly_rate`, `is_billable`) already exists; what's missing is a way to see it rolled up.
+- **Useful improvements (M24–M29):** real (or removed) time-off tracking, project-scoped tasks,
+  per-entry billable override, project-level budgets, a billable/non-billable Reports split, and
+  real (if minimal) notification delivery starting with "timesheet awaiting your review."
+- **Lower-priority polish (L30–L32):** copy-previous-day, avatar upload, structured weekly
+  schedules — all small, none blocking.
+- **Unnecessary, explicitly rejected:** in-app invoicing/expenses (Xero already covers this),
+  on-site kiosk clock-in (no on-site staff), idle/away detection (needs a desktop agent), time
+  rounding rules, and a dedicated break control (already implicit in stop/start) — plus a
+  recommendation to remove the three permanently-placeholder Manage tabs (Expenses, Kiosks,
+  Invoices) rather than leave them promising unbuilt functionality.
+- **Features already covered, at or above Clockify parity for an internal tool this size:** live
+  timer + manual entry with midnight-splitting, overlap/locked-week enforcement at both the client
+  and RLS layer, weekly timesheet grid/list with submit → review → approve/reject and a visible
+  audit trail (`entries_modified_at`, Activity tab), projects/clients/tags with archiving and
+  client-level subscription-hours tracking, teams with rostering and bulk invite, three-tier
+  role-based user management (invite/approve/remove, last-admin protection, self-role-change
+  blocked), Reports summary views with CSV export, and Realtime sync across tabs/devices for every
+  mutable table in the workspace.
