@@ -562,6 +562,54 @@ export function useWorkspaceClients() {
   }, [projects]);
 }
 
+export type ClientBudgetStatus = {
+  clientId: string;
+  subscriptionHours: number;
+  renderedHours: number;
+  remainingHours: number;
+  /** Every subscription hour has already been used (or exceeded). */
+  isOver: boolean;
+  /** Not over yet, but within CLIENT_BUDGET_WARNING_THRESHOLD of the cap — a heads-up before it actually runs out. */
+  isNearLimit: boolean;
+};
+
+const CLIENT_BUDGET_WARNING_THRESHOLD = 0.9;
+
+/**
+ * Budget status for every client that has a subscription-hours cap set,
+ * keyed by client id — clients with no cap (subscriptionHours === null)
+ * are simply absent from the map, so `.get(id)` returning undefined means
+ * "no budget to track," not "fully used." `renderedHours` sums the same
+ * per-project `hours` (from project_hours()) that Projects > Clients and
+ * the Client profile dialog already display, joined by clientId rather
+ * than by name for correctness — clients.name happens to be unique too,
+ * but id is the actual relationship every project already carries.
+ */
+export function useClientBudgets() {
+  const { clients, projects } = useWorkspace();
+  return useMemo(() => {
+    const map = new Map<string, ClientBudgetStatus>();
+    for (const c of clients) {
+      if (c.subscriptionHours == null) continue;
+      const renderedHours = projects
+        .filter((p) => p.clientId === c.id)
+        .reduce((sum, p) => sum + p.hours, 0);
+      const remainingHours = c.subscriptionHours - renderedHours;
+      map.set(c.id, {
+        clientId: c.id,
+        subscriptionHours: c.subscriptionHours,
+        renderedHours,
+        remainingHours,
+        isOver: remainingHours <= 0,
+        isNearLimit:
+          remainingHours > 0 &&
+          renderedHours >= c.subscriptionHours * CLIENT_BUDGET_WARNING_THRESHOLD,
+      });
+    }
+    return map;
+  }, [clients, projects]);
+}
+
 /** Hours per project per weekday for the given week, from the signed-in person's entries. */
 export function useWeekGrid(weekStart: Date) {
   const { entries } = useWorkspace();

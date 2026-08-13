@@ -53,7 +53,12 @@ import {
   toDateKey,
   weekdayNames,
 } from "@/lib/time-utils";
-import { useThisWeekStart, useWorkspace, type WorkspaceEntry } from "@/lib/workspace-store";
+import {
+  useClientBudgets,
+  useThisWeekStart,
+  useWorkspace,
+  type WorkspaceEntry,
+} from "@/lib/workspace-store";
 
 export const Route = createFileRoute("/time")({
   head: () => ({
@@ -112,6 +117,7 @@ function TimePage() {
 function TimerBar() {
   const { projects, entries, runningEntry, startTimer, stopTimer, settings, taskCategories } =
     useWorkspace();
+  const clientBudgets = useClientBudgets();
   const active = projects.filter((p) => !p.archived);
   const { recent: recentProjects, rest: otherProjects } = orderByRecency(active, entries);
   const { recent: recentTasks, rest: otherTasks } = orderByRecencyName(taskCategories, entries);
@@ -178,6 +184,19 @@ function TimerBar() {
         }
         await startTimer({ projectId: project, task, description });
         toast.success("Timer running", { description: "We'll keep counting until you stop." });
+        // Non-blocking heads-up, not an enforcement rule — someone can
+        // still track time against an over-budget client (that's a real
+        // business decision, not something a timer button should decide),
+        // this just makes sure it isn't invisible while it's happening.
+        const startedProject = projects.find((p) => p.id === project);
+        const budget = startedProject?.clientId
+          ? clientBudgets.get(startedProject.clientId)
+          : undefined;
+        if (budget?.isOver) {
+          toast.warning(`${startedProject!.client} has used all their subscription hours`, {
+            description: `${formatHours(budget.renderedHours)} logged against a ${formatHours(budget.subscriptionHours)} allowance.`,
+          });
+        }
       }
     } catch (error) {
       toast.error("Timer failed", { description: (error as Error).message });
@@ -192,6 +211,8 @@ function TimerBar() {
     startTimer,
     stopTimer,
     settings.requireDescriptions,
+    projects,
+    clientBudgets,
   ]);
 
   // Space bar starts/stops the timer — as long as focus isn't in a text

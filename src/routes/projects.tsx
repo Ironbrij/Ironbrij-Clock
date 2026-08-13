@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import {
+  AlertTriangle,
   Archive,
   ArchiveRestore,
   Eye,
@@ -61,6 +62,7 @@ import { formatDayLong, fromDateKey } from "@/lib/time-utils";
 import {
   dotColors,
   NO_CLIENT,
+  useClientBudgets,
   useWorkspace,
   useWorkspaceClients,
   useWorkspaceTags,
@@ -115,6 +117,7 @@ function ProjectsPage() {
     [allProjects, canManage],
   );
   const clientGroups = useWorkspaceClients();
+  const clientBudgets = useClientBudgets();
   const tags = useWorkspaceTags();
   const clientNames = useMemo(() => {
     const names = realClients.map((c) => c.name).filter((n) => n !== NO_CLIENT);
@@ -160,6 +163,7 @@ function ProjectsPage() {
 
       {tab === "clients" && (
         <ClientsTab
+          clientBudgets={clientBudgets}
           clients={realClients.map((rc) => {
             const group = clientGroups.find((g) => g.name === rc.name);
             return {
@@ -196,6 +200,7 @@ function ProjectsPage() {
           {projects.map((p) => {
             const team = teams.find((t) => t.id === p.teamId);
             const projectTags = tags.filter((t) => p.tagIds.includes(t.id));
+            const budget = p.clientId ? clientBudgets.get(p.clientId) : undefined;
             return (
               <Card
                 key={p.id}
@@ -253,6 +258,15 @@ function ProjectsPage() {
                     {p.archived && (
                       <Badge variant="outline" className="text-[10px]">
                         Archived
+                      </Badge>
+                    )}
+                    {budget?.isOver && (
+                      <Badge
+                        variant="destructive"
+                        className="gap-1 text-[10px]"
+                        title={`${p.client} has used all ${formatHours(budget.subscriptionHours)} of their subscription hours`}
+                      >
+                        <AlertTriangle className="h-3 w-3" /> Client over budget
                       </Badge>
                     )}
                   </div>
@@ -606,6 +620,7 @@ const CLIENTS_PAGE_SIZE = 10;
 
 function ClientsTab({
   clients,
+  clientBudgets,
   createClient,
   updateClient,
   setClientActive,
@@ -624,6 +639,7 @@ function ClientsTab({
     projects: WorkspaceProject[];
     hours: number;
   }[];
+  clientBudgets: ReturnType<typeof useClientBudgets>;
   createClient: (name: string) => Promise<void>;
   updateClient: (id: string, name: string) => Promise<void>;
   setClientActive: (id: string, active: boolean) => Promise<void>;
@@ -804,6 +820,27 @@ function ClientsTab({
                           Inactive
                         </Badge>
                       )}
+                      {(() => {
+                        const budget = clientBudgets.get(c.id);
+                        if (budget?.isOver) {
+                          return (
+                            <Badge variant="destructive" className="shrink-0 gap-1">
+                              <AlertTriangle className="h-3 w-3" /> Over budget
+                            </Badge>
+                          );
+                        }
+                        if (budget?.isNearLimit) {
+                          return (
+                            <Badge
+                              variant="outline"
+                              className="shrink-0 gap-1 border-amber-500/40 text-amber-600 dark:text-amber-400"
+                            >
+                              <AlertTriangle className="h-3 w-3" /> Low hours
+                            </Badge>
+                          );
+                        }
+                        return null;
+                      })()}
                     </div>
                     {c.projects.length > 0 && (
                       <div className="mt-1.5 flex flex-wrap gap-1.5">
