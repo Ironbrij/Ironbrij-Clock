@@ -31,7 +31,8 @@ import {
   orderByRecencyName,
   toDateKey,
 } from "@/lib/time-utils";
-import { useWorkspace, type WorkspaceEntry } from "@/lib/workspace-store";
+import { formatHours } from "@/lib/mock-data";
+import { useClientBudgets, useWorkspace, type WorkspaceEntry } from "@/lib/workspace-store";
 
 const pad = (n: number) => n.toString().padStart(2, "0");
 
@@ -85,6 +86,7 @@ export function EntryFormDialog({
   entry: WorkspaceEntry | null;
 }) {
   const { projects, entries, createEntry, updateEntry, settings, taskCategories } = useWorkspace();
+  const clientBudgets = useClientBudgets();
   const active = projects.filter((p) => !p.archived);
   const { recent: recentProjects, rest: otherProjects } = orderByRecency(active, entries);
   const { recent: recentTasks, rest: otherTasks } = orderByRecencyName(taskCategories, entries);
@@ -133,6 +135,16 @@ export function EntryFormDialog({
       } else {
         await createEntry({ ...values, endDate: endsNextDay ? endDate : undefined });
         toast.success("Entry added", { description: "Logged to your timesheet." });
+      }
+      // Non-blocking heads-up, same as TimerBar's — the entry is already
+      // saved either way, this just surfaces that its client has no
+      // subscription hours left instead of that being invisible.
+      const savedProject = projects.find((p) => p.id === values.projectId);
+      const budget = savedProject?.clientId ? clientBudgets.get(savedProject.clientId) : undefined;
+      if (budget?.isOver) {
+        toast.warning(`${savedProject!.client} has used all their subscription hours`, {
+          description: `${formatHours(budget.renderedHours)} logged against a ${formatHours(budget.subscriptionHours)} allowance.`,
+        });
       }
       onOpenChange(false);
     } catch (error) {
