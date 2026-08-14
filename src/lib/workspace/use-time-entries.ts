@@ -93,7 +93,14 @@ export function useTimeEntriesData(
         )
         .eq("user_id", uid!)
         .gte("entry_date", toDateKey(from))
-        .order("start_time", { ascending: false });
+        .order("start_time", { ascending: false })
+        // Final Product Review H25: without an explicit limit this relied on
+        // PostgREST's own default row cap (commonly 1000) to stop the query,
+        // silently truncating a heavy user's oldest history with no error —
+        // the same failure shape H10 already fixed once for a hardcoded
+        // 60-day window. 5000 rows covers ENTRIES_HISTORY_DAYS (400 days) at
+        // ~12 entries/day, well past realistic usage.
+        .limit(5000);
       if (error) throw error;
       return data;
     },
