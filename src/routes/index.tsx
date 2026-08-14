@@ -1,6 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useState } from "react";
-import { ArrowRight, Clock, Info, Users, X } from "lucide-react";
+import { ArrowRight, CheckCheck, Clock, Info, Users, X } from "lucide-react";
 import { AppShell, ProjectDot } from "@/components/app-shell";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -66,14 +66,27 @@ function nowInTimezone(timezone: string) {
 }
 
 function Dashboard() {
-  const { settings, currentUser, entries, projects, isAdmin, activeMembers, timesheetForWeek } =
-    useWorkspace();
+  const {
+    settings,
+    currentUser,
+    entries,
+    projects,
+    isAdmin,
+    activeMembers,
+    timesheetForWeek,
+    canManage,
+    pendingApprovals,
+  } = useWorkspace();
   const weekStart = useThisWeekStart();
   const dailyGoal = settings.weeklyHours / 5;
   const [unsubmittedDismissed, setUnsubmittedDismissed] = useState(false);
   const [weekNudgeDismissed, setWeekNudgeDismissed] = useState(false);
 
   const pendingCount = isAdmin ? activeMembers.filter((m) => m.pending).length : 0;
+  // H22: same shape as the pending-signups banner below, for the other
+  // "waiting on a manager/admin" queue — pendingApprovals is already
+  // RLS-scoped to what this viewer can review.
+  const pendingApprovalCount = canManage ? pendingApprovals.length : 0;
 
   // H19: nudges the person who actually needs to act — Manage > Approvals
   // already shows a manager which of their team hasn't submitted this
@@ -171,6 +184,30 @@ function Dashboard() {
         </Button>
       }
     >
+      {pendingApprovalCount > 0 && (
+        <Card className="border-amber-500/30 bg-amber-50/50 shadow-card dark:bg-amber-950/20">
+          <CardContent className="flex items-center gap-4 p-4">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-amber-500/10">
+              <CheckCheck className="h-5 w-5 text-amber-600 dark:text-amber-400" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-semibold">
+                {pendingApprovalCount} {pendingApprovalCount === 1 ? "timesheet" : "timesheets"}{" "}
+                waiting on your review
+              </p>
+              <p className="text-xs text-muted-foreground">
+                Submitted and ready for approval — nothing else needed from the employee.
+              </p>
+            </div>
+            <Button asChild size="sm" variant="outline">
+              <Link to="/manage" search={{ tab: "approvals" }}>
+                Review
+              </Link>
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+
       {pendingCount > 0 && (
         <Card className="border-amber-500/30 bg-amber-50/50 shadow-card dark:bg-amber-950/20">
           <CardContent className="flex items-center gap-4 p-4">
@@ -208,7 +245,8 @@ function Dashboard() {
                 {unsubmittedPastWeeks
                   .map(
                     (w) =>
-                      formatWeekRange(w.weekStart) + (w.status === "Rejected" ? " (sent back)" : ""),
+                      formatWeekRange(w.weekStart) +
+                      (w.status === "Rejected" ? " (sent back)" : ""),
                   )
                   .join(" · ")}
               </p>

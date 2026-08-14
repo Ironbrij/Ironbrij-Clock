@@ -25,6 +25,10 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { MultiSelectList } from "@/components/multi-select-list";
+import {
+  filterMembersBySearchAndTeam,
+  MemberSearchFilter,
+} from "@/components/member-search-filter";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   Select,
@@ -258,6 +262,8 @@ function UsersTab() {
     });
   const [membersPage, setMembersPage] = useState(1);
   const MEMBERS_PAGE_SIZE = 10;
+  const [memberSearch, setMemberSearch] = useState("");
+  const [memberTeamFilter, setMemberTeamFilter] = useState("all");
   const [removeTarget, setRemoveTarget] = useState<{
     id: string;
     name: string;
@@ -269,12 +275,26 @@ function UsersTab() {
 
   const pendingMembers = activeMembers.filter((m) => m.pending);
   const approvedMembers = activeMembers.filter((m) => !m.pending);
-  const membersTotalPages = Math.max(1, Math.ceil(approvedMembers.length / MEMBERS_PAGE_SIZE));
+  // M39: filtered ahead of pagination, so a search match on page 2 doesn't
+  // require flipping through pages to find it first.
+  const filteredApprovedMembers = filterMembersBySearchAndTeam(
+    approvedMembers,
+    memberSearch,
+    memberTeamFilter,
+  );
+  const membersTotalPages = Math.max(
+    1,
+    Math.ceil(filteredApprovedMembers.length / MEMBERS_PAGE_SIZE),
+  );
   const membersCurrentPage = Math.min(membersPage, membersTotalPages);
-  const pagedApprovedMembers = approvedMembers.slice(
+  const pagedApprovedMembers = filteredApprovedMembers.slice(
     (membersCurrentPage - 1) * MEMBERS_PAGE_SIZE,
     membersCurrentPage * MEMBERS_PAGE_SIZE,
   );
+
+  useEffect(() => {
+    setMembersPage(1);
+  }, [memberSearch, memberTeamFilter]);
 
   const teamName = (teamId: string) => teams.find((t) => t.id === teamId)?.name ?? "No team";
 
@@ -521,64 +541,85 @@ function UsersTab() {
               No approved members yet.
             </p>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm text-left">
-                <thead className="border-b text-xs uppercase text-muted-foreground">
-                  <tr>
-                    <th className="px-3 py-2">Name</th>
-                    <th className="px-3 py-2">Email</th>
-                    <th className="px-3 py-2">Role</th>
-                    <th className="px-3 py-2">Team</th>
-                    <th className="px-3 py-2 text-right">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y">
-                  {pagedApprovedMembers.map((m) => (
-                    <tr key={m.id} className="hover:bg-accent/40 transition-colors">
-                      <td className="px-3 py-2.5 font-medium flex items-center gap-2">
-                        <Avatar className="h-7 w-7 shrink-0">
-                          <AvatarFallback className="bg-secondary text-xs">
-                            {m.initials}
-                          </AvatarFallback>
-                        </Avatar>
-                        {m.name}
-                      </td>
-                      <td className="px-3 py-2.5 text-muted-foreground">{m.email ?? "—"}</td>
-                      <td className="px-3 py-2.5">
-                        <RoleCell m={m} />
-                      </td>
-                      <td className="px-3 py-2.5">
-                        <TeamCell m={m} />
-                      </td>
-                      <td className="px-3 py-2.5 text-right">
-                        {m.id !== currentUser.id && (
-                          <Button
-                            size="icon"
-                            variant="ghost"
-                            aria-label={`Remove ${m.name}`}
-                            onClick={() =>
-                              setRemoveTarget({
-                                id: m.id,
-                                name: m.name,
-                                role: m.role,
-                                pending: false,
-                              })
-                            }
-                          >
-                            <Trash2 className="h-4 w-4 text-destructive" />
-                          </Button>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <>
+              {approvedMembers.length > 8 && (
+                <MemberSearchFilter
+                  search={memberSearch}
+                  onSearchChange={setMemberSearch}
+                  teamFilter={memberTeamFilter}
+                  onTeamFilterChange={setMemberTeamFilter}
+                  teams={teams}
+                  className="mb-4"
+                />
+              )}
+              {filteredApprovedMembers.length === 0 ? (
+                <p className="py-8 text-center text-sm text-muted-foreground">
+                  No one matches that search.
+                </p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm text-left">
+                    <thead className="border-b text-xs uppercase text-muted-foreground">
+                      <tr>
+                        <th className="px-3 py-2">Name</th>
+                        <th className="px-3 py-2">Email</th>
+                        <th className="px-3 py-2">Role</th>
+                        <th className="px-3 py-2">Team</th>
+                        <th className="px-3 py-2 text-right">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y">
+                      {pagedApprovedMembers.map((m) => (
+                        <tr key={m.id} className="hover:bg-accent/40 transition-colors">
+                          <td className="px-3 py-2.5 font-medium flex items-center gap-2">
+                            <Avatar className="h-7 w-7 shrink-0">
+                              <AvatarFallback className="bg-secondary text-xs">
+                                {m.initials}
+                              </AvatarFallback>
+                            </Avatar>
+                            {m.name}
+                          </td>
+                          <td className="px-3 py-2.5 text-muted-foreground">{m.email ?? "—"}</td>
+                          <td className="px-3 py-2.5">
+                            <RoleCell m={m} />
+                          </td>
+                          <td className="px-3 py-2.5">
+                            <TeamCell m={m} />
+                          </td>
+                          <td className="px-3 py-2.5 text-right">
+                            {m.id !== currentUser.id && (
+                              <Button
+                                size="icon"
+                                variant="ghost"
+                                aria-label={`Remove ${m.name}`}
+                                onClick={() =>
+                                  setRemoveTarget({
+                                    id: m.id,
+                                    name: m.name,
+                                    role: m.role,
+                                    pending: false,
+                                  })
+                                }
+                              >
+                                <Trash2 className="h-4 w-4 text-destructive" />
+                              </Button>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </>
           )}
-          {approvedMembers.length > 0 && (
+          {filteredApprovedMembers.length > 0 && (
             <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
               <p className="text-sm text-muted-foreground">
-                {approvedMembers.length} {approvedMembers.length === 1 ? "member" : "members"}
+                {filteredApprovedMembers.length}{" "}
+                {filteredApprovedMembers.length === 1 ? "member" : "members"}
+                {filteredApprovedMembers.length !== approvedMembers.length &&
+                  ` of ${approvedMembers.length}`}
                 {membersTotalPages > 1 && ` · page ${membersCurrentPage} of ${membersTotalPages}`}
               </p>
               {membersTotalPages > 1 && (
