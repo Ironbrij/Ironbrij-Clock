@@ -1,0 +1,23 @@
+-- Database & Data Integrity Audit, C7 (docs/audit-findings.md): any admin
+-- could issue a direct DELETE on profiles (supabase.from("profiles").delete()
+-- from the browser, or any future code path), which cascades away that
+-- person's time_entries and timesheets — INCLUDING approved/locked ones,
+-- since cascade deletes are enforced by Postgres directly and never go
+-- through time_entries'/timesheets' own RLS policies, so week_is_locked()'s
+-- admin-only-override protection on approved weeks is simply never
+-- consulted — plus team_members, project_members, and member_employment.
+-- This directly contradicts what Settings > Users' own remove-member dialog
+-- promises ("Their past time entries, timesheets, and reports stay exactly
+-- as they are; nothing historical is deleted") — a promise the app's actual
+-- removeUserAccess() flow (admin.functions.ts) already keeps, by
+-- soft-deactivating via is_active = false and only ever deleting the
+-- auth.users row and team_members rows. That function runs as service_role
+-- (GRANT ALL ... TO service_role on every table already covers it, and is
+-- untouched by this migration), so it needs nothing from this grant/policy
+-- — nothing in the app's own UI uses this DELETE path today. Removing the
+-- capability entirely is the fix, not trying to safely constrain it: RLS
+-- has no way to require a "type the name to confirm" step the way
+-- Projects' own delete flow already does for a far less consequential
+-- table.
+DROP POLICY IF EXISTS "profiles_delete_admin" ON public.profiles;
+REVOKE DELETE ON public.profiles FROM authenticated;

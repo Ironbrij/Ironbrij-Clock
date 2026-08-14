@@ -780,3 +780,364 @@ for the full picture:
 - **Already automated, no new work needed:** recently-used projects, overlap detection, automatic
   duration/overtime calculation, and forgotten-timer visibility are all already real, not mocked —
   this pass's job was mostly finding the gaps *around* those, not rebuilding them.
+
+---
+
+## Database & Data Integrity Audit
+
+Performed 2026-08-14 against the full `supabase/migrations/*` history (all 35 files, in
+chronological order, read in full — not sampled) plus the client code paths that write to these
+tables: `src/lib/workspace/use-time-entries.ts`, `use-timesheets.ts`, `use-tags.ts`,
+`use-members.ts`, and `src/lib/admin.functions.ts`. **No schema was created or modified during this
+pass** — every finding below is a recommendation, not a change.
+
+This is a different lens than the three passes above: not "does the workflow make sense" (the
+first audit), not "is it feature-complete against Clockify" (the parity audit), not "what's
+repetitive" (the automation audit) — specifically, "if a client bug, a direct API call, a race
+between two sessions, or a raw SQL statement bypassed the UI entirely, what could go silently
+wrong with the actual data." Numbering continues from the passes above; new findings start
+`⏳ Open`.
+
+### 21. Schema Overview (for reference)
+
+Core tables and their write paths, as actually implemented (not as documented elsewhere) — this is
+the map the findings below refer back to:
+
+| Table | Owner FK | Delete behavior | Write path |
+|---|---|---|---|
+| `profiles` | — (PK, no FK to `auth.users`) | `profiles_delete_admin` RLS policy + direct `GRANT DELETE` to `authenticated` | Direct table access (RLS-gated); role changes only via `set_member_role()` |
+| `time_entries` | `user_id → profiles(id) ON DELETE CASCADE` | cascades from profile deletion | Direct table access (RLS-gated: self/admin/manager-shares-team, `week_is_locked()`, `description_required()`, `manual_entry_allowed()`) |
+| `timesheets` | `user_id → profiles(id) ON DELETE CASCADE`, `reviewed_by → profiles(id)` **(no `ON DELETE` clause — defaults to `NO ACTION`)** | cascades from profile deletion; blocked if `reviewed_by` points at the profile being deleted | No direct INSERT/UPDATE/DELETE grant — only via `submit_timesheet()` / `review_timesheet()` |
+| `team_members`, `project_members` | `user_id → profiles(id) ON DELETE CASCADE` | cascades from profile deletion | Direct table access (`can_manage()`-gated); logged via `log_team_membership_change()` trigger (team_members only) |
+| `member_employment` | `user_id → profiles(id) ON DELETE CASCADE` | cascades from profile deletion | Direct table access, admin/manager-only |
+| `activity_log` | `actor_id`/`target_user_id → profiles(id) ON DELETE SET NULL` | survives profile deletion (nulled) | Append-only via `SECURITY DEFINER` functions/triggers — no grant to `authenticated` at all |
+
+### 22. Critical Integrity Issues
+
+**C6. ✅ Fixed.**
+- **Database object:** `time_entries.duration_minutes` (`integer`, nullable; introduced in
+  `20260804000910_5a7605fb-...sql`).
+- **Problem:** `duration_minutes` has no server-side relationship to `start_time`/`end_time` at
+  all — no `CHECK` constraint, no trigger, no generated-column derivation. It is a plain
+  client-supplied integer.
+- **Current behavior:** every write path (`startTimer`/`stopTimer`/`createEntry`/`updateEntry` in
+  `use-time-entries.ts`) computes `duration_minutes` in JavaScript
+  (`Math.round((end.getTime() - start.getTime()) / 60000)`) and sends it as a separate field
+  alongside `start_time`/`end_time` — the database never recomputes or verifies it. Every one of
+  this app's own server-side business-rule backstops (`week_is_locked()`, `description_required()`,
+  `manual_entry_allowed()`, the `time_entries_not_far_future` and
+  `member_employment_hourly_rate_check` CHECKs, the no-overlap `EXCLUDE` constraint) has exactly
+  this shape — a client-side check *and* a database one — except this single field, which is the
+  one every hours-based feature in the app actually sums.
+- **Impact:** a client bug, a browser extension, or literally opening devtools and editing the
+  network request before it's sent can record `duration_minutes = 480` for a 5-minute span (or
+  a negative number, or `NULL` on a completed entry, silently contributing zero). That fabricated
+  number flows unverified into `project_hours()`, `project_hours_range()`, `employee_hours_range()`,
+  `employee_client_hours_range()` — i.e., Reports, overtime calculations (`weeklyHours` comparison),
+  and the client subscription-hours budget tracking just added — with nothing anywhere ever
+  cross-checking it against the timestamps that supposedly produced it. For a payroll-adjacent,
+  client-billing-adjacent system, this is the single most consequential value in the schema, and
+  it's the one exception to this codebase's otherwise consistent "client check + DB backstop"
+  discipline.
+- **Severity:** Critical.
+- **Recommended solution:** a `CHECK` constraint can't reference `end_time - start_time` in minutes
+  cleanly across a nullable `end_time` (a running entry has no duration yet), so the right shape is
+  either (a) a `CHECK (end_time IS NULL OR duration_minutes = CEIL(EXTRACT(EPOCH FROM (end_time -
+  start_time)) / 60))` if exact-match is desired (risk: any legitimate rounding difference between
+  the client's `Math.round` and Postgres's arithmetic would then hard-reject good writes — needs
+  testing against the actual client rounding before adopting), or (b) a looser sanity bound (e.g.
+  `duration_minutes >= 0 AND duration_minutes <= EXTRACT(EPOCH FROM (end_time - start_time)) / 60 +
+  1` allowing a minute of slack) plus a `BEFORE INSERT OR UPDATE` trigger that recomputes
+  `duration_minutes` from the timestamps server-side rather than trusting the client value at all —
+  the latter is more robust and removes an entire class of drift rather than just bounding it.
+  Either way, this needs the same "check existing data for violations first" caution as the
+  overlap/one-running-timer migrations already document.
+
+Fixed in `supabase/migrations/20260814010000_time_entries_server_side_duration.sql`, via the
+recompute-via-trigger option rather than a hard exact-match `CHECK` (the safer of the two, per the
+reasoning above — it can never reject an existing row). A new `BEFORE INSERT OR UPDATE` trigger,
+`compute_time_entry_duration()`, now derives `duration_minutes` from `start_time`/`end_time`
+server-side on every write — `NULL` while `end_time IS NULL` (still running), otherwise
+`GREATEST(1, ROUND(EXTRACT(EPOCH FROM (end_time - start_time)) / 60))`, mirroring the client's own
+`Math.max(1, minutes)` floor exactly. Whatever `duration_minutes` a client (or a direct API call)
+sends is now simply overwritten with the server-computed value — the drift this finding described
+is no longer possible, not just bounded. A `time_entries_duration_non_negative` CHECK
+(`duration_minutes IS NULL OR duration_minutes >= 0`) was added alongside it as a defense-in-depth
+backstop, safe to add with no data check needed since every existing row already satisfies it.
+
+**C7. ✅ Fixed.**
+- **Database object:** `public.profiles` — the `GRANT ... DELETE ON public.profiles TO
+  authenticated` and `profiles_delete_admin` RLS policy (both from
+  `20260804000910_5a7605fb-...sql`, never revisited since).
+- **Problem:** any admin can issue a direct `DELETE FROM profiles WHERE id = ...` (e.g.
+  `supabase.from("profiles").delete().eq("id", x)` from the browser console, or any future code
+  path that doesn't know better) — nothing in the app's own UI does this today, but RLS explicitly
+  permits it.
+- **Current behavior:** `time_entries.user_id`, `timesheets.user_id`, `team_members.user_id`,
+  `project_members.user_id`, and `member_employment.user_id` are all `REFERENCES
+  profiles(id) ON DELETE CASCADE`. Deleting a `profiles` row therefore permanently deletes every
+  time entry, timesheet (including **approved, locked** ones — cascade deletes are enforced by
+  Postgres directly and do not go through `time_entries`'/`timesheets`' own RLS policies, so
+  `week_is_locked()`'s admin-only-override-on-approved-weeks protection is simply bypassed, not
+  overridden), team membership, project assignment, and employment/rate record that person ever
+  had. This directly contradicts what Settings → Users' own remove-member dialog tells an admin:
+  *"Their past time entries, timesheets, and reports stay exactly as they are; nothing historical
+  is deleted."* That promise is kept by the app's actual "remove user" flow
+  (`removeUserAccess` in `admin.functions.ts`, which deliberately soft-deactivates via
+  `is_active = false` and only ever deletes the `auth.users` row and `team_members` rows — its own
+  comment explains this exact reasoning) — but the schema itself doesn't enforce or require that
+  safer path; it just happens to be the only one the UI currently uses. One partial, accidental
+  mitigation: `timesheets.reviewed_by → profiles(id)` has **no `ON DELETE` clause** (defaults to
+  `NO ACTION`), so deleting a profile that has ever reviewed *someone else's* timesheet fails
+  outright with a raw foreign-key-violation error instead of succeeding — but this only protects
+  managers/admins who've reviewed at least once, not the plain Members who make up most of a
+  workforce and whose time-tracking history is exactly what this app exists to protect. There is
+  also no trigger logging a `profiles` deletion to `activity_log` itself — the only trace left
+  behind is a flood of `time_entry_edited`/`time_entry_deleted` rows from the existing
+  `log_time_entry_edit_by_other` trigger (which does fire per-row during the cascade, since triggers
+  — unlike RLS — do run for cascade-induced deletes), with no single record of the deletion event
+  or the fact a `timesheets` row (which has no such trigger at all) ever existed.
+- **Impact:** irreversible, un-confirmed (no "type the name to confirm" gate the way Projects'
+  delete already has), essentially un-audited destruction of exactly the kind of record — logged
+  hours, approved timesheets — this application's entire purpose is to preserve, reachable by
+  anyone holding the admin role with a single API call that the schema itself invites rather than
+  merely fails to prevent.
+- **Severity:** Critical.
+- **Recommended solution:** revoke the `DELETE` grant on `public.profiles` from `authenticated`
+  (or drop `profiles_delete_admin` and don't replace it) — the app already has a working, safer
+  path (`is_active = false` via `removeUserAccess`) that achieves everything the UI needs without
+  this blast radius, so removing the capability rather than trying to safely constrain it (e.g.
+  with a confirmation requirement that RLS can't express anyway) is the lower-risk fix. If there's
+  ever a real "purge this person's data" requirement (e.g. a legal deletion request), that should
+  be its own explicit, logged, `SECURITY DEFINER` function — the same pattern every other
+  irreversible action in this schema already follows — not a bare table grant.
+
+Fixed in `supabase/migrations/20260814000000_revoke_profiles_delete.sql`, exactly as
+recommended: `profiles_delete_admin` is dropped and `DELETE` is revoked from `authenticated`
+entirely. `service_role` (which `removeUserAccess()` in `admin.functions.ts` actually runs as) is
+untouched — it already had `GRANT ALL` and needs nothing from this grant, so the app's real
+remove-user flow is unaffected. There is no longer any path, through the app or through a direct
+API call by an authenticated user, to delete a `profiles` row and cascade away someone's
+`time_entries`/`timesheets`/`team_members`/`project_members`/`member_employment`.
+
+### 23. High-Priority Issues
+
+**H20. ⏳ Open.**
+- **Database object:** `public.submit_timesheet(_week_start date)`
+  (originally `20260804110000_timesheet_approvals.sql`, most recently redefined in
+  `20260812070000_require_entries_to_submit.sql`).
+- **Problem:** the function's own "don't lock a week with a timer still running in it" check
+  (`_has_running`) and the subsequent `INSERT ... ON CONFLICT DO UPDATE` that actually submits
+  (and, since `20260811040000_lock_on_submit.sql`, locks) the week are two separate statements
+  with no explicit locking between them.
+- **Current behavior:** under Postgres's default `READ COMMITTED` isolation, each statement inside
+  the function sees a fresh snapshot — there is no `SELECT ... FOR UPDATE`, advisory lock, or
+  `SERIALIZABLE` transaction wrapping the check-then-act sequence. A `startTimer` INSERT from a
+  second tab/device for the same user can commit in the narrow window between this function's
+  `_has_running` check returning false and its own `INSERT INTO timesheets` committing.
+- **Impact:** this reintroduces, via a race rather than a missing check, precisely the bug
+  `20260811040000_lock_on_submit.sql` was written to close ("locking on submit creates a trap... you
+  can't submit a week with a timer still going," per that migration's own comment) — a running
+  timer ends up trapped inside a week that's now locked (`week_is_locked()` treats `'submitted'` the
+  same as `'approved'`), and `stopTimer`'s own `UPDATE ... WHERE id = entryId` would then silently
+  affect zero rows (the established "locked week silently excludes the row from RLS's `USING`
+  clause" behavior this codebase already works around elsewhere via `.select("id")` + a length
+  check) — surfacing to the person as their stop-timer call failing with the generic locked-week
+  message, with no obvious path to resolve it themselves.
+- **Severity:** High — narrow window (requires near-simultaneous action from the same person across
+  two sessions), but the failure mode is exactly the one this schema already went out of its way to
+  prevent, and the person affected has no self-service recovery.
+- **Recommended solution:** wrap the check-and-submit sequence in `submit_timesheet()` with
+  `PERFORM 1 FROM time_entries WHERE user_id = auth.uid() AND entry_date >= _week_start AND
+  entry_date < _week_start + 7 FOR UPDATE` (row-locking the candidate entries for the duration of
+  the function) so a concurrent `startTimer` INSERT either commits first (and gets caught by the
+  existence check) or blocks until this transaction finishes — or equivalently, take a
+  transaction-scoped `pg_advisory_xact_lock(hashtext(auth.uid()::text))` at the top of the function
+  to fully serialize a single user's own submit/start-timer operations against each other.
+
+**H21. ⏳ Open.**
+- **Database object:** no single database object — this is about the *absence* of one: `stopTimer`'s
+  multi-day split (`use-time-entries.ts`) is implemented as two separate, sequential client-side
+  Supabase calls (`INSERT` of later-day segments, then `UPDATE` of the original row) with no
+  wrapping transaction or `SECURITY DEFINER` RPC tying them together.
+- **Problem:** the split isn't atomic. The code comment in `use-time-entries.ts` already
+  acknowledges the ordering was chosen deliberately ("insert later-day segments *before* touching
+  the original row" so a failure leaves the original "still running and visible, not silently
+  missing time") — which correctly protects against losing the *original* row, but doesn't protect
+  against losing the *later* segments.
+- **Current behavior:** if a shift spans three days and the insert for day 2 succeeds but the
+  insert for day 3 fails (or the browser tab closes, or the network drops) partway through the
+  `for (const seg of laterSegments)` loop, `stopTimer` throws — but whatever segments already
+  committed stay committed (each `insert()` is its own independent statement, not part of one
+  transaction), and the function never reaches the final `UPDATE` on the original row, which is
+  left permanently `running`. The person sees a thrown error and (per the existing code) the
+  original entry is still shown as running — so the immediate symptom is visible, not silent.
+  The more concerning direction: if all the later-day inserts succeed but the final `UPDATE` on the
+  original row fails (e.g. a network drop after the inserts but before the update reaches the
+  server, or the tab closing in that gap), the later days are correctly recorded **but the original
+  entry keeps running indefinitely** with no automatic reconciliation — and because
+  `time_entries_one_running_per_user` then blocks a fresh timer start, the person is stuck until
+  they notice and manually stop or edit the stale entry.
+- **Impact:** a partial multi-day split can leave the data in a state no single existing safeguard
+  fully detects — not silent data corruption (the "stuck running" case is at least visible on the
+  Time page), but a real risk of a multi-day shift ending up split across two inconsistent states
+  with no automated recovery path, for exactly the "working across midnight" scenario this schema
+  already put real effort into handling correctly (H8 in the original audit).
+- **Severity:** High — data-loss risk is bounded (nothing is silently double-counted or
+  silently dropped without *some* visible symptom), but the recovery burden falls entirely on the
+  affected person noticing and fixing it by hand.
+- **Recommended solution:** move the whole split-and-close operation into a single `SECURITY
+  DEFINER` RPC (mirroring the shape `submit_timesheet`/`review_timesheet` already use) that inserts
+  every segment and updates the original row inside one Postgres transaction — either all of it
+  commits, or none of it does, and the client goes back to a single round trip instead of an
+  N+1 sequence it can't make atomic on its own.
+
+### 24. Medium-Priority Issues
+
+**M34. ⏳ Open.**
+- **Database object:** `timesheets.week_start` (date, `20260804110000_timesheet_approvals.sql`) and
+  `submit_timesheet(_week_start date)`.
+- **Problem:** nothing constrains `week_start` to actually be a Monday — the app's own notion of
+  "week" (`startOfWeek()` in `time-utils.ts`, used everywhere the UI computes a week boundary).
+  `submit_timesheet()` uses whatever date it's given verbatim, with no `date_trunc('week', ...)`
+  normalization or `CHECK` constraint.
+- **Current behavior:** every UI call path always passes an already-Monday-aligned date, so this
+  never happens through normal use. A direct RPC call
+  (`supabase.rpc("submit_timesheet", { _week_start: "2026-08-13" })`, a Wednesday) would create a
+  `timesheets` row keyed to that arbitrary date, and `week_is_locked()`'s `_entry_date >= week_start
+  AND _entry_date < week_start + 7` arithmetic would then lock a 7-day window that doesn't align
+  with any Monday-start week the Timesheet/Grid/Reports UI ever renders — straddling parts of two
+  different UI-displayed weeks.
+- **Impact:** low likelihood (requires bypassing the UI entirely), but if it happened, the
+  resulting confusion would be hard to diagnose — entries would appear locked or unlocked in a
+  pattern that doesn't match any week boundary a manager or the affected person can see on screen.
+- **Severity:** Medium.
+- **Recommended solution:** either a `CHECK (extract(dow from week_start) = 1)` constraint on
+  `timesheets` (Postgres `dow` numbering: Monday = 1), or normalize inside `submit_timesheet()`
+  itself via `_week_start := date_trunc('week', _week_start)::date` before using it — the latter is
+  more forgiving (silently corrects rather than rejects) and matches how the rest of this schema
+  prefers to guide behavior over hard-failing where it reasonably can.
+
+**M35. ⏳ Open.**
+- **Database object:** `time_entries.tag_ids` (`uuid[]`, `20260804000910_5a7605fb-...sql`).
+- **Problem:** `tag_ids` is a plain array column, not a real relationship — Postgres can't put a
+  foreign key on individual array elements, so nothing enforces that every UUID inside it still
+  refers to an existing `tags` row.
+- **Current behavior:** `deleteTag` (`use-tags.ts`) only ever runs `DELETE FROM tags WHERE id =
+  id` — confirmed by reading the function directly. `project_tags` cleans up correctly via its own
+  `ON DELETE CASCADE`, but `time_entries.tag_ids` is never touched. Every historical entry that
+  carried the deleted tag keeps that now-dangling UUID in its array, permanently.
+- **Impact:** not user-visible today — `tag_usage()` joins `FROM tags`, so a dangling id simply
+  never shows up anywhere and doesn't corrupt any displayed count — but it's a slow, permanent
+  accumulation of orphaned data with no cleanup mechanism and no admin tooling that can even see it
+  to clean it up, since every UI path to tags goes through the current `tags` table, never the raw
+  array contents.
+- **Severity:** Medium (data cleanliness / technical debt, not a correctness-of-output bug today).
+- **Recommended solution:** either accept this as a permanent, harmless artifact (arrays of a
+  handful of short UUIDs per row cost very little), or have `deleteTag` remove the id from every
+  entry's `tag_ids` first — `UPDATE time_entries SET tag_ids = array_remove(tag_ids, _tag_id)
+  WHERE _tag_id = ANY(tag_ids)` — wrapped into the same `SECURITY DEFINER` treatment as the tag
+  delete itself, so it's atomic with the `tags` row deletion rather than a second client-side call
+  that could itself fail independently.
+
+**M36. ⏳ Open.**
+- **Database object:** `time_entries.entry_date` (date) vs. `time_entries.start_time` (timestamptz),
+  both `20260804000910_5a7605fb-...sql`.
+- **Problem:** nothing in the database enforces that `entry_date` actually corresponds to the local
+  calendar day `start_time` falls on. They're independently supplied, independently trusted values.
+- **Current behavior:** the client always computes `entry_date` from `start_time` using
+  `toDateKey()` (local time, per the browser), consistently — but "local" here depends on
+  `profiles.timezone`, a mutable setting a person can change in Settings → Profile at any time.
+  Every server-side business rule that reasons about "which week is this entry in" —
+  `week_is_locked()`, `submit_timesheet()`'s entry/running-timer existence checks,
+  `flag_approved_week_modified()`, and every Reports RPC — filters by `entry_date` directly, never
+  by `start_time` interpreted through a timezone. There's no CHECK relating the two, and no
+  mechanism reconciling `entry_date` on old rows if someone's `timezone` changes after those
+  entries were created.
+- **Impact:** low-frequency but real for a distributed VA-staffing team spanning multiple
+  timezones (`Australia/Sydney`, `Asia/Manila`, etc. are literally in the app's own `timezones`
+  list) — a genuinely mistimed or malformed `entry_date` (from a client bug, a direct API call, or
+  just a person changing their timezone setting after logging time near a day boundary) has no
+  database-level way to be caught, and would silently affect which week an entry counts toward for
+  locking/submission/reporting purposes without matching what `start_time` would actually imply.
+- **Severity:** Medium.
+- **Recommended solution:** a `CHECK` constraint can't easily express "matches this person's
+  timezone" (that requires a join, which CHECK constraints can't do). The more tractable fix is a
+  `BEFORE INSERT OR UPDATE` trigger that derives `entry_date` server-side from `start_time` plus a
+  timezone looked up from `profiles` at write time (`(start_time AT TIME ZONE (SELECT timezone FROM
+  profiles WHERE id = NEW.user_id))::date`), rather than trusting the client-supplied value —
+  removing the possibility of drift entirely instead of trying to detect it after the fact.
+
+### 25. Low-Priority Issues
+
+**L34. ⏳ Open.**
+- **Database object:** `public.profiles` — specifically the client-side bootstrap insert in
+  `use-members.ts` that creates a person's own profile row on first sign-in (`supabase.from
+  ("profiles").insert({ id: uid, ... })`), not a schema object itself.
+- **Problem:** that insert has no `.catch()` — it's a bare `.then(() => qc.invalidateQueries(...))`
+  with no error handler.
+- **Current behavior:** under normal conditions this succeeds and is idempotent-by-construction
+  (guarded by `profilesQ.data.some((p) => p.id === uid)` first). But if it fails — a transient
+  network error, or a genuine race between two tabs open simultaneously on a brand-new account's
+  very first load both attempting the insert (the second would hit `profiles`' own primary key and
+  fail with a `23505` unique violation, which is actually the *correct*, safe outcome for the
+  table, but the promise rejection from it is silently swallowed) — nothing surfaces that failure
+  to the person. They're left on whatever loading/empty state renders for "no profile exists yet,"
+  indistinguishable from the app still loading, with no retry affordance.
+  This is exactly the class of gap H13 in the original QA audit fixed everywhere else in this app
+  (a global `QueryCache({ onError })` toast plus a core-shell loading/error gate) — this one
+  specific mutation predates that fix and wasn't swept up by it, since it isn't a `useQuery`.
+- **Impact:** low frequency (only matters on a brand-new account's very first load), not a data
+  integrity issue in itself (the PK correctly prevents a duplicate profile), but a real "silently
+  stuck new user with no error and no recourse" gap.
+- **Severity:** Low.
+- **Recommended solution:** add a `.catch()` that surfaces a toast (the same `sonner` pattern used
+  everywhere else in this codebase) — no schema change needed, this is a client-code gap that
+  happens to matter for data-flow completeness around user creation, which is why it's included
+  here rather than in the automation/parity passes above.
+
+### 26. Migration Considerations
+
+The two Critical findings (C6, C7) were applied as new, additive migrations on 2026-08-14, in the
+order originally recommended:
+
+1. **C7 (revoke `profiles` DELETE)** — applied first as planned: the lowest-risk, highest-value fix,
+   a pure `REVOKE`/`DROP POLICY` that removes a capability nothing in the app used, and can't break
+   any existing working flow (`removeUserAccess` runs as `service_role`, untouched by this grant).
+2. **C6 (`duration_minutes`)** — applied via the recompute-via-trigger option specifically because
+   it needed the same "don't risk rejecting existing data" discipline every prior constraint
+   migration in this schema documents (`time_entries_one_running_per_user`,
+   `time_entries_no_overlap`); a trigger that always derives the correct value, rather than a hard
+   `CHECK` that could reject a legitimate historical row over an off-by-one-minute rounding
+   difference, was chosen for exactly that reason.
+
+These were written as new migration files (`20260814000000_revoke_profiles_delete.sql`,
+`20260814010000_time_entries_server_side_duration.sql`) rather than applied directly against the
+live project — this environment has no linked Supabase CLI session or service-role credential to
+run them with, consistent with how every other migration in this repo's history was authored (as a
+file, applied through whatever pipeline actually deploys this project). They still need to actually
+reach the database before either fix takes effect.
+
+The remaining findings (H20, H21, M34–M36, L34) are still open recommendations only — not applied.
+If picked up later, in rough dependency/risk order:
+
+1. **H20/H21** are both about tightening existing `SECURITY DEFINER` functions/client flows, not
+   new constraints — no data-backfill risk, just logic changes, but each needs its own testing
+   against concurrent-session scenarios that are inherently awkward to write integration tests for.
+2. **M34/M36** are both "normalize or derive server-side instead of trusting the client" fixes in
+   the same spirit as C6 — worth bundling with that kind of work rather than doing separately,
+   since they touch the same `entry_date`/`week_start` surface.
+3. **M35/L34** are independent, low-risk, and can be picked up any time without coordination.
+
+### Files/migrations inspected this pass
+
+All 35 files under `supabase/migrations/` in chronological order, read in full:
+`20260804000910_5a7605fb-...` and `20260804000949_22c80da0-...` (base schema) through
+`20260812090000_enable_realtime_workspace_tables.sql` (most recent) — including the timesheet
+state machine (`20260804110000`, `20260811040000`, `20260812070000`, `20260812080000`), every
+`time_entries` RLS iteration (`20260804000910` → `20260812060000`), the overlap/one-timer
+constraints (`20260811020000`, `20260811030000`), and the self-review/last-admin/is_active guards
+(`20260805080000`, `20260811000000`, `20260811010000`, `20260812060000`). Also read in full:
+`src/lib/workspace/use-time-entries.ts`, `use-timesheets.ts`, `use-tags.ts`, `use-members.ts`, and
+`src/lib/admin.functions.ts`, to confirm actual client write behavior against what the schema
+permits, rather than assuming from the migrations alone.
