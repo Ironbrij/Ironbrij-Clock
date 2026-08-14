@@ -90,7 +90,8 @@ export function EntryFormDialog({
   const active = projects.filter((p) => !p.archived);
   const { recent: recentProjects, rest: otherProjects } = orderByRecency(active, entries);
   const { recent: recentTasks, rest: otherTasks } = orderByRecencyName(taskCategories, entries);
-  const defaultTask = taskCategories[0]?.name ?? "";
+  // M32: matches the project field's default (most recently used first).
+  const defaultTask = recentTasks[0]?.name ?? taskCategories[0]?.name ?? "";
   const [values, setValues] = useState<EntryFormValues>(() => toFormValues(entry, defaultTask));
   const [busy, setBusy] = useState(false);
   // M21: only meaningful for "add" (entry === null) — a stored entry never

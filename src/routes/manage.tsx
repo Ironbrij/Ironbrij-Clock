@@ -33,6 +33,7 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import { EntryFormDialog } from "@/components/entry-form-dialog";
 import { Input } from "@/components/ui/input";
 import {
@@ -287,6 +288,16 @@ function ApprovalsPanel() {
   // click with no confirmation, the inverse of its actual risk.
   const [approving, setApproving] = useState<PendingApproval | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  // M31: bulk-approve. Selection is separate from busyIds so a row can be
+  // selected while idle and only becomes "busy" once a batch is actually
+  // running. Deliberately still per-timesheet reviewTimesheet() calls in a
+  // loop, not a new bulk RPC — approving is irreversible (see the note
+  // above), so the confirmation dialog below names every person/week being
+  // approved rather than collapsing to a count, keeping a bulk click as
+  // informed as clicking Approve N times individually.
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [confirmingBulk, setConfirmingBulk] = useState(false);
+  const [bulkApproving, setBulkApproving] = useState(false);
 
   const approve = async () => {
     if (!approving) return;
@@ -300,6 +311,39 @@ function ApprovalsPanel() {
       toast.error("Couldn't approve that", { description: (error as Error).message });
     } finally {
       endBusy(id);
+    }
+  };
+
+  const bulkApprove = async () => {
+    const targets = pendingApprovals.filter((a) => selectedIds.has(a.id));
+    setConfirmingBulk(false);
+    setBulkApproving(true);
+    targets.forEach((a) => startBusy(a.id));
+    let succeeded = 0;
+    let failed = 0;
+    for (const a of targets) {
+      try {
+        await reviewTimesheet(a.id, "Approved");
+        succeeded++;
+      } catch {
+        failed++;
+      } finally {
+        endBusy(a.id);
+      }
+    }
+    setBulkApproving(false);
+    setSelectedIds(new Set());
+    if (succeeded > 0) {
+      toast.success(`Approved ${succeeded} ${succeeded === 1 ? "timesheet" : "timesheets"}`, {
+        description:
+          failed > 0
+            ? `${failed} couldn't be approved — try ${failed === 1 ? "it" : "them"} individually to see why.`
+            : "Those weeks are now locked for editing.",
+      });
+    } else if (failed > 0) {
+      toast.error("Couldn't approve those", {
+        description: "Try them individually to see what went wrong.",
+      });
     }
   };
 
@@ -335,11 +379,34 @@ function ApprovalsPanel() {
     );
   }
 
+  const allSelected = pendingApprovals.length > 0 && pendingApprovals.every((a) => selectedIds.has(a.id));
+  const selectedApprovals = pendingApprovals.filter((a) => selectedIds.has(a.id));
+  const selectedTotalMinutes = selectedApprovals.reduce((sum, a) => sum + a.minutes, 0);
+
   return (
     <div className="mt-4">
       <WeekStatusPanel />
       <Card className="shadow-card">
         <CardContent className="p-0">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-6 py-3">
+            <label className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Checkbox
+                checked={allSelected}
+                onCheckedChange={(checked) =>
+                  setSelectedIds(checked ? new Set(pendingApprovals.map((a) => a.id)) : new Set())
+                }
+                aria-label="Select all pending timesheets"
+              />
+              {selectedIds.size > 0 ? `${selectedIds.size} selected` : "Select all"}
+            </label>
+            <Button
+              size="sm"
+              disabled={selectedIds.size === 0 || bulkApproving}
+              onClick={() => setConfirmingBulk(true)}
+            >
+              Approve selected{selectedIds.size > 0 ? ` (${selectedIds.size})` : ""}
+            </Button>
+          </div>
           <ul className="divide-y divide-border">
             {pendingApprovals.map((a) => {
               const member = memberById(a.userId);
@@ -348,6 +415,19 @@ function ApprovalsPanel() {
                 <li key={a.id}>
                   <div className="flex flex-wrap items-center justify-between gap-4 px-6 py-4">
                     <div className="flex min-w-0 items-center gap-3">
+                      <Checkbox
+                        checked={selectedIds.has(a.id)}
+                        disabled={busyIds.has(a.id)}
+                        onCheckedChange={(checked) =>
+                          setSelectedIds((prev) => {
+                            const next = new Set(prev);
+                            if (checked) next.add(a.id);
+                            else next.delete(a.id);
+                            return next;
+                          })
+                        }
+                        aria-label={`Select ${member?.name ?? "this timesheet"} for bulk approval`}
+                      />
                       <Avatar className="h-9 w-9 shrink-0">
                         <AvatarFallback className="bg-secondary text-xs">
                           {member?.initials ?? "—"}
@@ -415,6 +495,42 @@ function ApprovalsPanel() {
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction onClick={() => void approve()}>Approve</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      <AlertDialog open={confirmingBulk} onOpenChange={setConfirmingBulk}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              Approve {selectedApprovals.length}{" "}
+              {selectedApprovals.length === 1 ? "timesheet" : "timesheets"}?
+            </AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-2">
+                <p>
+                  {formatHours(selectedTotalMinutes / 60)} total will be locked for editing. This
+                  can't be undone for any of them — there's no way to un-approve a timesheet once
+                  it's approved.
+                </p>
+                <ul className="max-h-40 space-y-1 overflow-y-auto rounded-md border border-border p-2 text-xs">
+                  {selectedApprovals.map((a) => (
+                    <li key={a.id} className="flex justify-between gap-3">
+                      <span className="truncate">
+                        {memberById(a.userId)?.name ?? "Unknown"} ·{" "}
+                        {formatWeekRange(fromDateKey(a.weekStart))}
+                      </span>
+                      <span className="shrink-0 tabular-nums">{formatHours(a.minutes / 60)}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={() => void bulkApprove()}>
+              Approve {selectedApprovals.length}
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

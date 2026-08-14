@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ChevronLeft,
   ChevronRight,
+  Copy,
   Lock,
   Pause,
   Pencil,
@@ -135,7 +136,11 @@ function TimerBar() {
   }, [active, project]);
 
   useEffect(() => {
-    if (!task && taskCategories[0]) setTask(taskCategories[0].name);
+    // M32: mirrors the project field's default just above — most recently
+    // used first, falling back to the first category only when there's no
+    // entry history yet to derive a "recent" one from.
+    if (!task) setTask(recentTasks[0]?.name ?? taskCategories[0]?.name ?? "");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [taskCategories, task]);
 
   useEffect(() => {
@@ -549,9 +554,12 @@ function ListView() {
               <CardTitle className="text-base">
                 {index === 0 ? `Today · ${formatDayLong(day)}` : formatDayLong(day)}
               </CardTitle>
-              <span className="text-sm text-muted-foreground tabular-nums">
-                {formatMinutes(dayEntries.reduce((s, e) => s + e.minutes, 0))}
-              </span>
+              <div className="flex items-center gap-3">
+                {index === 0 && <CopyYesterdayButton />}
+                <span className="text-sm text-muted-foreground tabular-nums">
+                  {formatMinutes(dayEntries.reduce((s, e) => s + e.minutes, 0))}
+                </span>
+              </div>
             </CardHeader>
             <CardContent className="p-0">
               <EntryList entries={dayEntries} />
@@ -560,6 +568,117 @@ function ListView() {
         );
       })}
     </div>
+  );
+}
+
+/**
+ * M33: duplicates yesterday's entries onto today, preserving project/task/
+ * description/duration — for the common case of a day that looks like the
+ * one before it. Distinct from the single-entry ↻ Repeat action on each row
+ * (which starts a *live timer*, not a completed duplicate) and from
+ * startTimer's own project/task defaults, which only ever pick one thing at
+ * a time. Reuses createEntry per entry rather than a new bulk mutation, so
+ * the existing overlap/locked-week/manual-entry-disabled checks all still
+ * apply per entry — a partial success (some entries copied, some skipped
+ * because today already has something in that slot) is reported honestly
+ * rather than treated as all-or-nothing.
+ */
+function CopyYesterdayButton() {
+  const { entries, projectById, createEntry, settings } = useWorkspace();
+  const [confirming, setConfirming] = useState(false);
+  const [copying, setCopying] = useState(false);
+
+  const yesterdayKey = toDateKey(addDays(new Date(), -1));
+  // A still-running entry has no end time to copy — skip it rather than
+  // guess at a duration.
+  const yesterdayEntries = entries.filter((e) => e.date === yesterdayKey && !e.running);
+
+  if (!settings.allowManualEntry || yesterdayEntries.length === 0) return null;
+
+  const copy = async () => {
+    setConfirming(false);
+    setCopying(true);
+    const todayKey = toDateKey(new Date());
+    let succeeded = 0;
+    let failed = 0;
+    for (const e of yesterdayEntries) {
+      const start = new Date(e.startTime);
+      const end = e.endTime ? new Date(e.endTime) : start;
+      try {
+        await createEntry({
+          projectId: e.projectId ?? "",
+          task: e.task,
+          description: e.description,
+          date: todayKey,
+          startTime: `${pad(start.getHours())}:${pad(start.getMinutes())}`,
+          endTime: `${pad(end.getHours())}:${pad(end.getMinutes())}`,
+        });
+        succeeded++;
+      } catch {
+        failed++;
+      }
+    }
+    setCopying(false);
+    if (succeeded > 0) {
+      toast.success(`Copied ${succeeded} ${succeeded === 1 ? "entry" : "entries"} from yesterday`, {
+        description:
+          failed > 0
+            ? `${failed} couldn't be copied — probably overlapping something already logged today.`
+            : "Logged to today.",
+      });
+    } else {
+      toast.error("Couldn't copy yesterday's entries", {
+        description: "They probably overlap with something already on today.",
+      });
+    }
+  };
+
+  return (
+    <>
+      <Button
+        variant="ghost"
+        size="sm"
+        className="gap-1.5 text-xs"
+        disabled={copying}
+        onClick={() => setConfirming(true)}
+      >
+        <Copy className="h-3.5 w-3.5" />
+        Copy yesterday ({yesterdayEntries.length})
+      </Button>
+      <AlertDialog open={confirming} onOpenChange={setConfirming}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Copy yesterday's entries to today?</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-2">
+                <p>
+                  Adds {yesterdayEntries.length} {yesterdayEntries.length === 1 ? "entry" : "entries"}{" "}
+                  to today with the same project, task, description and duration. Anything that
+                  overlaps something already logged today is skipped, not overwritten.
+                </p>
+                <ul className="max-h-40 space-y-1 overflow-y-auto rounded-md border border-border p-2 text-xs">
+                  {yesterdayEntries.map((e) => (
+                    <li key={e.id} className="flex justify-between gap-3">
+                      <span className="truncate">
+                        {projectById(e.projectId)?.name ?? "No project"} ·{" "}
+                        {e.description || "No description"}
+                      </span>
+                      <span className="shrink-0 tabular-nums">{formatMinutes(e.minutes)}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={copying}>Cancel</AlertDialogCancel>
+            <AlertDialogAction disabled={copying} onClick={() => void copy()}>
+              Copy entries
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
   );
 }
 
