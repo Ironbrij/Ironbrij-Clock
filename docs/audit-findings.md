@@ -567,7 +567,7 @@ that has logged entries but isn't `Submitted`/`Approved` yet, distinguishing a `
   (not permanently silenced) so it doesn't turn into wallpaper for someone deliberately holding a
   week open pending a correction.
 
-**M30. ⏳ Open. No "you haven't logged anything today" nudge.** Distinct from H19 (which is about
+**M30. ✅ Fixed (narrowed).** No "you haven't logged anything today" nudge. Distinct from H19 (which is about
 already-logged time never submitted) — this is about a day going by with nothing tracked at all.
 - **Trigger:** it's a weekday, past some cutoff local to the person's own timezone (`profiles
   .timezone`, already stored and shown in Settings → Profile), and today has zero entries.
@@ -589,8 +589,17 @@ already-logged time never submitted) — this is about a day going by with nothi
   not something that reappears every day regardless of feedback — and holding off entirely until/
   unless a real leave calendar exists (M24) to suppress it on days off.
 
-**M31. ⏳ Open. Approvals has no bulk action — every timesheet is approved or sent back one at a
-time.** `ApprovalsPanel` (`src/routes/manage.tsx`) already tracks per-row busy state independently
+Shipped narrower than originally scoped, per product decision: rather than a daily zero-entries
+check, it fires at most once a week — Friday afternoon, only if the *entire* week has nothing
+logged (`weekEntries.length === 0` in `src/routes/index.tsx`, reusing the week's entries already
+computed for the stat cards), local to the person's own stored timezone via
+`Intl.DateTimeFormat(..., { timeZone })` rather than a new date-library dependency. This avoids the
+weekend/holiday/leave false-positive risk called out above almost entirely — a single day off no
+longer trips it, only a week with truly nothing tracked does — at the cost of being less immediate
+than a daily check.
+
+**M31. ✅ Fixed.** Approvals had no bulk action — every timesheet was approved or sent back one at a
+time. `ApprovalsPanel` (`src/routes/manage.tsx`) already tracks per-row busy state independently
 (`busyIds`, a `Set` — see L26), so nothing stops two actions running concurrently, but there's no
 way to act on more than one row from a single click.
 - **Trigger:** a manager/admin on Manage → Approvals with several pending timesheets that all look
@@ -618,7 +627,13 @@ way to act on more than one row from a single click.
   name every person and week, not just say "12 timesheets," so a bulk click stays an informed
   decision rather than a rubber stamp.
 
-**M32. ⏳ Open. The Task field's default doesn't use recency, even though Project's already does.**
+Fixed exactly as specified: `ApprovalsPanel` now has per-row checkboxes plus a "select all"
+toolbar, and "Approve selected" loops the existing `reviewTimesheet` call per id with its own
+try/catch (a mid-batch failure — e.g. another manager approved the same row first — is reported as
+a partial success, not a crash). The confirmation dialog lists every selected person, week, and
+hours total before the batch fires, not just a count.
+
+**M32. ✅ Fixed.** The Task field's default didn't use recency, even though Project's already did.
 Both `TimerBar` (`time.tsx`) and `EntryFormDialog` already compute `orderByRecencyName(taskCategories,
 entries)` to build the dropdown's "Recent" group — but the *default* selection on open falls back to
 `taskCategories[0]` (first in creation/alphabetical order), not the most recently used one, even
@@ -639,7 +654,11 @@ different logic for what should be the same behavior.
   array feeds one `useEffect`.
 - **Risks:** Negligible.
 
-**M33. ⏳ Open (expands on L30). "Copy previous day" — full breakdown.** The parity audit's L30
+Fixed in both `TimerBar` and `EntryFormDialog`: the default-selection effect/value now reads
+`recentTasks[0]?.name ?? taskCategories[0]?.name ?? ""`, the same fallback chain the project field
+already used.
+
+**M33. ✅ Fixed (expands on L30). "Copy previous day."** The parity audit's L30
 already flagged the absence of a bulk-duplicate action; this pass adds the trigger/logic/edge-case
 detail that pass didn't go into, since "quick duplicate previous entry" was explicitly one of the
 categories asked about here.
@@ -662,7 +681,13 @@ categories asked about here.
 - **Risks:** Low. Worst case is a duplicate entry someone has to delete — already a one-click action
   everywhere else in the app.
 
-**L33. ⏳ Open. No lightweight "last week" recap.** The Dashboard (`src/routes/index.tsx`) already
+Fixed via a new `CopyYesterdayButton` on `ListView`'s Today card (`time.tsx`): shows a count-labeled
+button, a confirmation dialog listing exactly what will be copied (project/description/duration per
+entry), then loops `createEntry` per entry with its own try/catch — an overlap is skipped and
+reported honestly rather than failing the whole batch. Hidden entirely when `allowManualEntry` is
+off or yesterday has nothing to copy.
+
+**L33. ✅ Fixed.** No lightweight "last week" recap. The Dashboard (`src/routes/index.tsx`) already
 computes `weekTotal`/`dayTotals`/`topProjects` for the *current* week — there's no equivalent
 glance-back at the week that just ended, which is exactly when someone's about to decide whether
 their timesheet looks right before submitting it.
@@ -675,6 +700,10 @@ their timesheet looks right before submitting it.
 - **Edge cases:** first week of using the app has no "last week" — card simply doesn't render.
 - **Complexity:** Low.
 - **Risks:** Negligible.
+
+Fixed as a small card on the Dashboard (`src/routes/index.tsx`), rendered whenever last week has
+any entries — not gated to Monday/Tuesday specifically, since there's no real cost to showing it
+any day and gating it added complexity without real benefit.
 
 ### 18. Considered and Rejected
 
