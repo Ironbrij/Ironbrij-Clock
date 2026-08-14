@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Activity,
@@ -36,6 +36,10 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { EntryFormDialog } from "@/components/entry-form-dialog";
 import { Input } from "@/components/ui/input";
+import {
+  filterMembersBySearchAndTeam,
+  MemberSearchFilter,
+} from "@/components/member-search-filter";
 import {
   Select,
   SelectContent,
@@ -77,7 +81,18 @@ import {
   type WorkspaceEntry,
 } from "@/lib/workspace-store";
 
+// M37: lets other pages/actions deep-link straight into a specific tab
+// (and, for Entries, a specific person/week) instead of only ever landing
+// on the default Schedule tab — used by the Dashboard's pending-approvals
+// banner and by "Edit entries" inside Approvals.
+type ManageSearch = { tab?: string; memberId?: string; weekStart?: string };
+
 export const Route = createFileRoute("/manage")({
+  validateSearch: (search: Record<string, unknown>): ManageSearch => ({
+    tab: typeof search.tab === "string" ? search.tab : undefined,
+    memberId: typeof search.memberId === "string" ? search.memberId : undefined,
+    weekStart: typeof search.weekStart === "string" ? search.weekStart : undefined,
+  }),
   head: () => ({
     meta: [
       { title: "Manage — IronTrack" },
@@ -144,11 +159,39 @@ const sections: { id: string; label: string; icon: LucideIcon; description: stri
 
 function ManagePage() {
   const { unseenActivityCount, markActivitySeen } = useWorkspace();
-  const [tab, setTab] = useState(sections[0].id);
+  const search = Route.useSearch();
+  const [tab, setTab] = useState(
+    search.tab && sections.some((s) => s.id === search.tab) ? search.tab : sections[0].id,
+  );
+  const [entriesTarget, setEntriesTarget] = useState<
+    { memberId: string; weekStart: string } | undefined
+  >(
+    search.memberId && search.weekStart
+      ? { memberId: search.memberId, weekStart: search.weekStart }
+      : undefined,
+  );
   const active = sections.find((s) => s.id === tab)!;
+
+  // Re-navigating to /manage with new search params (e.g. clicking "Edit
+  // entries" from Approvals while already on /manage) doesn't remount this
+  // component, so the deep-link has to be applied on search change too, not
+  // just as the initial state above.
+  useEffect(() => {
+    if (!search.tab || !sections.some((s) => s.id === search.tab)) return;
+    setTab(search.tab);
+    if (search.tab === "activity") markActivitySeen();
+    if (search.tab === "entries" && search.memberId && search.weekStart) {
+      setEntriesTarget({ memberId: search.memberId, weekStart: search.weekStart });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search.tab, search.memberId, search.weekStart]);
 
   const handleTabChange = (value: string) => {
     setTab(value);
+    // A manual tab click means we're done with whatever deep-link brought
+    // us here — otherwise clicking away from Entries and back would keep
+    // reapplying a stale member/week from an earlier "Edit entries" click.
+    setEntriesTarget(undefined);
     if (value === "activity") markActivitySeen();
   };
 
@@ -174,7 +217,10 @@ function ManagePage() {
       ) : tab === "schedule" ? (
         <ScheduleTab />
       ) : tab === "entries" ? (
-        <TeamEntriesTab />
+        <TeamEntriesTab
+          initialMemberId={entriesTarget?.memberId}
+          initialWeekStart={entriesTarget?.weekStart}
+        />
       ) : (
         <Card className="mt-4 shadow-card">
           <CardContent className="flex flex-col items-center gap-3 px-6 py-16 text-center">
@@ -202,9 +248,12 @@ function statusBadgeVariant(status: string): "default" | "secondary" | "destruct
 }
 
 function WeekStatusPanel() {
-  const { activeMembers, currentUser, isAdmin, timesheets } = useWorkspace();
+  const { activeMembers, currentUser, isAdmin, teams, timesheets, employeeHoursForRange } =
+    useWorkspace();
   const weekStart = useThisWeekStart();
   const weekKey = toDateKey(weekStart);
+  const [search, setSearch] = useState("");
+  const [teamFilter, setTeamFilter] = useState("all");
 
   const relevantMembers = useMemo(() => {
     const base = activeMembers.filter((m) => !m.pending && m.id !== currentUser.id);
@@ -220,6 +269,36 @@ function WeekStatusPanel() {
     [timesheets, weekKey],
   );
 
+  // L35: how much each person has actually logged this week, not just
+  // whether they've submitted — someone can be on-track with real hours
+  // and simply not have clicked Submit yet. A quiet failure here (e.g. a
+  // dropped connection) just leaves hours blank; the status list itself,
+  // which is the more important half of this panel, still works.
+  const [hoursByUser, setHoursByUser] = useState<Record<string, number> | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    employeeHoursForRange(weekKey, toDateKey(addDays(weekStart, 6)))
+      .then((rows) => {
+        if (cancelled) return;
+        const map: Record<string, number> = {};
+        rows.forEach((r) => {
+          map[r.userId] = r.minutes;
+        });
+        setHoursByUser(map);
+      })
+      .catch(() => {
+        if (!cancelled) setHoursByUser(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [weekKey, weekStart, employeeHoursForRange]);
+
+  const filteredMembers = useMemo(
+    () => filterMembersBySearchAndTeam(relevantMembers, search, teamFilter),
+    [relevantMembers, search, teamFilter],
+  );
+
   const sorted = useMemo(() => {
     const rank: Record<string, number> = {
       "Not submitted": 0,
@@ -228,11 +307,11 @@ function WeekStatusPanel() {
       Submitted: 2,
       Approved: 3,
     };
-    return [...relevantMembers].sort((a, b) => {
+    return [...filteredMembers].sort((a, b) => {
       const diff = (rank[statusFor(a.id)] ?? 0) - (rank[statusFor(b.id)] ?? 0);
       return diff !== 0 ? diff : a.name.localeCompare(b.name);
     });
-  }, [relevantMembers, statusFor]);
+  }, [filteredMembers, statusFor]);
 
   if (relevantMembers.length === 0) return null;
 
@@ -245,6 +324,22 @@ function WeekStatusPanel() {
             Who's submitted their timesheet so far — not just what's waiting on you.
           </p>
         </div>
+        {relevantMembers.length > 8 && (
+          <div className="border-b border-border px-6 py-3">
+            <MemberSearchFilter
+              search={search}
+              onSearchChange={setSearch}
+              teamFilter={teamFilter}
+              onTeamFilterChange={setTeamFilter}
+              teams={teams}
+            />
+          </div>
+        )}
+        {sorted.length === 0 && (
+          <p className="px-6 py-8 text-center text-sm text-muted-foreground">
+            No one matches that search.
+          </p>
+        )}
         <ul className="divide-y divide-border">
           {sorted.map((m) => (
             <li key={m.id} className="flex items-center justify-between gap-4 px-6 py-2.5">
@@ -254,9 +349,14 @@ function WeekStatusPanel() {
                 </Avatar>
                 <span className="truncate text-sm">{m.name}</span>
               </div>
-              <Badge variant={statusBadgeVariant(statusFor(m.id))} className="shrink-0">
-                {statusFor(m.id)}
-              </Badge>
+              <div className="flex shrink-0 items-center gap-3">
+                {hoursByUser && (
+                  <span className="text-xs tabular-nums text-muted-foreground">
+                    {formatHours((hoursByUser[m.id] ?? 0) / 60)}
+                  </span>
+                )}
+                <Badge variant={statusBadgeVariant(statusFor(m.id))}>{statusFor(m.id)}</Badge>
+              </div>
             </li>
           ))}
         </ul>
@@ -379,7 +479,8 @@ function ApprovalsPanel() {
     );
   }
 
-  const allSelected = pendingApprovals.length > 0 && pendingApprovals.every((a) => selectedIds.has(a.id));
+  const allSelected =
+    pendingApprovals.length > 0 && pendingApprovals.every((a) => selectedIds.has(a.id));
   const selectedApprovals = pendingApprovals.filter((a) => selectedIds.has(a.id));
   const selectedTotalMinutes = selectedApprovals.reduce((sum, a) => sum + a.minutes, 0);
 
@@ -451,6 +552,14 @@ function ApprovalsPanel() {
                       </div>
                     </div>
                     <div className="flex shrink-0 items-center gap-2">
+                      <Button size="sm" variant="outline" asChild>
+                        <Link
+                          to="/manage"
+                          search={{ tab: "entries", memberId: a.userId, weekStart: a.weekStart }}
+                        >
+                          Edit entries
+                        </Link>
+                      </Button>
                       <Button
                         size="sm"
                         variant="outline"
@@ -636,23 +745,73 @@ function describeActivityEvent(
   }
 }
 
+// M40: humanized labels for the action filter — falls back to the raw
+// action string for anything not listed here, so a future action type
+// never disappears from the filter, it's just unstyled.
+const actionFilterLabels: Record<string, string> = {
+  member_approved: "Sign-up approved",
+  role_changed: "Role changed",
+  timesheet_submitted: "Timesheet submitted",
+  timesheet_approved: "Timesheet approved",
+  timesheet_rejected: "Timesheet sent back",
+  team_added: "Added to team",
+  team_removed: "Removed from team",
+  member_removed: "Access removed",
+  time_entry_edited: "Entry edited",
+  time_entry_deleted: "Entry deleted",
+};
+
 function ActivityTab() {
   const { activityLog, memberById, teams } = useWorkspace();
+  const [personFilter, setPersonFilter] = useState("all");
+  const [actionFilter, setActionFilter] = useState("all");
 
   const nameOf = (id: string | null) => (id ? (memberById(id)?.name ?? "Someone") : "Someone");
   const teamName = (id: string) => teams.find((t) => t.id === id)?.name ?? "a team";
 
+  // M40: who to offer in the person filter — everyone who's actually
+  // appeared as an actor or a target in the log, not the whole roster, so
+  // someone who's since lost access but has historical events is still
+  // findable.
+  const peopleInLog = useMemo(() => {
+    const ids = new Set<string>();
+    for (const e of activityLog) {
+      if (e.actorId) ids.add(e.actorId);
+      if (e.targetUserId) ids.add(e.targetUserId);
+    }
+    return Array.from(ids)
+      .map((id) => ({ id, name: nameOf(id) }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activityLog, memberById]);
+
+  const actionsInLog = useMemo(
+    () => Array.from(new Set(activityLog.map((e) => e.action))).sort(),
+    [activityLog],
+  );
+
+  const filteredLog = useMemo(
+    () =>
+      activityLog
+        .filter(
+          (e) =>
+            personFilter === "all" || e.actorId === personFilter || e.targetUserId === personFilter,
+        )
+        .filter((e) => actionFilter === "all" || e.action === actionFilter),
+    [activityLog, personFilter, actionFilter],
+  );
+
   const weeks = useMemo(() => {
     const groups = new Map<string, WorkspaceActivityEvent[]>();
-    for (const e of activityLog) {
+    for (const e of filteredLog) {
       const key = toDateKey(startOfWeek(new Date(e.createdAt)));
       if (!groups.has(key)) groups.set(key, []);
       groups.get(key)!.push(e);
     }
     return Array.from(groups.entries()).sort((a, b) => (a[0] < b[0] ? 1 : -1));
-  }, [activityLog]);
+  }, [filteredLog]);
 
-  if (weeks.length === 0) {
+  if (activityLog.length === 0) {
     return (
       <Card className="mt-4 shadow-card">
         <CardContent className="flex flex-col items-center gap-3 px-6 py-16 text-center">
@@ -669,6 +828,47 @@ function ActivityTab() {
 
   return (
     <div className="mt-4 grid gap-4">
+      {(peopleInLog.length > 2 || actionsInLog.length > 1) && (
+        <div className="flex flex-wrap items-center gap-3">
+          <Select value={personFilter} onValueChange={setPersonFilter}>
+            <SelectTrigger className="w-48">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Everyone</SelectItem>
+              {peopleInLog.map((p) => (
+                <SelectItem key={p.id} value={p.id}>
+                  {p.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Select value={actionFilter} onValueChange={setActionFilter}>
+            <SelectTrigger className="w-52">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All actions</SelectItem>
+              {actionsInLog.map((a) => (
+                <SelectItem key={a} value={a}>
+                  {actionFilterLabels[a] ?? a}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      )}
+      {weeks.length === 0 && (
+        <Card className="shadow-card">
+          <CardContent className="flex flex-col items-center gap-3 px-6 py-16 text-center">
+            <Activity className="h-10 w-10 text-muted-foreground/50" />
+            <h2 className="text-lg font-semibold">No matches</h2>
+            <p className="max-w-md text-sm text-muted-foreground">
+              Nothing in the log matches that filter.
+            </p>
+          </CardContent>
+        </Card>
+      )}
       {weeks.map(([weekKey, events]) => (
         <Card key={weekKey} className="shadow-card">
           <CardContent className="p-0">
@@ -704,9 +904,12 @@ function ScheduleTab() {
     isAdmin,
     canManage,
     settings,
+    teams,
     employmentByUser,
     updateMemberEmployment,
   } = useWorkspace();
+  const [search, setSearch] = useState("");
+  const [teamFilter, setTeamFilter] = useState("all");
 
   const relevantMembers = useMemo(() => {
     const base = activeMembers.filter((m) => !m.pending);
@@ -717,6 +920,11 @@ function ScheduleTab() {
             m.id === currentUser.id || m.teamIds.some((tid) => currentUser.teamIds.includes(tid)),
         );
   }, [activeMembers, currentUser, isAdmin]);
+
+  const filteredMembers = useMemo(
+    () => filterMembersBySearchAndTeam(relevantMembers, search, teamFilter),
+    [relevantMembers, search, teamFilter],
+  );
 
   if (!canManage) {
     return (
@@ -735,6 +943,17 @@ function ScheduleTab() {
 
   return (
     <Card className="mt-4 shadow-card">
+      {relevantMembers.length > 8 && (
+        <CardContent className="border-b border-border pb-4 pt-4">
+          <MemberSearchFilter
+            search={search}
+            onSearchChange={setSearch}
+            teamFilter={teamFilter}
+            onTeamFilterChange={setTeamFilter}
+            teams={teams}
+          />
+        </CardContent>
+      )}
       <CardContent className="p-0">
         <div className="overflow-x-auto">
           <table className="w-full text-left text-sm">
@@ -747,7 +966,7 @@ function ScheduleTab() {
               </tr>
             </thead>
             <tbody className="divide-y">
-              {relevantMembers.map((m) => (
+              {filteredMembers.map((m) => (
                 <ScheduleRow
                   key={m.id}
                   member={m}
@@ -755,7 +974,7 @@ function ScheduleTab() {
                   updateMemberEmployment={updateMemberEmployment}
                 />
               ))}
-              {relevantMembers.length === 0 && (
+              {filteredMembers.length === 0 && (
                 <tr>
                   <td colSpan={4} className="px-4 py-10 text-center text-sm text-muted-foreground">
                     No one to show here yet.
@@ -900,20 +1119,38 @@ function ScheduleRow({
  * work correctly here. A manager (not admin) can't touch a locked
  * (submitted/approved) week — same as the backend — an admin still can.
  */
-function TeamEntriesTab() {
+function TeamEntriesTab({
+  initialMemberId,
+  initialWeekStart,
+}: {
+  initialMemberId?: string;
+  initialWeekStart?: string;
+} = {}) {
   const {
     members,
     activeMembers,
     currentUser,
     isAdmin,
     canManage,
+    teams,
     timesheets,
     projectById,
     deleteEntry,
   } = useWorkspace();
-  const [memberId, setMemberId] = useState("");
+  const [memberId, setMemberId] = useState(initialMemberId ?? "");
+  const [memberSearch, setMemberSearch] = useState("");
+  const [memberTeamFilter, setMemberTeamFilter] = useState("all");
   const thisWeek = useThisWeekStart();
-  const [offset, setOffset] = useState(0);
+  // M37: land on the deep-linked week (e.g. from Approvals' "Edit entries")
+  // instead of always resetting to the current week.
+  const [offset, setOffset] = useState(() =>
+    initialWeekStart
+      ? Math.round(
+          (fromDateKey(initialWeekStart).getTime() - thisWeek.getTime()) /
+            (7 * 24 * 60 * 60 * 1000),
+        )
+      : 0,
+  );
   const weekStart = useMemo(() => addDays(thisWeek, offset * 7), [thisWeek, offset]);
 
   const relevantMembers = useMemo(() => {
@@ -936,6 +1173,23 @@ function TeamEntriesTab() {
     const extra = members.find((m) => m.id === memberId);
     return extra ? [...relevantMembers, extra] : relevantMembers;
   }, [relevantMembers, memberId, members]);
+
+  // M39: narrows the picker's own option list rather than adding a
+  // separate list to search — keeps the currently-selected person visible
+  // even if they no longer match the filter, same as selectableMembers
+  // already does for a since-deactivated selection above.
+  const filteredSelectableMembers = useMemo(() => {
+    const filtered = filterMembersBySearchAndTeam(
+      selectableMembers,
+      memberSearch,
+      memberTeamFilter,
+    );
+    if (memberId && !filtered.some((m) => m.id === memberId)) {
+      const current = selectableMembers.find((m) => m.id === memberId);
+      if (current) return [current, ...filtered];
+    }
+    return filtered;
+  }, [selectableMembers, memberSearch, memberTeamFilter, memberId]);
 
   useEffect(() => {
     if (memberId && members.some((m) => m.id === memberId)) return;
@@ -1018,6 +1272,18 @@ function TeamEntriesTab() {
     <div className="mt-4 grid gap-4">
       <ActiveTimersCard timers={relevantActiveTimers} onSelectMember={selectMember} />
       <Card className="shadow-card">
+        {relevantMembers.length > 8 && (
+          <CardContent className="border-b border-border pb-4 pt-4">
+            <MemberSearchFilter
+              search={memberSearch}
+              onSearchChange={setMemberSearch}
+              teamFilter={memberTeamFilter}
+              onTeamFilterChange={setMemberTeamFilter}
+              teams={teams}
+              placeholder="Search team members…"
+            />
+          </CardContent>
+        )}
         <CardContent className="flex flex-wrap items-center justify-between gap-3 p-4">
           <div className="flex flex-wrap items-center gap-3">
             <Select value={memberId} onValueChange={setMemberId}>
@@ -1025,12 +1291,17 @@ function TeamEntriesTab() {
                 <SelectValue placeholder="Choose a team member" />
               </SelectTrigger>
               <SelectContent>
-                {selectableMembers.map((m) => (
+                {filteredSelectableMembers.map((m) => (
                   <SelectItem key={m.id} value={m.id}>
                     {m.name}
                     {!m.active && " (inactive)"}
                   </SelectItem>
                 ))}
+                {filteredSelectableMembers.length === 0 && (
+                  <div className="px-2 py-4 text-center text-sm text-muted-foreground">
+                    No one matches that search.
+                  </div>
+                )}
               </SelectContent>
             </Select>
             <div className="flex items-center gap-1">
@@ -1048,6 +1319,11 @@ function TeamEntriesTab() {
               >
                 <ChevronRight className="h-4 w-4" />
               </Button>
+              {offset !== 0 && (
+                <Button variant="ghost" size="sm" onClick={() => setOffset(0)}>
+                  Today
+                </Button>
+              )}
             </div>
           </div>
           <div className="flex items-center gap-2">

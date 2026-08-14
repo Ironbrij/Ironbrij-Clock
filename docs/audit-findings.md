@@ -1141,3 +1141,245 @@ constraints (`20260811020000`, `20260811030000`), and the self-review/last-admin
 `src/lib/workspace/use-time-entries.ts`, `use-timesheets.ts`, `use-tags.ts`, `use-members.ts`, and
 `src/lib/admin.functions.ts`, to confirm actual client write behavior against what the schema
 permits, rather than assuming from the migrations alone.
+
+---
+
+## Manager & Admin Workflow Audit
+
+Performed 2026-08-14 from the perspective of an Ironbrij manager or admin doing the job day to
+day, not from a correctness or feature-completeness lens — specifically: where does a routine
+management task take more clicks, more page-switches, or more manual re-entry than the data
+already sitting in the app should require. Inspected `src/routes/manage.tsx` (Approvals, Activity,
+Schedule, Entries), `src/routes/reports.tsx`, `src/routes/settings.tsx` (Users, Admin tabs),
+`src/routes/teams.tsx`, and `src/components/app-shell.tsx` (nav badges). No code was changed —
+this is a review pass, matching this audit's own instructions. Numbering continues from the
+Database & Data Integrity audit above; all findings start `⏳ Open`.
+
+**Scope note, stated up front rather than repeated per-finding:** there is still no structured
+attendance/schedule data model — `member_employment.weekly_schedule` is free text, not a
+start/end time per day — so "identify late attendance" genuinely isn't answerable today, and
+building the schedule data required to answer it would be exactly the "turn this into an HR
+platform" this audit was told not to do. Treating that as out of scope rather than forcing a
+finding around it.
+
+### 27. Findings
+
+**H22. ✅ Fixed.**
+- **Current workflow:** a manager or admin has no way to know whether anything is waiting for their
+  review without opening Manage and clicking into the Approvals tab specifically.
+  `app-shell.tsx`'s nav badge logic only ever shows two things: `pendingCount` (pending
+  *sign-ups*, on Settings) and `unseenActivityCount` (on Manage, but tied to the *Activity* tab,
+  not Approvals). `pendingApprovals.length` — already computed in `workspace-store.tsx` and used
+  by `ApprovalsPanel` itself — drives nothing outside that one tab.
+- **Problem:** the single most time-sensitive manager action in the app (a submitted timesheet
+  waiting on review) has zero passive visibility anywhere — not the sidebar nav, not the Manage
+  tab list, not the Dashboard. A manager who doesn't habitually click into Approvals has no signal
+  that they should.
+- **Why it matters:** Dashboard already has a whole banner pattern built for exactly this shape of
+  problem (`pendingCount > 0` → amber card, `src/routes/index.tsx`) — for admin-facing pending
+  *sign-ups*. The same-shaped, arguably higher-stakes problem for pending *timesheets* has nothing
+  equivalent, which means the thing most likely to actually block someone (an employee waiting on
+  approval to know their week is settled) is the thing least likely to be noticed promptly.
+- **Recommended improvement:** badge the "Manage" nav item with `pendingApprovals.length` (or a
+  combined count with `unseenActivityCount`, distinguished by color/position) the same way
+  `/settings` already gets badged with `pendingCount` — and/or add the same amber Dashboard-banner
+  treatment used for pending sign-ups, scoped to `pendingApprovals`, so a manager sees "3 timesheets
+  waiting on you" the moment they land on the Dashboard, not only after clicking into Manage on
+  spec.
+- **Priority:** High.
+- **Complexity:** Low — the data (`pendingApprovals`) is already loaded workspace-wide; this is
+  wiring an existing count into an existing badge pattern, not new data-fetching.
+
+Fixed in `app-shell.tsx` and `routes/index.tsx`: the "Manage" nav badge now shows
+`unseenActivityCount + pendingApprovals.length` (desktop sidebar, mobile "More" sheet, and the
+mobile bottom-nav dot indicator all updated together), and the Dashboard gained a second amber
+banner — "N timesheets waiting on your review," gated on `canManage`, linking straight into
+Manage → Approvals — sitting above the existing pending-signups banner it was modeled on.
+
+**M37. ✅ Fixed.**
+- **Current workflow:** reviewing a submitted timesheet in `ApprovalsPanel` (Manage → Approvals)
+  already expands to show the real entries behind it (`ApprovalEntries`) — but that view is
+  read-only. If a manager spots something that needs fixing (wrong project, a typo in the
+  description, a time that looks off), their only in-context option is **Send back** — rejecting
+  the *entire* week with a note and waiting for the employee to fix and resubmit it. To correct it
+  directly (an admin can, and a manager can for their own team, via `TeamEntriesTab`), they have to
+  leave Approvals entirely, go to Manage → Entries, re-open the member picker, find the same
+  person again, and page the week navigator back to the same week they were just looking at —
+  with nothing carried over from where they came from.
+- **Problem:** a one-field correction currently costs either a full reject-and-resubmit round trip
+  (asking someone else to do the fix) or a multi-step manual re-navigation (doing it yourself, from
+  scratch, with no continuity between the two tabs).
+- **Why it matters:** this is exactly the "Corrections" + "Approve timesheets efficiently"
+  intersection this audit was asked to look at — the two features (`ApprovalsPanel`,
+  `TeamEntriesTab`) already exist and already do the right things individually, they just don't
+  know about each other.
+- **Recommended improvement:** an "Edit entries" action on each `ApprovalsPanel` row (or inside the
+  expanded `ApprovalEntries` view) that jumps to Manage → Entries with that person and week already
+  selected — `TeamEntriesTab` already accepts a `memberId`/`weekStart` via component state, so this
+  is a matter of passing that state across tabs (e.g. lifting `tab`/`memberId`/`weekStart` up to
+  `ManagePage` or via a search param) rather than building new editing UI.
+- **Priority:** Medium — the reject-and-resubmit workaround exists and is safe, just heavier than
+  necessary for a small fix.
+- **Complexity:** Medium — no new data or mutations, but does need some cross-tab state plumbing in
+  `manage.tsx` (currently each tab's state, like `TeamEntriesTab`'s `memberId`/`offset`, is local to
+  that component).
+
+Fixed in `manage.tsx`: `/manage` now has a `validateSearch` (`tab`/`memberId`/`weekStart`), and
+each `ApprovalsPanel` row has an "Edit entries" button linking to
+`/manage?tab=entries&memberId=...&weekStart=...`. `ManagePage` reads that search both on mount and
+via an effect (since navigating there while already on `/manage` doesn't remount it), and passes
+the target down as `initialMemberId`/`initialWeekStart` props; `TeamEntriesTab` seeds its
+`memberId`/`offset` state from them. A manual tab click clears the carried-over target so a later
+plain visit to Entries doesn't keep reapplying a stale deep link. Note: a manager (not admin)
+landing here on a `Submitted` week still sees it read-only per the existing lock rule — this gives
+them the same "why can't I edit this" context in place, it doesn't change who's allowed to edit.
+
+**M38. ✅ Fixed.**
+- **Current workflow:** Reports (`src/routes/reports.tsx`) offers exactly five date-range choices —
+  `computeRange()`'s `this_week` / `this_month` / `last_30` / `this_quarter` / `this_year` — with
+  no way to enter an arbitrary start/end date.
+- **Problem:** none of the five presets can express "the pay period that ended last Thursday," a
+  specific fortnight, or any custom range a manager actually needs for payroll or client billing
+  purposes that don't happen to align with a calendar month/quarter.
+- **Why it matters:** this is the literal "Filter dates" item this audit was asked to look for, and
+  Reports is the one page whose entire purpose is answering "how many hours, over what period" —
+  the one place a fixed preset list is most likely to not be enough.
+- **Recommended improvement:** add a sixth option, "Custom," that reveals two date inputs (reusing
+  the same `<Input type="date">` pattern already used in `EntryFormDialog`), feeding the same
+  `{ from, to }` shape `computeRange()` already produces so nothing downstream (`projectHoursForRange`,
+  `employeeHoursForRange`, the CSV export) needs to change.
+- **Priority:** Medium.
+- **Complexity:** Low-Medium — additive to the existing `RangePreset` union and `presetLabels`
+  map, no new data-fetching shape.
+
+Fixed in `reports.tsx`: `RangePreset` gained a `"custom"` member; picking it reveals two
+`<Input type="date">` fields (`customFrom`/`customTo`) that feed the same `{ from, to }` shape as
+every other preset, guarded against an inverted or empty range. The chart/table headings show the
+actual `from`–`to` dates instead of a generic "Custom range" label once selected.
+
+**M39. ✅ Fixed.**
+- **Current workflow:** every member-heavy manager surface is either a flat, unfilterable
+  `<Select>` or an unfilterable table: `TeamEntriesTab`'s member picker (`manage.tsx`), `ScheduleTab`'s
+  roster table (`manage.tsx`), `WeekStatusPanel`'s status list (`manage.tsx`), and Settings →
+  Users' approved-members table (`UsersTab`, `settings.tsx`, which does at least paginate at 10 per
+  page, but still has no search or team filter ahead of that pagination).
+- **Problem:** none of these let a manager type a name to jump to someone, or narrow the list to
+  just their own team (relevant for an admin — every one of these shows *all* active members for
+  an admin, unfiltered, unlike a manager's own view, which is already narrowed to shared-team
+  members by `relevantMembers`'s existing `isAdmin` branch).
+- **Why it matters:** this workspace's own seed data models 13 teams — at that scale, scrolling a
+  flat picker or a paginated table to find one person is exactly the "too many clicks" this audit
+  was asked to find, and it repeats in four separate places rather than being solved once.
+- **Recommended improvement:** a single reusable member search+team-filter (a name `<Input>` plus a
+  team `<Select>`, similar in spirit to `Projects → Clients`' already-existing search+filter
+  bar in `ClientsTab`) used consistently across all four surfaces, rather than four separate
+  one-off fixes — the underlying `members`/`activeMembers`/`teamIds` data every one of these
+  already reads from is identical.
+- **Priority:** Medium — genuinely useful today, more valuable as headcount grows.
+- **Complexity:** Low-Medium — one shared component, reused; no new queries, since team
+  membership (`teamIds`) is already loaded on every `WorkspaceMember`.
+
+Fixed via a new shared `src/components/member-search-filter.tsx` (`MemberSearchFilter` +
+`filterMembersBySearchAndTeam`), wired into all four surfaces: `WeekStatusPanel` and `ScheduleTab`
+filter the list/table they render; `TeamEntriesTab` filters the member `<Select>`'s own option
+list (keeping the currently-selected person visible even if since filtered out, same as the
+existing since-deactivated-member handling); `UsersTab`'s approved-members table filters ahead of
+its existing pagination. Each surface only shows the filter bar once its member count passes a
+threshold (>8), so it doesn't add clutter to small teams.
+
+**M40. ✅ Fixed.**
+- **Current workflow:** `ActivityTab` (`manage.tsx`) renders every event in `activityLog`,
+  grouped by week, with no filter of any kind.
+- **Problem:** there's no way to answer "did anyone review X's timesheet" or "who changed Y's
+  role" directly — only scroll through week-by-week groups looking for it.
+- **Why it matters:** this is the literal "Review changes made by managers/admins" item this audit
+  was asked to look for. The log itself is solid (already covers approvals, role changes, team
+  membership, and entry edits-by-others, per the original audit's H11/M20 work) — it just doesn't
+  scale to being *searched* the longer a workspace has been running, only *browsed*.
+- **Recommended improvement:** a person filter (`<Select>` of members, matching against
+  `actorId`/`targetUserId`) and/or an action-type filter, applied client-side over the already-loaded
+  `activityLog` — no new query needed, this is the same shape of filter Reports already has for
+  team/client.
+- **Priority:** Medium — not broken, just doesn't scale to "search" the way it should for an
+  audit-trail feature specifically.
+- **Complexity:** Low — client-side filter over data already in context.
+
+Fixed in `manage.tsx`'s `ActivityTab`: a person filter (built from everyone who's actually
+appeared as an actor or target in the log, not the whole roster, so a removed person's history
+stays findable) and an action-type filter (humanized labels for known actions, raw string
+fallback for anything new), both applied client-side over the already-loaded `activityLog` before
+the existing week-grouping. Only shown once there's more than one person or action type to filter
+by; a filtered-to-nothing state gets its own "no matches" message distinct from the genuinely
+empty-log state.
+
+**L35. ✅ Fixed.**
+- **Current workflow:** `WeekStatusPanel` (Manage → Approvals, `manage.tsx`) shows each team
+  member's current-week timesheet *status* (Approved/Submitted/Rejected/Not submitted) but never
+  their actual hours. Seeing "who's logged how many hours this week" means leaving Manage
+  entirely, going to Reports, switching to the "By employee" tab, and setting the date preset to
+  "This week."
+- **Problem:** a manager scanning for who's behind on hours (not just who hasn't submitted yet —
+  someone can be on-track with 30 logged hours and just not have clicked Submit) has to
+  context-switch pages for a number that's directly adjacent, conceptually, to the status badge
+  already shown.
+- **Why it matters:** the literal "View weekly team hours" item this audit asked about — the
+  closest existing surface (`WeekStatusPanel`) shows *whether* someone submitted, not *how much*
+  they logged, which is often the more useful of the two at a glance.
+- **Recommended improvement:** show each row's current-week total alongside the status badge,
+  using `employeeHoursForRange` (already exists, already used by Reports for exactly this
+  calculation) scoped to the current week.
+- **Priority:** Low — the number is one page-trip away via Reports, not hidden.
+- **Complexity:** Low — reuses an existing RPC; the only new work is calling it from
+  `WeekStatusPanel` and rendering the result.
+
+Fixed in `manage.tsx`'s `WeekStatusPanel`: fetches `employeeHoursForRange` for the current week on
+mount/week-change and renders each row's total next to its status badge. A failed fetch just
+leaves the hours column blank rather than breaking the status list, which is the more important
+half of this panel.
+
+**L36. ✅ Fixed.**
+- **Current workflow:** `TeamEntriesTab` (Manage → Entries, `manage.tsx`) navigates week-by-week
+  via prev/next chevrons only (`offset` state), with no "Today"/reset shortcut.
+- **Problem:** after paging back several weeks for one person, then switching to a different
+  person via the member picker, the week offset stays wherever it was left — there's no one-click
+  way back to the current week.
+- **Why it matters:** the personal Time page's own Calendar view already solved this exact problem
+  (`goToday()` in `CalendarView`, `time.tsx` — added specifically because, per the original audit's
+  L22, "Calendar view had no navigation at all... Added independent month/week paging plus a
+  'Today' reset"). The manager-facing equivalent never inherited the same affordance.
+- **Recommended improvement:** add the same `goToday`-style reset button next to `TeamEntriesTab`'s
+  week navigator.
+- **Priority:** Low.
+- **Complexity:** Very low — copies an existing, already-proven pattern from `CalendarView`.
+
+Fixed in `manage.tsx`'s `TeamEntriesTab`: a "Today" ghost button appears next to the week
+navigator whenever `offset !== 0`, resetting it to the current week in one click.
+
+### 28. Status Summary
+
+- **Highest-value fix (H22):** pending approvals have no passive visibility anywhere in the app —
+  the data already exists (`pendingApprovals.length`), it just isn't wired into the nav badge or
+  Dashboard the way the analogous pending-signups case already is.
+- **Real, repeated friction (M37–M40):** no link between reviewing a timesheet and correcting the
+  entries behind it; Reports can't express a custom date range; four separate member-heavy manager
+  surfaces each independently lack search/team-filtering instead of sharing one; the Activity log
+  can be browsed but not searched. None of these are broken — they're each one extra
+  page-switch, one long scroll, or one re-navigation more than the underlying data requires.
+- **Small polish (L35, L36):** weekly hours are a page-trip away rather than shown inline next to
+  submission status; the manager-facing week navigator never got the "Today" shortcut the personal
+  Calendar view already has.
+- **Explicitly out of scope:** "identify late attendance" has no answerable data model today
+  (`weekly_schedule` is free text, not structured start/end times) and building one would cross
+  into the "HR platform" territory this audit was told to avoid — noted once, not forced into a
+  finding.
+- **Already solid, no new finding needed:** permission boundaries are clearly communicated
+  everywhere they apply (`ScheduleTab`/`TeamEntriesTab`'s explicit "Managers and admins only"
+  empty states, `RoleCell`'s disabled-with-tooltip on your own role, self-review/self-approval
+  blocked server-side per the original and QA audits) — this pass found nothing new to flag there.
+
+### Files inspected this pass
+
+`src/routes/manage.tsx` (all tabs: Approvals, Activity, Schedule, Entries), `src/routes/reports.tsx`,
+`src/routes/settings.tsx` (Users, Admin tabs), `src/routes/teams.tsx`, `src/components/app-shell.tsx`
+(nav badge logic), and `src/lib/workspace-store.tsx` (to confirm what member/approval/activity data
+is already loaded and available to reuse, vs. what would need a new query).

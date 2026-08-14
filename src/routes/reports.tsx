@@ -16,6 +16,7 @@ import { AppShell, ProjectDot } from "@/components/app-shell";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import {
   Select,
   SelectContent,
@@ -46,7 +47,7 @@ export const Route = createFileRoute("/reports")({
 
 type ProjectSortKey = "name" | "hours" | "team";
 type EmployeeSortKey = "name" | "hours" | "team" | "overtime";
-type RangePreset = "this_week" | "this_month" | "last_30" | "this_quarter" | "this_year";
+type RangePreset = "this_week" | "this_month" | "last_30" | "this_quarter" | "this_year" | "custom";
 
 const presetLabels: Record<RangePreset, string> = {
   this_week: "This week",
@@ -54,9 +55,13 @@ const presetLabels: Record<RangePreset, string> = {
   last_30: "Last 30 days",
   this_quarter: "This quarter",
   this_year: "This year",
+  custom: "Custom range",
 };
 
-function computeRange(preset: RangePreset): { from: string; to: string } {
+// M38: only ever called for the fixed presets — "custom" is resolved
+// directly in Reports() from the two date inputs instead, since there's
+// no formula to compute it from.
+function computeRange(preset: Exclude<RangePreset, "custom">): { from: string; to: string } {
   const today = new Date();
   const to = toDateKey(today);
   switch (preset) {
@@ -92,6 +97,9 @@ function downloadCsv(filename: string, rows: (string | number)[][]) {
 function Reports() {
   const [view, setView] = useState<"project" | "employee">("project");
   const [preset, setPreset] = useState<RangePreset>("this_month");
+  const todayKey = toDateKey(new Date());
+  const [customFrom, setCustomFrom] = useState(todayKey);
+  const [customTo, setCustomTo] = useState(todayKey);
   const [teamFilter, setTeamFilter] = useState("all");
   const [clientFilter, setClientFilter] = useState("all");
 
@@ -121,7 +129,17 @@ function Reports() {
     employeeClientHoursForRange,
   } = useWorkspace();
 
-  const { from, to } = useMemo(() => computeRange(preset), [preset]);
+  const { from, to } = useMemo(() => {
+    if (preset === "custom") {
+      // Guard against an empty or inverted range (e.g. "to" cleared, or
+      // "from" typed after "to") rather than feeding one downstream — an
+      // inverted range would silently return zero rows everywhere.
+      return customFrom && customTo && customFrom <= customTo
+        ? { from: customFrom, to: customTo }
+        : { from: todayKey, to: todayKey };
+    }
+    return computeRange(preset);
+  }, [preset, customFrom, customTo, todayKey]);
 
   useEffect(() => {
     let cancelled = false;
@@ -244,6 +262,7 @@ function Reports() {
     return a.name.localeCompare(b.name) * dir;
   });
 
+  const rangeLabel = preset === "custom" ? `${from} to ${to}` : presetLabels[preset];
   const loading = view === "project" ? loadingProject : loadingEmployee;
   const total =
     view === "project"
@@ -315,6 +334,28 @@ function Reports() {
             ))}
           </SelectContent>
         </Select>
+        {preset === "custom" && (
+          <div className="flex items-center gap-2">
+            <Input
+              type="date"
+              aria-label="From date"
+              className="w-36"
+              max={customTo || undefined}
+              value={customFrom}
+              onChange={(e) => setCustomFrom(e.target.value)}
+            />
+            <span className="text-sm text-muted-foreground">to</span>
+            <Input
+              type="date"
+              aria-label="To date"
+              className="w-36"
+              min={customFrom || undefined}
+              max={todayKey}
+              value={customTo}
+              onChange={(e) => setCustomTo(e.target.value)}
+            />
+          </div>
+        )}
         <Select value={teamFilter} onValueChange={setTeamFilter}>
           <SelectTrigger className="w-48">
             <SelectValue />
@@ -359,7 +400,7 @@ function Reports() {
         <>
           <Card className="shadow-card">
             <CardHeader>
-              <CardTitle className="text-base">Hours by project · {presetLabels[preset]}</CardTitle>
+              <CardTitle className="text-base">Hours by project · {rangeLabel}</CardTitle>
             </CardHeader>
             <CardContent className="h-72 pl-0">
               <ResponsiveContainer width="100%" height="100%">
@@ -455,7 +496,7 @@ function Reports() {
           <Card className="shadow-card">
             <CardHeader>
               <CardTitle className="text-base">
-                Hours by employee · {presetLabels[preset]}
+                Hours by employee · {rangeLabel}
                 {clientFilter !== "all" &&
                   ` · ${clientFilter === "none" ? "No client" : (clients.find((c) => c.id === clientFilter)?.name ?? "")}`}
               </CardTitle>

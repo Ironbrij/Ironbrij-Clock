@@ -62,6 +62,7 @@ export function AppShell({
     isAdmin,
     activeMembers,
     unseenActivityCount,
+    pendingApprovals,
     signOut,
     refreshAll,
   } = useWorkspace();
@@ -138,6 +139,10 @@ export function AppShell({
   }
 
   const pendingCount = isAdmin ? activeMembers.filter((m) => m.pending).length : 0;
+  // H22: pendingApprovals is already RLS-scoped to timesheets this viewer
+  // can review (shared-team for a manager, all for an admin), so folding
+  // it into the same badge as unseen activity needs no extra role check.
+  const manageBadgeCount = unseenActivityCount + pendingApprovals.length;
 
   return (
     <div className="flex min-h-screen w-full bg-background">
@@ -159,11 +164,7 @@ export function AppShell({
           {nav.map((item) => {
             const active = pathname === item.to;
             const badgeCount =
-              item.to === "/settings"
-                ? pendingCount
-                : item.to === "/manage"
-                  ? unseenActivityCount
-                  : 0;
+              item.to === "/settings" ? pendingCount : item.to === "/manage" ? manageBadgeCount : 0;
             return (
               <Link
                 key={item.to}
@@ -247,7 +248,7 @@ export function AppShell({
           >
             <MoreHorizontal className="h-4 w-4" />
             More
-            {(pendingCount > 0 || unseenActivityCount > 0) && (
+            {(pendingCount > 0 || manageBadgeCount > 0) && (
               <span className="absolute right-1 top-0 h-2 w-2 rounded-full bg-destructive" />
             )}
           </button>
@@ -264,7 +265,7 @@ export function AppShell({
                   item.to === "/settings"
                     ? pendingCount
                     : item.to === "/manage"
-                      ? unseenActivityCount
+                      ? manageBadgeCount
                       : 0;
                 return (
                   <Link
