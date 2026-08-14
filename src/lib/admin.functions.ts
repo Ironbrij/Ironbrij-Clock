@@ -136,11 +136,18 @@ export const resendInvite = createServerFn({ method: "POST" })
 
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
 
-    // Look up the existing user by email first
-    const { data: users, error: listError } = await supabaseAdmin.auth.admin.listUsers();
-    if (listError) throw new Error(listError.message);
-
-    const existing = users.users.find((u) => u.email?.toLowerCase() === data.email.toLowerCase());
+    // Final Product Review H26: listUsers() defaults to page 1 / 50 per
+    // page — anyone whose account sorted past the first page was
+    // invisible to this lookup and got a false "invite them first" error.
+    // Querying profiles by email (unique, indexed via the primary-key
+    // path already used everywhere else) sidesteps listUsers()'s
+    // pagination entirely rather than working around it.
+    const { data: existing, error: lookupError } = await supabaseAdmin
+      .from("profiles")
+      .select("id")
+      .ilike("email", data.email)
+      .maybeSingle();
+    if (lookupError) throw new Error(lookupError.message);
     if (!existing) {
       throw new Error("No account found for that email — invite them first.");
     }

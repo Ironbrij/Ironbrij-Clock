@@ -9,13 +9,9 @@ import {
   ChevronLeft,
   ChevronRight,
   Clock,
-  FileText,
   Lock,
-  MonitorSmartphone,
   Pencil,
-  Receipt,
   Trash2,
-  type LucideIcon,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -98,63 +94,23 @@ export const Route = createFileRoute("/manage")({
       { title: "Manage — IronTrack" },
       {
         name: "description",
-        content:
-          "Workspace management hub: schedule, entries, expenses, approvals, activity, kiosks and invoices for Ironbrij teams.",
+        content: "Workspace management hub: schedule, entries, approvals and activity for Ironbrij teams.",
       },
       { property: "og:title", content: "Manage — IronTrack" },
       {
         property: "og:description",
-        content:
-          "Schedule, entries, expenses, approvals, activity, kiosks and invoices in one hub.",
+        content: "Schedule, entries, approvals and activity in one hub.",
       },
     ],
   }),
   component: ManagePage,
 });
 
-const sections: { id: string; label: string; icon: LucideIcon; description: string }[] = [
-  {
-    id: "schedule",
-    label: "Schedule",
-    icon: CalendarClock,
-    description: "Each person's weekly schedule, hourly rate, and employment type.",
-  },
-  {
-    id: "entries",
-    label: "Entries",
-    icon: Clock,
-    description: "View or edit an individual team member's time entries.",
-  },
-  {
-    id: "expenses",
-    label: "Expenses",
-    icon: Receipt,
-    description: "Log project expenses alongside tracked hours — coming soon.",
-  },
-  {
-    id: "approvals",
-    label: "Approvals",
-    icon: CheckCheck,
-    description: "Timesheets your team has submitted, waiting on your review.",
-  },
-  {
-    id: "activity",
-    label: "Activity",
-    icon: Activity,
-    description: "Approvals, role changes, and team updates — grouped by week.",
-  },
-  {
-    id: "kiosks",
-    label: "Kiosks",
-    icon: MonitorSmartphone,
-    description: "Shared clock-in terminals for on-site teams — coming soon.",
-  },
-  {
-    id: "invoices",
-    label: "Invoices",
-    icon: FileText,
-    description: "Turn billable hours into client invoices — scope still being confirmed.",
-  },
+const sections: { id: string; label: string }[] = [
+  { id: "schedule", label: "Schedule" },
+  { id: "entries", label: "Entries" },
+  { id: "approvals", label: "Approvals" },
+  { id: "activity", label: "Activity" },
 ];
 
 function ManagePage() {
@@ -170,7 +126,6 @@ function ManagePage() {
       ? { memberId: search.memberId, weekStart: search.weekStart }
       : undefined,
   );
-  const active = sections.find((s) => s.id === tab)!;
 
   // Re-navigating to /manage with new search params (e.g. clicking "Edit
   // entries" from Approvals while already on /manage) doesn't remount this
@@ -218,18 +173,16 @@ function ManagePage() {
         <ScheduleTab />
       ) : tab === "entries" ? (
         <TeamEntriesTab
+          // L38: keyed on the deep-link target so two consecutive "Edit
+          // entries" links (browser back/forward, or a second pasted link)
+          // force a remount and re-run the initialMemberId/initialWeekStart
+          // useState initializer, instead of the second target being
+          // silently ignored because the component never unmounted.
+          key={`${entriesTarget?.memberId ?? ""}-${entriesTarget?.weekStart ?? ""}`}
           initialMemberId={entriesTarget?.memberId}
           initialWeekStart={entriesTarget?.weekStart}
         />
-      ) : (
-        <Card className="mt-4 shadow-card">
-          <CardContent className="flex flex-col items-center gap-3 px-6 py-16 text-center">
-            <active.icon className="h-10 w-10 text-muted-foreground/50" />
-            <h2 className="text-lg font-semibold">{active.label}</h2>
-            <p className="max-w-md text-sm text-muted-foreground">{active.description}</p>
-          </CardContent>
-        </Card>
-      )}
+      ) : null}
     </AppShell>
   );
 }
