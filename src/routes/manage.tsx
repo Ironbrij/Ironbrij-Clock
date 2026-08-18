@@ -1440,34 +1440,48 @@ function TeamEntriesTab({
                       <span className="tabular-nums text-sm font-medium">
                         {entry.running ? "running" : formatMinutes(entry.minutes)}
                       </span>
-                      {!entry.running &&
-                        (locked ? (
-                          <span
-                            className="flex h-9 w-9 items-center justify-center text-muted-foreground"
-                            title="This week is locked — only an admin can edit it"
+                      {locked ? (
+                        <span
+                          className="flex h-9 w-9 items-center justify-center text-muted-foreground"
+                          title="This week is locked — only an admin can edit it"
+                        >
+                          <Lock className="h-4 w-4" />
+                        </span>
+                      ) : entry.running ? (
+                        // Same escape hatch as the owner's own Time page: a
+                        // timer that ran past midnight into a day with other
+                        // entries can fail to stop (stopTimer's overlap
+                        // check), so a manager/admin needs to be able to fix
+                        // its start time too, not just view it.
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          aria-label="Edit entry"
+                          title="Fix when this timer started"
+                          onClick={() => setEditingEntry(entry)}
+                        >
+                          <Pencil className="h-4 w-4" />
+                        </Button>
+                      ) : (
+                        <>
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            aria-label="Edit entry"
+                            onClick={() => setEditingEntry(entry)}
                           >
-                            <Lock className="h-4 w-4" />
-                          </span>
-                        ) : (
-                          <>
-                            <Button
-                              size="icon"
-                              variant="ghost"
-                              aria-label="Edit entry"
-                              onClick={() => setEditingEntry(entry)}
-                            >
-                              <Pencil className="h-4 w-4" />
-                            </Button>
-                            <Button
-                              size="icon"
-                              variant="ghost"
-                              aria-label="Delete entry"
-                              onClick={() => setDeletingEntry(entry)}
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
-                          </>
-                        ))}
+                            <Pencil className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            aria-label="Delete entry"
+                            onClick={() => setDeletingEntry(entry)}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </>
+                      )}
                     </div>
                   </li>
                 );

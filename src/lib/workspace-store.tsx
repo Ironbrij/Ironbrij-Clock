@@ -230,7 +230,8 @@ type WorkspaceContextValue = {
       description?: string;
       date?: string;
       startTime?: string;
-      endTime?: string;
+      /** `null` means "still running, leave it open" — see use-time-entries.ts's updateEntry. */
+      endTime?: string | null;
     },
   ) => Promise<void>;
   deleteEntry: (entryId: string) => Promise<void>;
