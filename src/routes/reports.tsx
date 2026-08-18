@@ -13,6 +13,7 @@ import {
 } from "recharts";
 import { toast } from "sonner";
 import { AppShell, ProjectDot } from "@/components/app-shell";
+import { Combobox } from "@/components/combobox";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -372,20 +373,17 @@ function Reports() {
             ))}
           </SelectContent>
         </Select>
-        <Select value={clientFilter} onValueChange={setClientFilter}>
-          <SelectTrigger className="w-48">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All clients</SelectItem>
-            <SelectItem value="none">No client</SelectItem>
-            {clients.map((c) => (
-              <SelectItem key={c.id} value={c.id}>
-                {c.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <Combobox
+          options={[
+            { value: "all", label: "All clients" },
+            { value: "none", label: "No client" },
+            ...clients.map((c) => ({ value: c.id, label: c.name })),
+          ]}
+          value={clientFilter}
+          onChange={setClientFilter}
+          searchPlaceholder="Search clients…"
+          triggerClassName="w-48"
+        />
         {canManage && (
           <Tabs value={view} onValueChange={(v) => setView(v as "project" | "employee")}>
             <TabsList>
