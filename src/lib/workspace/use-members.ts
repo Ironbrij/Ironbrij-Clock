@@ -237,6 +237,20 @@ export function useMembersData(enabled: boolean, uid: string | null, session: Se
     [uid, qc],
   );
 
+  // Lets an admin set someone else's timezone from Manage > Schedule — e.g.
+  // a VA who hasn't visited their own Settings yet. RLS's
+  // "profiles_update_self_or_admin" policy is admin-only for anyone other
+  // than yourself (managers can't), so this is gated to isAdmin in the UI
+  // rather than canManage, matching the policy exactly.
+  const updateMemberTimezone = useCallback(
+    async (memberId: string, timezone: string) => {
+      const { error } = await supabase.from("profiles").update({ timezone }).eq("id", memberId);
+      throwIf(error);
+      qc.invalidateQueries({ queryKey: ["profiles"] });
+    },
+    [qc],
+  );
+
   const employeeHoursForRange = useCallback(async (from: string, to: string) => {
     const { data, error } = await supabase.rpc("employee_hours_range", { _from: from, _to: to });
     throwIf(error);
@@ -275,6 +289,7 @@ export function useMembersData(enabled: boolean, uid: string | null, session: Se
     removeMemberFromTeam,
     removeUser,
     updateProfile,
+    updateMemberTimezone,
     employeeHoursForRange,
     employeeClientHoursForRange,
   };

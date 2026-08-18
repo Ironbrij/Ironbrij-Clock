@@ -153,3 +153,136 @@ export function formatClock(iso: string) {
     hour12: false,
   });
 }
+
+/** Minutes such that localTime = UTC + offset, for `timeZone` at `date`. */
+function timezoneOffsetMinutes(date: Date, timeZone: string): number {
+  const dtf = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    hourCycle: "h23",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+  const parts: Record<string, string> = {};
+  for (const p of dtf.formatToParts(date)) parts[p.type] = p.value;
+  const asUtc = Date.UTC(
+    Number(parts.year),
+    Number(parts.month) - 1,
+    Number(parts.day),
+    Number(parts.hour),
+    Number(parts.minute),
+    Number(parts.second),
+  );
+  return (asUtc - date.getTime()) / 60_000;
+}
+
+function formatClockMinutes(minutesInDay: number) {
+  const h24 = Math.floor(minutesInDay / 60);
+  const m = minutesInDay % 60;
+  const period = h24 < 12 ? "am" : "pm";
+  const h12 = h24 % 12 === 0 ? 12 : h24 % 12;
+  return m === 0 ? `${h12}${period}` : `${h12}:${String(m).padStart(2, "0")}${period}`;
+}
+
+const SCHEDULE_TIME_RE =
+  /\b(\d{1,2})(?::([0-5]\d))?\s*([AaPp][Mm])\b|\b([01]?\d|2[0-3]):([0-5]\d)\b/g;
+
+/**
+ * Best-effort conversion of the clock times inside a free-text weekly
+ * schedule (e.g. "Mon–Fri, 9am–5pm") from one IANA timezone to another.
+ * Deliberately regex-based, not a real schedule parser — weekly_schedule is
+ * kept as free text on purpose (see the member_employment migration), so
+ * this only rewrites tokens it recognizes (h(:mm)am/pm, or 24-hour HH:MM)
+ * and leaves everything else untouched. Returns null when there's nothing
+ * to convert (no recognizable time, or the two zones are the same).
+ */
+export function convertScheduleTimes(
+  schedule: string,
+  fromTz: string,
+  toTz: string,
+): string | null {
+  if (!schedule.trim() || !fromTz || !toTz || fromTz === toTz) return null;
+  const now = new Date();
+  const diff = timezoneOffsetMinutes(now, toTz) - timezoneOffsetMinutes(now, fromTz);
+  if (diff === 0) return null;
+
+  let matched = false;
+  const result = schedule.replace(
+    SCHEDULE_TIME_RE,
+    (
+      _match: string,
+      h12: string | undefined,
+      m12: string | undefined,
+      ampm: string | undefined,
+      h24: string | undefined,
+      m24: string | undefined,
+    ) => {
+      matched = true;
+      let totalMinutes: number;
+      if (ampm) {
+        let h = Number(h12) % 12;
+        if (ampm.toLowerCase() === "pm") h += 12;
+        totalMinutes = h * 60 + Number(m12 ?? 0);
+      } else {
+        totalMinutes = Number(h24) * 60 + Number(m24);
+      }
+      const shifted = totalMinutes + diff;
+      const dayShift = Math.floor(shifted / 1440);
+      const wrapped = shifted - dayShift * 1440;
+      const label = formatClockMinutes(wrapped);
+      return dayShift === 0 ? label : `${label}(${dayShift > 0 ? "+" : ""}${dayShift}d)`;
+    },
+  );
+  return matched ? result : null;
+}
+
+const FALLBACK_TIMEZONES = [
+  "Australia/Sydney",
+  "Australia/Melbourne",
+  "Australia/Brisbane",
+  "Australia/Perth",
+  "Australia/Adelaide",
+  "Asia/Manila",
+  "Pacific/Auckland",
+  "Europe/London",
+  "America/New_York",
+  "America/Los_Angeles",
+];
+
+function timezoneOffsetLabel(timeZone: string): string {
+  try {
+    const part = new Intl.DateTimeFormat("en-US", { timeZone, timeZoneName: "shortOffset" })
+      .formatToParts(new Date())
+      .find((p) => p.type === "timeZoneName");
+    return part?.value ?? "";
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * Full IANA timezone list (each labeled with its current UTC offset) when
+ * the runtime supports `Intl.supportedValuesOf`, falling back to a short
+ * curated list of the zones this workspace actually spans otherwise.
+ */
+export function listTimezones(): { value: string; label: string }[] {
+  let zones: string[];
+  try {
+    zones =
+      typeof Intl.supportedValuesOf === "function"
+        ? Intl.supportedValuesOf("timeZone")
+        : FALLBACK_TIMEZONES;
+  } catch {
+    zones = FALLBACK_TIMEZONES;
+  }
+  return zones
+    .map((tz) => {
+      const offset = timezoneOffsetLabel(tz);
+      const name = tz.replace(/_/g, " ");
+      return { value: tz, label: offset ? `${name} (${offset})` : name };
+    })
+    .sort((a, b) => a.label.localeCompare(b.label));
+}
