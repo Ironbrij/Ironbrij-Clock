@@ -87,6 +87,10 @@ export function EntryFormDialog({
 }) {
   const { projects, entries, createEntry, updateEntry, settings, taskCategories } = useWorkspace();
   const clientBudgets = useClientBudgets();
+  // A running entry has no end yet — this dialog only lets it be reached
+  // for that case to correct the start (see updateEntry's `endTime: null`
+  // branch), the only edit a still-running timer supports.
+  const isRunning = !!entry?.running;
   const active = projects.filter((p) => !p.archived);
   const { recent: recentProjects, rest: otherProjects } = orderByRecency(active, entries);
   const { recent: recentTasks, rest: otherTasks } = orderByRecencyName(taskCategories, entries);
@@ -118,8 +122,8 @@ export function EntryFormDialog({
       toast.error("Pick a project first");
       return;
     }
-    if (!values.startTime || !values.endTime) {
-      toast.error("Add a start and end time");
+    if (!values.startTime || (!isRunning && !values.endTime)) {
+      toast.error(isRunning ? "Add a start time" : "Add a start and end time");
       return;
     }
     if (settings.requireDescriptions && !values.description.trim()) {
@@ -131,7 +135,7 @@ export function EntryFormDialog({
     setBusy(true);
     try {
       if (entry) {
-        await updateEntry(entry.id, values);
+        await updateEntry(entry.id, isRunning ? { ...values, endTime: null } : values);
         toast.success("Entry updated");
       } else {
         await createEntry({ ...values, endDate: endsNextDay ? endDate : undefined });
@@ -161,9 +165,11 @@ export function EntryFormDialog({
         <DialogHeader>
           <DialogTitle>{entry ? "Edit entry" : "Add a time entry"}</DialogTitle>
           <DialogDescription>
-            {entry
-              ? "Update the project, times or details for this entry."
-              : "Log time you forgot to track live — for today or any earlier day."}
+            {isRunning
+              ? "This timer is still running — you can only correct when it started."
+              : entry
+                ? "Update the project, times or details for this entry."
+                : "Log time you forgot to track live — for today or any earlier day."}
           </DialogDescription>
         </DialogHeader>
         <div className="grid gap-4 py-2">
@@ -264,12 +270,18 @@ export function EntryFormDialog({
             </div>
             <div className="grid gap-2">
               <Label htmlFor="entry-end">End</Label>
-              <Input
-                id="entry-end"
-                type="time"
-                value={values.endTime}
-                onChange={(e) => setValues((v) => ({ ...v, endTime: e.target.value }))}
-              />
+              {isRunning ? (
+                <div id="entry-end" className="flex h-9 items-center text-sm text-muted-foreground">
+                  Still running
+                </div>
+              ) : (
+                <Input
+                  id="entry-end"
+                  type="time"
+                  value={values.endTime}
+                  onChange={(e) => setValues((v) => ({ ...v, endTime: e.target.value }))}
+                />
+              )}
             </div>
           </div>
           {!entry && (

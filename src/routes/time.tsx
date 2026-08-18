@@ -461,7 +461,29 @@ function EntryList({ entries }: { entries: WorkspaceEntry[] }) {
                 <span className="tabular-nums text-sm font-medium">
                   {entry.running ? "running" : formatMinutes(entry.minutes)}
                 </span>
-                {!entry.running && (
+                {locked ? (
+                  <span
+                    className="flex h-9 w-9 items-center justify-center text-muted-foreground"
+                    title="This week is locked — ask your manager to send it back to edit this entry"
+                  >
+                    <Lock className="h-4 w-4" />
+                  </span>
+                ) : entry.running ? (
+                  // A stuck timer (e.g. it ran past midnight into a day that
+                  // already has other entries) can't always be stopped — see
+                  // stopTimer's overlap check — so editing its start time is
+                  // the only way out, not gated behind !entry.running like
+                  // Repeat/Delete below.
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    aria-label="Edit entry"
+                    title="Fix when this timer started"
+                    onClick={() => setEditingEntry(entry)}
+                  >
+                    <Pencil className="h-4 w-4" />
+                  </Button>
+                ) : (
                   <>
                     <Button
                       size="icon"
@@ -473,33 +495,22 @@ function EntryList({ entries }: { entries: WorkspaceEntry[] }) {
                     >
                       <Repeat className="h-4 w-4" />
                     </Button>
-                    {locked ? (
-                      <span
-                        className="flex h-9 w-9 items-center justify-center text-muted-foreground"
-                        title="This week is locked — ask your manager to send it back to edit this entry"
-                      >
-                        <Lock className="h-4 w-4" />
-                      </span>
-                    ) : (
-                      <>
-                        <Button
-                          size="icon"
-                          variant="ghost"
-                          aria-label="Edit entry"
-                          onClick={() => setEditingEntry(entry)}
-                        >
-                          <Pencil className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          size="icon"
-                          variant="ghost"
-                          aria-label="Delete entry"
-                          onClick={() => setDeletingEntry(entry)}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </>
-                    )}
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      aria-label="Edit entry"
+                      onClick={() => setEditingEntry(entry)}
+                    >
+                      <Pencil className="h-4 w-4" />
+                    </Button>
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      aria-label="Delete entry"
+                      onClick={() => setDeletingEntry(entry)}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
                   </>
                 )}
               </div>

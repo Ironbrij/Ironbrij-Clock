@@ -231,7 +231,10 @@ export function useTimeEntriesData(
         })
         .eq("id", entryId)
         .select("id");
-      throwIf(error);
+      throwIf(error, {
+        "23P01": "That overlaps with another entry you already have on this day.",
+        "42501": POLICY_VIOLATION_MESSAGE,
+      });
       if (!data || data.length === 0) throw new Error(LOCKED_WEEK_MESSAGE);
       invalidateEntries();
       return { splitAcrossDays };
@@ -248,7 +251,15 @@ export function useTimeEntriesData(
         description?: string;
         date?: string;
         startTime?: string;
-        endTime?: string;
+        /**
+         * A string sets a completed end time. `null` explicitly means "this
+         * entry is still running, leave it open" — only date/startTime are
+         * applied, so a stuck timer's start can be corrected without
+         * stopping it first (see stopTimer's overlap check, which otherwise
+         * leaves a cross-midnight timer that collides with a later day's
+         * entries with no way to stop). Omit entirely for no time change.
+         */
+        endTime?: string | null;
       },
     ) => {
       if (
@@ -264,7 +275,28 @@ export function useTimeEntriesData(
       if (patch.task !== undefined) dbPatch.task = patch.task;
       if (patch.description !== undefined) dbPatch.description = patch.description;
 
-      if (
+      if (patch.endTime === null) {
+        // Still running — the dialog always supplies both when editing this
+        // way, so a missing one here means a non-UI caller used the shape
+        // wrong rather than a gap to fill from `entries`.
+        if (patch.date === undefined || patch.startTime === undefined) {
+          throw new Error("Entry not found.");
+        }
+        const start = combineDateAndTime(patch.date, patch.startTime);
+        if (start.getTime() > Date.now()) {
+          throw new Error("Start time can't be in the future.");
+        }
+        // Only meaningful for the caller's own entry — for someone else's
+        // running entry (Manage > Entries), `entries` is scoped to the
+        // signed-in admin/manager and can't answer "does this overlap," so
+        // this is skipped and the DB's EXCLUDE constraint (mapped to a
+        // friendly message below) is the real check.
+        if (overlapsExisting(entries, start, new Date(), entryId)) {
+          throw new Error("That overlaps with another entry you already have on this day.");
+        }
+        dbPatch.entry_date = patch.date;
+        dbPatch.start_time = start.toISOString();
+      } else if (
         patch.date !== undefined ||
         patch.startTime !== undefined ||
         patch.endTime !== undefined
@@ -283,10 +315,13 @@ export function useTimeEntriesData(
         // A running entry (no end_time) has no real "end" to fall back to —
         // defaulting it to the start, as this used to, silently forced
         // minutes to 0 and surfaced as the misleading "End time must be
-        // after start time." No UI reaches this today (edit is hidden while
-        // running), but the function is public, so guard it directly.
+        // after start time." Reaching here for a running entry means the
+        // caller wants to set a real end time (patch.endTime is a string,
+        // not null) — that's stopping it with a custom time, which isn't
+        // supported; use stopTimer, or the `endTime: null` branch above to
+        // just correct the start.
         if (existing && !existing.endTime) {
-          throw new Error("Stop the timer before changing its date or time.");
+          throw new Error("Stop the timer before changing its end time.");
         }
 
         const pad = (n: number) => String(n).padStart(2, "0");
