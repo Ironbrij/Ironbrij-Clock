@@ -72,6 +72,17 @@ import {
   type WorkspaceProject,
 } from "@/lib/workspace-store";
 
+const PROJECTS_PAGE_SIZE = 12;
+
+/**
+ * Select value for "not tied to one team" — projects.team_id is nullable
+ * and projects are already visible workspace-wide regardless of team (see
+ * the projects_select_all RLS policy), so this is purely a categorization
+ * choice, not an access boundary. Radix Select rejects an empty-string
+ * item value, hence the sentinel instead of just using "".
+ */
+const ALL_TEAMS = "__all_teams__";
+
 export const Route = createFileRoute("/projects")({
   head: () => ({
     meta: [
@@ -133,6 +144,17 @@ function ProjectsPage() {
       .filter((p) => !q || p.name.toLowerCase().includes(q) || p.client.toLowerCase().includes(q))
       .filter((p) => projectTagFilter === "all" || p.tagIds.includes(projectTagFilter));
   }, [projects, projectSearch, projectTagFilter]);
+
+  const [projectPage, setProjectPage] = useState(1);
+  const totalProjectPages = Math.max(1, Math.ceil(filteredProjects.length / PROJECTS_PAGE_SIZE));
+  const currentProjectPage = Math.min(projectPage, totalProjectPages);
+  const pagedProjects = filteredProjects.slice(
+    (currentProjectPage - 1) * PROJECTS_PAGE_SIZE,
+    currentProjectPage * PROJECTS_PAGE_SIZE,
+  );
+  useEffect(() => {
+    setProjectPage(1);
+  }, [projectSearch, projectTagFilter]);
 
   const [formOpen, setFormOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -241,7 +263,7 @@ function ProjectsPage() {
             </p>
           ) : (
             <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-              {filteredProjects.map((p) => {
+              {pagedProjects.map((p) => {
                 const team = teams.find((t) => t.id === p.teamId);
                 const projectTags = tags.filter((t) => p.tagIds.includes(t.id));
                 const budget = p.clientId ? clientBudgets.get(p.clientId) : undefined;
@@ -280,7 +302,7 @@ function ProjectsPage() {
                             color: p.color,
                           }}
                         >
-                          {team?.name ?? "No team"}
+                          {team?.name ?? "All teams"}
                         </span>
                         {projectTags.map((t) => (
                           <span
@@ -336,6 +358,45 @@ function ProjectsPage() {
                   </Card>
                 );
               })}
+            </div>
+          )}
+          {filteredProjects.length > 0 && (
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <p className="text-sm text-muted-foreground">
+                {filteredProjects.length} {filteredProjects.length === 1 ? "project" : "projects"}
+                {totalProjectPages > 1 && ` · page ${currentProjectPage} of ${totalProjectPages}`}
+              </p>
+              {totalProjectPages > 1 && (
+                <Pagination className="mx-0 w-auto">
+                  <PaginationContent>
+                    <PaginationItem>
+                      <PaginationPrevious
+                        className={
+                          currentProjectPage <= 1
+                            ? "pointer-events-none opacity-50"
+                            : "cursor-pointer"
+                        }
+                        onClick={() =>
+                          currentProjectPage > 1 && setProjectPage(currentProjectPage - 1)
+                        }
+                      />
+                    </PaginationItem>
+                    <PaginationItem>
+                      <PaginationNext
+                        className={
+                          currentProjectPage >= totalProjectPages
+                            ? "pointer-events-none opacity-50"
+                            : "cursor-pointer"
+                        }
+                        onClick={() =>
+                          currentProjectPage < totalProjectPages &&
+                          setProjectPage(currentProjectPage + 1)
+                        }
+                      />
+                    </PaginationItem>
+                  </PaginationContent>
+                </Pagination>
+              )}
             </div>
           )}
         </div>
@@ -532,7 +593,7 @@ function ProjectFormDialog({
     if (!open) return;
     setName(project?.name ?? "");
     setClient(project?.client ?? clientNames[0] ?? "");
-    setTeamId(project?.teamId ?? teams[0]?.id ?? "");
+    setTeamId(project ? project.teamId || ALL_TEAMS : (teams[0]?.id ?? ALL_TEAMS));
     setColor(project?.color ?? dotColors[0]);
     setBillable(project?.billable ?? true);
     setTagIds(project?.tagIds ?? []);
@@ -583,6 +644,7 @@ function ProjectFormDialog({
                   <SelectValue placeholder="Pick a team" />
                 </SelectTrigger>
                 <SelectContent>
+                  <SelectItem value={ALL_TEAMS}>All teams</SelectItem>
                   {teams.map((t) => (
                     <SelectItem key={t.id} value={t.id}>
                       {t.name}
@@ -646,9 +708,17 @@ function ProjectFormDialog({
               Cancel
             </Button>
             <Button
-              disabled={!name.trim() || !client || !teamId}
+              disabled={!name.trim() || !client}
               onClick={() => {
-                onSubmit({ name: name.trim(), client, teamId, color, billable, tagIds, memberIds });
+                onSubmit({
+                  name: name.trim(),
+                  client,
+                  teamId: teamId === ALL_TEAMS ? "" : teamId,
+                  color,
+                  billable,
+                  tagIds,
+                  memberIds,
+                });
                 onOpenChange(false);
               }}
             >
