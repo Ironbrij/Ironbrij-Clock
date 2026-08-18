@@ -1108,14 +1108,14 @@ function ScheduleRow({
             disabled={savingTz}
             placeholder="Set timezone"
             searchPlaceholder="Search timezones…"
-            triggerClassName="h-8 w-52 text-xs"
+            triggerClassName="h-8 w-64 text-xs"
           />
         ) : (
           <span className="text-xs text-muted-foreground">{member.timezone}</span>
         )}
       </td>
       <td className="px-4 py-2.5 align-top">
-        <div className="flex w-56 flex-col gap-1.5">
+        <div className="flex w-64 flex-col gap-1.5">
           <div className="flex gap-1">
             {WEEKDAY_ABBR.map((label, i) => (
               <button
@@ -1143,16 +1143,16 @@ function ScheduleRow({
               value={schedule.start}
               onChange={(e) => setStart(e.target.value)}
               onBlur={commitSchedule}
-              className="h-7 w-[6.5rem] px-2 text-xs"
+              className="h-7 min-w-0 flex-1 pl-2 pr-1 text-xs"
             />
-            <span className="text-xs text-muted-foreground">–</span>
+            <span className="shrink-0 text-xs text-muted-foreground">–</span>
             <Input
               type="time"
               aria-label="End time"
               value={schedule.end}
               onChange={(e) => setEnd(e.target.value)}
               onBlur={commitSchedule}
-              className="h-7 w-[6.5rem] px-2 text-xs"
+              className="h-7 min-w-0 flex-1 pl-2 pr-1 text-xs"
             />
           </div>
           {(auSchedule || phSchedule) && (
