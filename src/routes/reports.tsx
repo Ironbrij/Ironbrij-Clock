@@ -196,7 +196,10 @@ function Reports() {
   }, [from, to, canManage, employeeHoursForRange, employeeClientHoursForRange]);
 
   const projectRows = projects
-    .filter((p) => teamFilter === "all" || p.teamId === teamFilter)
+    // A project with no team set isn't unassigned — the "All teams" choice
+    // in the New/Edit Project dialog stores it that way on purpose, so it
+    // should surface under every specific team filter, not just "All".
+    .filter((p) => teamFilter === "all" || p.teamId === teamFilter || !p.teamId)
     .filter((p) => {
       if (clientFilter === "all") return true;
       if (clientFilter === "none") return p.clientId === null;
@@ -205,7 +208,7 @@ function Reports() {
     .map((p) => ({
       ...p,
       hours: (projectMinutes?.[p.id] ?? 0) / 60,
-      team: teams.find((t) => t.id === p.teamId)?.name ?? "",
+      team: teams.find((t) => t.id === p.teamId)?.name ?? "All teams",
     }));
 
   const sortedProjects = [...projectRows].sort((a, b) => {
