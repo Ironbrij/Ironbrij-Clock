@@ -176,7 +176,12 @@ function timezoneOffsetMinutes(date: Date, timeZone: string): number {
     Number(parts.minute),
     Number(parts.second),
   );
-  return (asUtc - date.getTime()) / 60_000;
+  // Real-world UTC offsets are always whole minutes, but asUtc is built
+  // from whole-second formatToParts values while date.getTime() carries
+  // sub-second precision — their difference lands a fraction of a second
+  // off a clean multiple of 60_000, which without rounding shows up later
+  // as garbage like "6:59.99999999999994am" instead of "7:00am".
+  return Math.round((asUtc - date.getTime()) / 60_000);
 }
 
 function formatClockMinutes(minutesInDay: number) {
@@ -206,46 +211,34 @@ function minutesFromTimeMatch(
   return Number(h24) * 60 + Number(m24);
 }
 
+/** minutes-of-day, shifted by `diffMinutes` and wrapped into [0, 1440), with a "(+1d)"/"(-1d)" suffix when it crosses midnight into a different day. */
+function shiftAndFormat(minutesInDay: number, diffMinutes: number): string {
+  const shifted = minutesInDay + diffMinutes;
+  const dayShift = Math.floor(shifted / 1440);
+  const wrapped = shifted - dayShift * 1440;
+  const label = formatClockMinutes(wrapped);
+  return dayShift === 0 ? label : `${label}(${dayShift > 0 ? "+" : ""}${dayShift}d)`;
+}
+
 /**
- * Best-effort conversion of the clock times inside a free-text weekly
- * schedule (e.g. "Mon–Fri, 9am–5pm") from one IANA timezone to another.
- * Deliberately regex-based, not a real schedule parser — weekly_schedule is
- * kept as free text on purpose (see the member_employment migration), so
- * this only rewrites tokens it recognizes (h(:mm)am/pm, or 24-hour HH:MM)
- * and leaves everything else untouched. Returns null when there's nothing
- * to convert (no recognizable time, or the two zones are the same).
+ * Converts a start–end time range (as `<input type="time">` HH:MM values)
+ * from one IANA timezone to another — e.g. what a 9am–5pm shift in Manila
+ * looks like on an Australia/Sydney clock. Returns null when there's
+ * nothing to convert (either time missing, or the two zones are the same).
  */
-export function convertScheduleTimes(
-  schedule: string,
+export function convertTimeRange(
+  start: string,
+  end: string,
   fromTz: string,
   toTz: string,
 ): string | null {
-  if (!schedule.trim() || !fromTz || !toTz || fromTz === toTz) return null;
+  const startMin = timeInputToMinutes(start);
+  const endMin = timeInputToMinutes(end);
+  if (startMin == null || endMin == null || !fromTz || !toTz || fromTz === toTz) return null;
   const now = new Date();
   const diff = timezoneOffsetMinutes(now, toTz) - timezoneOffsetMinutes(now, fromTz);
   if (diff === 0) return null;
-
-  let matched = false;
-  const result = schedule.replace(
-    SCHEDULE_TIME_RE,
-    (
-      _match: string,
-      h12: string | undefined,
-      m12: string | undefined,
-      ampm: string | undefined,
-      h24: string | undefined,
-      m24: string | undefined,
-    ) => {
-      matched = true;
-      const totalMinutes = minutesFromTimeMatch(h12, m12, ampm, h24, m24);
-      const shifted = totalMinutes + diff;
-      const dayShift = Math.floor(shifted / 1440);
-      const wrapped = shifted - dayShift * 1440;
-      const label = formatClockMinutes(wrapped);
-      return dayShift === 0 ? label : `${label}(${dayShift > 0 ? "+" : ""}${dayShift}d)`;
-    },
-  );
-  return matched ? result : null;
+  return `${shiftAndFormat(startMin, diff)}–${shiftAndFormat(endMin, diff)}`;
 }
 
 /** Mon(0)…Sun(6) — the order the structured schedule editor and its parser/composer agree on. */

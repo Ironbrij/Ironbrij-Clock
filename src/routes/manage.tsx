@@ -59,7 +59,7 @@ import { formatHours, formatMinutes } from "@/lib/mock-data";
 import {
   addDays,
   composeWeeklySchedule,
-  convertScheduleTimes,
+  convertTimeRange,
   formatClock,
   formatDayLong,
   formatWeekRange,
@@ -1048,9 +1048,8 @@ function ScheduleRow({
     }
   };
 
-  const composedSchedule = composeWeeklySchedule(schedule.days, schedule.start, schedule.end);
-  const auSchedule = convertScheduleTimes(composedSchedule, member.timezone, orgTimezone);
-  const phSchedule = convertScheduleTimes(composedSchedule, member.timezone, PH_TIMEZONE);
+  const auSchedule = convertTimeRange(schedule.start, schedule.end, member.timezone, orgTimezone);
+  const phSchedule = convertTimeRange(schedule.start, schedule.end, member.timezone, PH_TIMEZONE);
   // The parser found no recognizable weekday in whatever's currently saved
   // (a legacy hand-typed note, most likely) — flagged so an admin doesn't
   // mistake the all-unselected picker for "no schedule set" and silently
