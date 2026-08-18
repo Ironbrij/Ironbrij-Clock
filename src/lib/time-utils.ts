@@ -190,6 +190,22 @@ function formatClockMinutes(minutesInDay: number) {
 const SCHEDULE_TIME_RE =
   /\b(\d{1,2})(?::([0-5]\d))?\s*([AaPp][Mm])\b|\b([01]?\d|2[0-3]):([0-5]\d)\b/g;
 
+/** Minutes-of-day from one SCHEDULE_TIME_RE match's capture groups (h12, m12, ampm, h24, m24). */
+function minutesFromTimeMatch(
+  h12: string | undefined,
+  m12: string | undefined,
+  ampm: string | undefined,
+  h24: string | undefined,
+  m24: string | undefined,
+): number {
+  if (ampm) {
+    let h = Number(h12) % 12;
+    if (ampm.toLowerCase() === "pm") h += 12;
+    return h * 60 + Number(m12 ?? 0);
+  }
+  return Number(h24) * 60 + Number(m24);
+}
+
 /**
  * Best-effort conversion of the clock times inside a free-text weekly
  * schedule (e.g. "Mon–Fri, 9am–5pm") from one IANA timezone to another.
@@ -221,14 +237,7 @@ export function convertScheduleTimes(
       m24: string | undefined,
     ) => {
       matched = true;
-      let totalMinutes: number;
-      if (ampm) {
-        let h = Number(h12) % 12;
-        if (ampm.toLowerCase() === "pm") h += 12;
-        totalMinutes = h * 60 + Number(m12 ?? 0);
-      } else {
-        totalMinutes = Number(h24) * 60 + Number(m24);
-      }
+      const totalMinutes = minutesFromTimeMatch(h12, m12, ampm, h24, m24);
       const shifted = totalMinutes + diff;
       const dayShift = Math.floor(shifted / 1440);
       const wrapped = shifted - dayShift * 1440;
@@ -237,6 +246,119 @@ export function convertScheduleTimes(
     },
   );
   return matched ? result : null;
+}
+
+/** Mon(0)…Sun(6) — the order the structured schedule editor and its parser/composer agree on. */
+export const WEEKDAY_ABBR = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+const WEEKDAY_ALIASES: [string, number][] = [
+  ["monday", 0],
+  ["mon", 0],
+  ["tuesday", 1],
+  ["tues", 1],
+  ["tue", 1],
+  ["wednesday", 2],
+  ["wed", 2],
+  ["thursday", 3],
+  ["thurs", 3],
+  ["thu", 3],
+  ["friday", 4],
+  ["fri", 4],
+  ["saturday", 5],
+  ["sat", 5],
+  ["sunday", 6],
+  ["sun", 6],
+];
+
+function dayIndexFromWord(word: string): number {
+  const hit = WEEKDAY_ALIASES.find(([alias]) => alias === word.toLowerCase());
+  return hit ? hit[1] : -1;
+}
+
+function timeInputToMinutes(value: string): number | null {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(value);
+  return m ? Number(m[1]) * 60 + Number(m[2]) : null;
+}
+
+function minutesToTimeInputValue(totalMinutes: number): string {
+  const h = Math.floor(totalMinutes / 60)
+    .toString()
+    .padStart(2, "0");
+  const m = (totalMinutes % 60).toString().padStart(2, "0");
+  return `${h}:${m}`;
+}
+
+/** Groups a Mon…Sun boolean selection into ranges, e.g. [T,T,T,T,T,F,F] → "Mon–Fri", [T,F,T,F,F,F,F] → "Mon, Wed". */
+function formatDayRanges(days: boolean[]): string {
+  const parts: string[] = [];
+  let i = 0;
+  while (i < 7) {
+    if (!days[i]) {
+      i++;
+      continue;
+    }
+    let j = i;
+    while (j + 1 < 7 && days[j + 1]) j++;
+    parts.push(j > i ? `${WEEKDAY_ABBR[i]}–${WEEKDAY_ABBR[j]}` : WEEKDAY_ABBR[i]);
+    i = j + 1;
+  }
+  return parts.join(", ");
+}
+
+/** Builds the same free-text form the schedule column stores, from the structured picker's state. Empty when no days are selected. */
+export function composeWeeklySchedule(days: boolean[], start: string, end: string): string {
+  const dayPart = formatDayRanges(days);
+  if (!dayPart) return "";
+  const startMin = timeInputToMinutes(start);
+  const endMin = timeInputToMinutes(end);
+  if (startMin == null || endMin == null) return dayPart;
+  return `${dayPart}, ${formatClockMinutes(startMin)}–${formatClockMinutes(endMin)}`;
+}
+
+/**
+ * Best-effort inverse of composeWeeklySchedule, for initializing the
+ * structured picker from whatever's already stored as free text (including
+ * schedules that predate the picker, or ones an admin typed by hand).
+ * Recognizes weekday names/abbreviations, "Day–Day" ranges, "weekdays"/
+ * "weekends"/"daily", and the first two recognizable clock times as
+ * start/end. Anything it can't recognize is simply left unselected — it
+ * never throws, and the caller still has the original text to fall back on.
+ */
+export function parseWeeklySchedule(text: string): { days: boolean[]; start: string; end: string } {
+  const days = [false, false, false, false, false, false, false];
+  const lower = text.toLowerCase();
+
+  if (/\bweekdays?\b/.test(lower)) for (let i = 0; i <= 4; i++) days[i] = true;
+  if (/\bweekends?\b/.test(lower)) {
+    days[5] = true;
+    days[6] = true;
+  }
+  if (/\b(everyday|every day|daily|all days)\b/.test(lower)) days.fill(true);
+
+  const rangeRe = /([a-z]+)\s*(?:–|—|-|to)\s*([a-z]+)/gi;
+  let range: RegExpExecArray | null;
+  while ((range = rangeRe.exec(text))) {
+    const a = dayIndexFromWord(range[1]);
+    const b = dayIndexFromWord(range[2]);
+    if (a === -1 || b === -1) continue;
+    const [from, to] = a <= b ? [a, b] : [b, a];
+    for (let i = from; i <= to; i++) days[i] = true;
+  }
+
+  const wordRe = /[a-z]+/gi;
+  let word: RegExpExecArray | null;
+  while ((word = wordRe.exec(text))) {
+    const idx = dayIndexFromWord(word[0]);
+    if (idx !== -1) days[idx] = true;
+  }
+
+  const toMinutes = (match: RegExpMatchArray) =>
+    minutesFromTimeMatch(match[1], match[2], match[3], match[4], match[5]);
+  const timeMatches = Array.from(text.matchAll(SCHEDULE_TIME_RE));
+  const start = timeMatches[0] ? minutesToTimeInputValue(toMinutes(timeMatches[0])) : "";
+  const end = timeMatches[1] ? minutesToTimeInputValue(toMinutes(timeMatches[1])) : "";
+
+  return { days, start, end };
 }
 
 const FALLBACK_TIMEZONES = [

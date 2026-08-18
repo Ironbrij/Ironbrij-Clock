@@ -53,20 +53,22 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { formatHours, formatMinutes } from "@/lib/mock-data";
 import {
   addDays,
+  composeWeeklySchedule,
   convertScheduleTimes,
   formatClock,
   formatDayLong,
   formatWeekRange,
   fromDateKey,
   listTimezones,
+  parseWeeklySchedule,
   startOfWeek,
   toDateKey,
+  WEEKDAY_ABBR,
 } from "@/lib/time-utils";
 import {
   useActiveTimers,
@@ -980,16 +982,18 @@ function ScheduleRow({
   isAdmin: boolean;
   updateMemberTimezone: (memberId: string, timezone: string) => Promise<void>;
 }) {
-  const [schedule, setSchedule] = useState(employment?.weeklySchedule ?? "");
+  const [schedule, setSchedule] = useState(() =>
+    parseWeeklySchedule(employment?.weeklySchedule ?? ""),
+  );
   const [rate, setRate] = useState(
     employment?.hourlyRate != null ? String(employment.hourlyRate) : "",
   );
   const [savingType, setSavingType] = useState(false);
   const [savingTz, setSavingTz] = useState(false);
-  const [scheduleOpen, setScheduleOpen] = useState(false);
+  const [savingSchedule, setSavingSchedule] = useState(false);
 
   useEffect(() => {
-    setSchedule(employment?.weeklySchedule ?? "");
+    setSchedule(parseWeeklySchedule(employment?.weeklySchedule ?? ""));
     setRate(employment?.hourlyRate != null ? String(employment.hourlyRate) : "");
   }, [employment?.weeklySchedule, employment?.hourlyRate]);
 
@@ -1007,24 +1011,31 @@ function ScheduleRow({
     }
   };
 
-  const saveSchedule = async () => {
-    if (schedule === (employment?.weeklySchedule ?? "")) return;
+  const savedSchedule = employment?.weeklySchedule ?? "";
+
+  const saveSchedule = async (next: { days: boolean[]; start: string; end: string }) => {
+    const composed = composeWeeklySchedule(next.days, next.start, next.end);
+    if (composed === savedSchedule) return;
+    setSavingSchedule(true);
     try {
-      await updateMemberEmployment(member.id, { weeklySchedule: schedule.trim() || null });
+      await updateMemberEmployment(member.id, { weeklySchedule: composed || null });
     } catch (error) {
       toast.error("Couldn't save schedule", { description: (error as Error).message });
-      setSchedule(employment?.weeklySchedule ?? "");
+      setSchedule(parseWeeklySchedule(savedSchedule));
+    } finally {
+      setSavingSchedule(false);
     }
   };
 
-  // Saves when the editor popover closes (outside click, Escape, or the
-  // trigger toggling it shut) rather than on every keystroke/blur — the
-  // schedule now lives behind a click-to-edit pill instead of an
-  // always-visible input, so there's no other natural "done editing" point.
-  const handleScheduleOpenChange = (open: boolean) => {
-    setScheduleOpen(open);
-    if (!open) void saveSchedule();
+  const toggleDay = (index: number) => {
+    const next = { ...schedule, days: schedule.days.map((d, i) => (i === index ? !d : d)) };
+    setSchedule(next);
+    void saveSchedule(next);
   };
+
+  const setStart = (value: string) => setSchedule((prev) => ({ ...prev, start: value }));
+  const setEnd = (value: string) => setSchedule((prev) => ({ ...prev, end: value }));
+  const commitSchedule = () => void saveSchedule(schedule);
 
   const saveTimezone = async (timezone: string) => {
     setSavingTz(true);
@@ -1037,8 +1048,14 @@ function ScheduleRow({
     }
   };
 
-  const auSchedule = convertScheduleTimes(schedule, member.timezone, orgTimezone);
-  const phSchedule = convertScheduleTimes(schedule, member.timezone, PH_TIMEZONE);
+  const composedSchedule = composeWeeklySchedule(schedule.days, schedule.start, schedule.end);
+  const auSchedule = convertScheduleTimes(composedSchedule, member.timezone, orgTimezone);
+  const phSchedule = convertScheduleTimes(composedSchedule, member.timezone, PH_TIMEZONE);
+  // The parser found no recognizable weekday in whatever's currently saved
+  // (a legacy hand-typed note, most likely) — flagged so an admin doesn't
+  // mistake the all-unselected picker for "no schedule set" and silently
+  // clobber it the moment they touch a day.
+  const unrecognizedSchedule = savedSchedule && !schedule.days.some(Boolean);
 
   const saveRate = async () => {
     const original = employment?.hourlyRate != null ? String(employment.hourlyRate) : "";
@@ -1099,46 +1116,59 @@ function ScheduleRow({
         )}
       </td>
       <td className="px-4 py-2.5 align-top">
-        <Popover open={scheduleOpen} onOpenChange={handleScheduleOpenChange}>
-          <PopoverTrigger asChild>
-            <button
-              type="button"
-              className="flex h-8 w-56 items-center justify-between gap-2 rounded-md border border-input bg-background px-3 text-left text-sm shadow-sm transition-colors hover:bg-accent"
-            >
-              <span className={"truncate " + (schedule ? "" : "text-muted-foreground")}>
-                {schedule || "Set schedule"}
-              </span>
-              <Pencil className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-            </button>
-          </PopoverTrigger>
-          <PopoverContent className="w-80" align="start">
-            <div className="grid gap-2">
-              <Label htmlFor={`schedule-${member.id}`}>Weekly schedule</Label>
-              <Textarea
-                id={`schedule-${member.id}`}
-                autoFocus
-                rows={3}
-                value={schedule}
-                onChange={(e) => setSchedule(e.target.value)}
-                placeholder="e.g. Mon–Fri, 9am–5pm"
-              />
-              {(auSchedule || phSchedule) && (
-                <p className="text-xs text-muted-foreground">
-                  {auSchedule && `AU ${auSchedule}`}
-                  {auSchedule && phSchedule && " · "}
-                  {phSchedule && `PH ${phSchedule}`}
-                </p>
-              )}
-            </div>
-          </PopoverContent>
-        </Popover>
-        {!scheduleOpen && (auSchedule || phSchedule) && (
-          <p className="mt-1 w-56 truncate text-xs text-muted-foreground">
-            {auSchedule && `AU ${auSchedule}`}
-            {auSchedule && phSchedule && " · "}
-            {phSchedule && `PH ${phSchedule}`}
-          </p>
-        )}
+        <div className="flex w-56 flex-col gap-1.5">
+          <div className="flex gap-1">
+            {WEEKDAY_ABBR.map((label, i) => (
+              <button
+                key={label}
+                type="button"
+                disabled={savingSchedule}
+                onClick={() => toggleDay(i)}
+                aria-pressed={schedule.days[i]}
+                title={label}
+                className={
+                  "flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[11px] font-medium transition-colors " +
+                  (schedule.days[i]
+                    ? "bg-primary text-primary-foreground"
+                    : "bg-muted text-muted-foreground hover:bg-accent")
+                }
+              >
+                {label[0]}
+              </button>
+            ))}
+          </div>
+          <div className="flex items-center gap-1.5">
+            <Input
+              type="time"
+              aria-label="Start time"
+              value={schedule.start}
+              onChange={(e) => setStart(e.target.value)}
+              onBlur={commitSchedule}
+              className="h-7 w-[6.5rem] px-2 text-xs"
+            />
+            <span className="text-xs text-muted-foreground">–</span>
+            <Input
+              type="time"
+              aria-label="End time"
+              value={schedule.end}
+              onChange={(e) => setEnd(e.target.value)}
+              onBlur={commitSchedule}
+              className="h-7 w-[6.5rem] px-2 text-xs"
+            />
+          </div>
+          {(auSchedule || phSchedule) && (
+            <p className="truncate text-xs text-muted-foreground">
+              {auSchedule && `AU ${auSchedule}`}
+              {auSchedule && phSchedule && " · "}
+              {phSchedule && `PH ${phSchedule}`}
+            </p>
+          )}
+          {unrecognizedSchedule && (
+            <p className="text-xs text-amber-600 dark:text-amber-400">
+              Couldn't read "{savedSchedule}" as days — pick above to replace it.
+            </p>
+          )}
+        </div>
       </td>
       <td className="px-4 py-2.5">
         <Input
