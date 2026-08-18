@@ -53,6 +53,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { formatHours, formatMinutes } from "@/lib/mock-data";
@@ -985,6 +986,7 @@ function ScheduleRow({
   );
   const [savingType, setSavingType] = useState(false);
   const [savingTz, setSavingTz] = useState(false);
+  const [scheduleOpen, setScheduleOpen] = useState(false);
 
   useEffect(() => {
     setSchedule(employment?.weeklySchedule ?? "");
@@ -1013,6 +1015,15 @@ function ScheduleRow({
       toast.error("Couldn't save schedule", { description: (error as Error).message });
       setSchedule(employment?.weeklySchedule ?? "");
     }
+  };
+
+  // Saves when the editor popover closes (outside click, Escape, or the
+  // trigger toggling it shut) rather than on every keystroke/blur — the
+  // schedule now lives behind a click-to-edit pill instead of an
+  // always-visible input, so there's no other natural "done editing" point.
+  const handleScheduleOpenChange = (open: boolean) => {
+    setScheduleOpen(open);
+    if (!open) void saveSchedule();
   };
 
   const saveTimezone = async (timezone: string) => {
@@ -1087,17 +1098,42 @@ function ScheduleRow({
           <span className="text-xs text-muted-foreground">{member.timezone}</span>
         )}
       </td>
-      <td className="px-4 py-2.5">
-        <Input
-          value={schedule}
-          onChange={(e) => setSchedule(e.target.value)}
-          onBlur={() => void saveSchedule()}
-          onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
-          placeholder="e.g. Mon–Fri, 9am–5pm"
-          className="h-8 min-w-[220px]"
-        />
-        {(auSchedule || phSchedule) && (
-          <p className="mt-1 text-xs text-muted-foreground">
+      <td className="px-4 py-2.5 align-top">
+        <Popover open={scheduleOpen} onOpenChange={handleScheduleOpenChange}>
+          <PopoverTrigger asChild>
+            <button
+              type="button"
+              className="flex h-8 w-56 items-center justify-between gap-2 rounded-md border border-input bg-background px-3 text-left text-sm shadow-sm transition-colors hover:bg-accent"
+            >
+              <span className={"truncate " + (schedule ? "" : "text-muted-foreground")}>
+                {schedule || "Set schedule"}
+              </span>
+              <Pencil className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+            </button>
+          </PopoverTrigger>
+          <PopoverContent className="w-80" align="start">
+            <div className="grid gap-2">
+              <Label htmlFor={`schedule-${member.id}`}>Weekly schedule</Label>
+              <Textarea
+                id={`schedule-${member.id}`}
+                autoFocus
+                rows={3}
+                value={schedule}
+                onChange={(e) => setSchedule(e.target.value)}
+                placeholder="e.g. Mon–Fri, 9am–5pm"
+              />
+              {(auSchedule || phSchedule) && (
+                <p className="text-xs text-muted-foreground">
+                  {auSchedule && `AU ${auSchedule}`}
+                  {auSchedule && phSchedule && " · "}
+                  {phSchedule && `PH ${phSchedule}`}
+                </p>
+              )}
+            </div>
+          </PopoverContent>
+        </Popover>
+        {!scheduleOpen && (auSchedule || phSchedule) && (
+          <p className="mt-1 w-56 truncate text-xs text-muted-foreground">
             {auSchedule && `AU ${auSchedule}`}
             {auSchedule && phSchedule && " · "}
             {phSchedule && `PH ${phSchedule}`}
