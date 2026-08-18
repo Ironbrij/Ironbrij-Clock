@@ -82,6 +82,14 @@ export const Route = createFileRoute("/time")({
 
 const pad = (n: number) => n.toString().padStart(2, "0");
 
+/**
+ * Select value for "start the timer without picking a project yet" —
+ * Radix Select rejects an empty-string item value, hence the sentinel
+ * instead of just using "". A project can always be added to the entry
+ * later, same as the task.
+ */
+const NO_PROJECT = "__no_project__";
+
 function TimePage() {
   const [view, setView] = useState("list");
   const [addOpen, setAddOpen] = useState(false);
@@ -148,7 +156,7 @@ function TimerBar() {
       setSeconds(0);
       return;
     }
-    setProject(runningEntry.projectId ?? "");
+    setProject(runningEntry.projectId ?? NO_PROJECT);
     setTask(runningEntry.task || taskCategories[0]?.name || "");
     setDescription(runningEntry.description);
     const tick = () =>
@@ -177,17 +185,14 @@ function TimerBar() {
         });
         setDescription("");
       } else {
-        if (!project) {
-          toast.error("Pick a project first");
-          return;
-        }
         if (settings.requireDescriptions && !description.trim()) {
           toast.error("Add a description first", {
             description: "Your admin has made descriptions required.",
           });
           return;
         }
-        await startTimer({ projectId: project, task, description });
+        const projectId = project && project !== NO_PROJECT ? project : null;
+        await startTimer({ projectId, task, description });
         toast.success("Timer running", { description: "We'll keep counting until you stop." });
         // Non-blocking heads-up, not an enforcement rule — someone can
         // still track time against an over-budget client (that's a real
@@ -289,6 +294,8 @@ function TimerBar() {
               <SelectValue placeholder="Project" />
             </SelectTrigger>
             <SelectContent>
+              <SelectItem value={NO_PROJECT}>No project</SelectItem>
+              {(recentProjects.length > 0 || otherProjects.length > 0) && <SelectSeparator />}
               {recentProjects.length > 0 && (
                 <SelectGroup>
                   <SelectLabel>Recent</SelectLabel>

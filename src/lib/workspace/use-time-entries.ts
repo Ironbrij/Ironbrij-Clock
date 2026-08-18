@@ -55,23 +55,6 @@ const MANUAL_ENTRY_DISABLED_MESSAGE =
 const POLICY_VIOLATION_MESSAGE =
   "That couldn't be saved — check that this week isn't locked, that manual entries are still allowed, and that a description is included if your admin requires one.";
 
-/** True if [start, end) would overlap any of `entries` other than `excludeId` — a still-running entry (no end_time yet) is treated as open-ended. */
-function overlapsExisting(
-  entries: WorkspaceEntry[],
-  start: Date,
-  end: Date,
-  excludeId?: string,
-): boolean {
-  const newStart = start.getTime();
-  const newEnd = end.getTime();
-  return entries.some((e) => {
-    if (e.id === excludeId) return false;
-    const eStart = new Date(e.startTime).getTime();
-    const eEnd = e.endTime ? new Date(e.endTime).getTime() : Infinity;
-    return newStart < eEnd && eStart < newEnd;
-  });
-}
-
 export function useTimeEntriesData(
   enabled: boolean,
   uid: string | null,
@@ -148,7 +131,7 @@ export function useTimeEntriesData(
       task,
       description,
     }: {
-      projectId: string;
+      projectId: string | null;
       task: string;
       description: string;
     }) => {
@@ -212,10 +195,7 @@ export function useTimeEntriesData(
             is_billable: project?.billable ?? true,
             tag_ids: project?.tagIds ?? [],
           });
-          throwIf(error, {
-            "23P01": "That overlaps with another entry you already have on this day.",
-            "42501": POLICY_VIOLATION_MESSAGE,
-          });
+          throwIf(error, { "42501": POLICY_VIOLATION_MESSAGE });
         }
       }
 
@@ -231,10 +211,7 @@ export function useTimeEntriesData(
         })
         .eq("id", entryId)
         .select("id");
-      throwIf(error, {
-        "23P01": "That overlaps with another entry you already have on this day.",
-        "42501": POLICY_VIOLATION_MESSAGE,
-      });
+      throwIf(error, { "42501": POLICY_VIOLATION_MESSAGE });
       if (!data || data.length === 0) throw new Error(LOCKED_WEEK_MESSAGE);
       invalidateEntries();
       return { splitAcrossDays };
@@ -255,9 +232,7 @@ export function useTimeEntriesData(
          * A string sets a completed end time. `null` explicitly means "this
          * entry is still running, leave it open" — only date/startTime are
          * applied, so a stuck timer's start can be corrected without
-         * stopping it first (see stopTimer's overlap check, which otherwise
-         * leaves a cross-midnight timer that collides with a later day's
-         * entries with no way to stop). Omit entirely for no time change.
+         * stopping it first. Omit entirely for no time change.
          */
         endTime?: string | null;
       },
@@ -285,14 +260,6 @@ export function useTimeEntriesData(
         const start = combineDateAndTime(patch.date, patch.startTime);
         if (start.getTime() > Date.now()) {
           throw new Error("Start time can't be in the future.");
-        }
-        // Only meaningful for the caller's own entry — for someone else's
-        // running entry (Manage > Entries), `entries` is scoped to the
-        // signed-in admin/manager and can't answer "does this overlap," so
-        // this is skipped and the DB's EXCLUDE constraint (mapped to a
-        // friendly message below) is the real check.
-        if (overlapsExisting(entries, start, new Date(), entryId)) {
-          throw new Error("That overlaps with another entry you already have on this day.");
         }
         dbPatch.entry_date = patch.date;
         dbPatch.start_time = start.toISOString();
@@ -340,13 +307,6 @@ export function useTimeEntriesData(
         const end = combineDateAndTime(date, endTime);
         const minutes = Math.round((end.getTime() - start.getTime()) / 60000);
         if (minutes <= 0) throw new Error("End time must be after start time.");
-        // Only meaningful for the caller's own entry — for someone else's
-        // (existing is undefined in that case), `entries` can't answer
-        // "does this overlap," so this is skipped and the DB's EXCLUDE
-        // constraint (mapped to a friendly message below) is the real check.
-        if (existing && overlapsExisting(entries, start, end, entryId)) {
-          throw new Error("That overlaps with another entry you already have on this day.");
-        }
         dbPatch.entry_date = date;
         dbPatch.start_time = start.toISOString();
         dbPatch.end_time = end.toISOString();
@@ -362,10 +322,7 @@ export function useTimeEntriesData(
         .update(dbPatch)
         .eq("id", entryId)
         .select("id");
-      throwIf(error, {
-        "23P01": "That overlaps with another entry you already have on this day.",
-        "42501": POLICY_VIOLATION_MESSAGE,
-      });
+      throwIf(error, { "42501": POLICY_VIOLATION_MESSAGE });
       if (!data || data.length === 0) throw new Error(LOCKED_WEEK_MESSAGE);
       invalidateEntries();
     },
@@ -395,9 +352,6 @@ export function useTimeEntriesData(
       const end = combineDateAndTime(input.endDate ?? input.date, input.endTime);
       const minutes = Math.round((end.getTime() - start.getTime()) / 60000);
       if (minutes <= 0) throw new Error("End time must be after start time.");
-      if (overlapsExisting(entries, start, end)) {
-        throw new Error("That overlaps with another entry you already have on this day.");
-      }
       // M21: a manual entry that crosses midnight is stored as one row per
       // calendar day it touches — the same convention stopTimer/splitByDay
       // already established for the live timer (H8) — so day/week views
@@ -421,13 +375,10 @@ export function useTimeEntriesData(
         tag_ids: project?.tagIds ?? [],
       }));
       const { error } = await supabase.from("time_entries").insert(rows);
-      throwIf(error, {
-        "23P01": "That overlaps with another entry you already have on this day.",
-        "42501": POLICY_VIOLATION_MESSAGE,
-      });
+      throwIf(error, { "42501": POLICY_VIOLATION_MESSAGE });
       invalidateEntries();
     },
-    [uid, projects, entries, settings, invalidateEntries],
+    [uid, projects, settings, invalidateEntries],
   );
 
   const deleteEntry = useCallback(
