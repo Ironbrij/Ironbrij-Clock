@@ -206,6 +206,8 @@ type WorkspaceContextValue = {
     job_title?: string;
     timezone?: string;
   }) => Promise<void>;
+  /** Admin-only (matches the profiles RLS policy exactly) — sets another member's timezone, e.g. from Manage > Schedule. */
+  updateMemberTimezone: (memberId: string, timezone: string) => Promise<void>;
 
   startTimer: (input: { projectId: string; task: string; description: string }) => Promise<void>;
   /** Stops a running entry, splitting it into one row per calendar day if it ran past midnight. */
@@ -277,6 +279,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     removeMemberFromTeam,
     removeUser,
     updateProfile,
+    updateMemberTimezone,
     employeeHoursForRange,
     employeeClientHoursForRange,
   } = useMembersData(enabled, uid, session);
@@ -450,6 +453,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       removeMemberFromTeam,
       removeUser,
       updateProfile,
+      updateMemberTimezone,
 
       startTimer,
       stopTimer,
@@ -481,6 +485,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     removeMemberFromTeam,
     removeUser,
     updateProfile,
+    updateMemberTimezone,
     employeeHoursForRange,
     employeeClientHoursForRange,
     teams,

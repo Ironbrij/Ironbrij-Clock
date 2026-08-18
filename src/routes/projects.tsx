@@ -15,6 +15,7 @@ import {
 import { toast } from "sonner";
 import { AppShell, ProjectDot } from "@/components/app-shell";
 import { ColorDotPicker } from "@/components/color-dot-picker";
+import { Combobox } from "@/components/combobox";
 import { MultiSelectList } from "@/components/multi-select-list";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -124,6 +125,15 @@ function ProjectsPage() {
     return [NO_CLIENT, ...names];
   }, [realClients]);
 
+  const [projectSearch, setProjectSearch] = useState("");
+  const [projectTagFilter, setProjectTagFilter] = useState("all");
+  const filteredProjects = useMemo(() => {
+    const q = projectSearch.trim().toLowerCase();
+    return projects
+      .filter((p) => !q || p.name.toLowerCase().includes(q) || p.client.toLowerCase().includes(q))
+      .filter((p) => projectTagFilter === "all" || p.tagIds.includes(projectTagFilter));
+  }, [projects, projectSearch, projectTagFilter]);
+
   const [formOpen, setFormOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [archivingId, setArchivingId] = useState<string | null>(null);
@@ -196,100 +206,138 @@ function ProjectsPage() {
         />
       )}
       {tab === "projects" && (
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-          {projects.map((p) => {
-            const team = teams.find((t) => t.id === p.teamId);
-            const projectTags = tags.filter((t) => p.tagIds.includes(t.id));
-            const budget = p.clientId ? clientBudgets.get(p.clientId) : undefined;
-            return (
-              <Card
-                key={p.id}
-                onClick={
-                  canManage
-                    ? () => {
-                        setEditingId(p.id);
-                        setFormOpen(true);
-                      }
-                    : undefined
-                }
-                className={
-                  "shadow-card transition-shadow hover:shadow-elevated " +
-                  (canManage ? "cursor-pointer " : "") +
-                  (p.archived ? "opacity-60" : "")
-                }
-              >
-                <CardContent className="flex h-full flex-col gap-4 p-5">
-                  <div className="flex items-start gap-2">
-                    <span className="mt-1.5">
-                      <ProjectDot color={p.color} />
-                    </span>
-                    <div className="min-w-0">
-                      <h2 className="text-base font-semibold leading-snug">{p.name}</h2>
-                      <p className="mt-0.5 text-sm text-muted-foreground">{p.client}</p>
-                    </div>
-                  </div>
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    <span
-                      className="w-fit rounded-full px-2.5 py-1 text-xs font-medium"
-                      style={{
-                        backgroundColor: `color-mix(in oklab, ${p.color} 14%, transparent)`,
-                        color: p.color,
-                      }}
-                    >
-                      {team?.name ?? "No team"}
-                    </span>
-                    {projectTags.map((t) => (
-                      <span
-                        key={t.id}
-                        className="rounded-full px-2 py-0.5 text-xs font-medium"
-                        style={{
-                          backgroundColor: `color-mix(in oklab, ${t.color} 14%, transparent)`,
-                          color: t.color,
-                        }}
-                      >
-                        {t.name}
-                      </span>
-                    ))}
-                    {!p.billable && (
-                      <Badge variant="secondary" className="text-[10px]">
-                        Non-billable
-                      </Badge>
-                    )}
-                    {p.archived && (
-                      <Badge variant="outline" className="text-[10px]">
-                        Archived
-                      </Badge>
-                    )}
-                    {budget?.isOver && (
-                      <Badge
-                        variant="destructive"
-                        className="gap-1 text-[10px]"
-                        title={`${p.client} has used all ${formatHours(budget.subscriptionHours)} of their subscription hours`}
-                      >
-                        <AlertTriangle className="h-3 w-3" /> Client over budget
-                      </Badge>
-                    )}
-                  </div>
-                  <div className="mt-auto flex items-center justify-between pt-2">
-                    <div className="flex -space-x-2">
-                      {p.memberIds.map((id) => {
-                        const m = memberById(id);
-                        if (!m) return null;
-                        return (
-                          <Avatar key={id} className="h-8 w-8 border-2 border-card">
-                            <AvatarFallback className="bg-secondary text-[11px] text-secondary-foreground">
-                              {m.initials}
-                            </AvatarFallback>
-                          </Avatar>
-                        );
-                      })}
-                    </div>
-                    <span className="text-sm font-medium tabular-nums">{formatHours(p.hours)}</span>
-                  </div>
-                </CardContent>
-              </Card>
-            );
-          })}
+        <div className="grid gap-4">
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="relative min-w-[220px] flex-1">
+              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                placeholder="Search projects or clients…"
+                value={projectSearch}
+                onChange={(e) => setProjectSearch(e.target.value)}
+                className="pl-8"
+              />
+            </div>
+            {tags.length > 0 && (
+              <Select value={projectTagFilter} onValueChange={setProjectTagFilter}>
+                <SelectTrigger className="w-44 shrink-0">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All tags</SelectItem>
+                  {tags.map((t) => (
+                    <SelectItem key={t.id} value={t.id}>
+                      {t.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+          </div>
+          {filteredProjects.length === 0 ? (
+            <p className="px-1 py-8 text-center text-sm text-muted-foreground">
+              {projects.length === 0
+                ? "No projects yet — create one to get started."
+                : "No projects match that search or filter."}
+            </p>
+          ) : (
+            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+              {filteredProjects.map((p) => {
+                const team = teams.find((t) => t.id === p.teamId);
+                const projectTags = tags.filter((t) => p.tagIds.includes(t.id));
+                const budget = p.clientId ? clientBudgets.get(p.clientId) : undefined;
+                return (
+                  <Card
+                    key={p.id}
+                    onClick={
+                      canManage
+                        ? () => {
+                            setEditingId(p.id);
+                            setFormOpen(true);
+                          }
+                        : undefined
+                    }
+                    className={
+                      "shadow-card transition-shadow hover:shadow-elevated " +
+                      (canManage ? "cursor-pointer " : "") +
+                      (p.archived ? "opacity-60" : "")
+                    }
+                  >
+                    <CardContent className="flex h-full flex-col gap-4 p-5">
+                      <div className="flex items-start gap-2">
+                        <span className="mt-1.5">
+                          <ProjectDot color={p.color} />
+                        </span>
+                        <div className="min-w-0">
+                          <h2 className="text-base font-semibold leading-snug">{p.name}</h2>
+                          <p className="mt-0.5 text-sm text-muted-foreground">{p.client}</p>
+                        </div>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span
+                          className="w-fit rounded-full px-2.5 py-1 text-xs font-medium"
+                          style={{
+                            backgroundColor: `color-mix(in oklab, ${p.color} 14%, transparent)`,
+                            color: p.color,
+                          }}
+                        >
+                          {team?.name ?? "No team"}
+                        </span>
+                        {projectTags.map((t) => (
+                          <span
+                            key={t.id}
+                            className="rounded-full px-2 py-0.5 text-xs font-medium"
+                            style={{
+                              backgroundColor: `color-mix(in oklab, ${t.color} 14%, transparent)`,
+                              color: t.color,
+                            }}
+                          >
+                            {t.name}
+                          </span>
+                        ))}
+                        {!p.billable && (
+                          <Badge variant="secondary" className="text-[10px]">
+                            Non-billable
+                          </Badge>
+                        )}
+                        {p.archived && (
+                          <Badge variant="outline" className="text-[10px]">
+                            Archived
+                          </Badge>
+                        )}
+                        {budget?.isOver && (
+                          <Badge
+                            variant="destructive"
+                            className="gap-1 text-[10px]"
+                            title={`${p.client} has used all ${formatHours(budget.subscriptionHours)} of their subscription hours`}
+                          >
+                            <AlertTriangle className="h-3 w-3" /> Client over budget
+                          </Badge>
+                        )}
+                      </div>
+                      <div className="mt-auto flex items-center justify-between pt-2">
+                        <div className="flex -space-x-2">
+                          {p.memberIds.map((id) => {
+                            const m = memberById(id);
+                            if (!m) return null;
+                            return (
+                              <Avatar key={id} className="h-8 w-8 border-2 border-card">
+                                <AvatarFallback className="bg-secondary text-[11px] text-secondary-foreground">
+                                  {m.initials}
+                                </AvatarFallback>
+                              </Avatar>
+                            );
+                          })}
+                        </div>
+                        <span className="text-sm font-medium tabular-nums">
+                          {formatHours(p.hours)}
+                        </span>
+                      </div>
+                    </CardContent>
+                  </Card>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
 
@@ -518,18 +566,15 @@ function ProjectFormDialog({
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="grid gap-2">
               <Label htmlFor="project-client">Client</Label>
-              <Select value={client} onValueChange={setClient}>
-                <SelectTrigger id="project-client">
-                  <SelectValue placeholder="Pick a client" />
-                </SelectTrigger>
-                <SelectContent>
-                  {clientNames.map((c) => (
-                    <SelectItem key={c} value={c}>
-                      {c}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <Combobox
+                id="project-client"
+                options={clientNames.map((c) => ({ value: c, label: c }))}
+                value={client}
+                onChange={setClient}
+                placeholder="Pick a client"
+                searchPlaceholder="Search clients…"
+                emptyText="No clients match that search."
+              />
             </div>
             <div className="grid gap-2">
               <Label htmlFor="project-team">Team</Label>

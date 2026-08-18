@@ -30,6 +30,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Combobox } from "@/components/combobox";
 import { EntryFormDialog } from "@/components/entry-form-dialog";
 import { Input } from "@/components/ui/input";
 import {
@@ -57,10 +58,12 @@ import { Textarea } from "@/components/ui/textarea";
 import { formatHours, formatMinutes } from "@/lib/mock-data";
 import {
   addDays,
+  convertScheduleTimes,
   formatClock,
   formatDayLong,
   formatWeekRange,
   fromDateKey,
+  listTimezones,
   startOfWeek,
   toDateKey,
 } from "@/lib/time-utils";
@@ -94,7 +97,8 @@ export const Route = createFileRoute("/manage")({
       { title: "Manage — IronTrack" },
       {
         name: "description",
-        content: "Workspace management hub: schedule, entries, approvals and activity for Ironbrij teams.",
+        content:
+          "Workspace management hub: schedule, entries, approvals and activity for Ironbrij teams.",
       },
       { property: "og:title", content: "Manage — IronTrack" },
       {
@@ -850,6 +854,9 @@ function ActivityTab() {
   );
 }
 
+/** Philippines has a single national timezone with no DST, unlike Australia's — safe to hardcode as one of the two reference zones a schedule gets converted into. The other is the workspace's own default timezone (Settings > General), which defaults to Australia/Sydney. */
+const PH_TIMEZONE = "Asia/Manila";
+
 function ScheduleTab() {
   const {
     activeMembers,
@@ -860,6 +867,7 @@ function ScheduleTab() {
     teams,
     employmentByUser,
     updateMemberEmployment,
+    updateMemberTimezone,
   } = useWorkspace();
   const [search, setSearch] = useState("");
   const [teamFilter, setTeamFilter] = useState("all");
@@ -914,6 +922,7 @@ function ScheduleTab() {
               <tr>
                 <th className="px-4 py-2.5">Name</th>
                 <th className="px-4 py-2.5">Type</th>
+                <th className="px-4 py-2.5">Timezone</th>
                 <th className="px-4 py-2.5">Weekly schedule</th>
                 <th className="px-4 py-2.5">Hourly rate ({settings.currency})</th>
               </tr>
@@ -925,11 +934,14 @@ function ScheduleTab() {
                   member={m}
                   employment={employmentByUser.get(m.id)}
                   updateMemberEmployment={updateMemberEmployment}
+                  orgTimezone={settings.timezone}
+                  isAdmin={isAdmin}
+                  updateMemberTimezone={updateMemberTimezone}
                 />
               ))}
               {filteredMembers.length === 0 && (
                 <tr>
-                  <td colSpan={4} className="px-4 py-10 text-center text-sm text-muted-foreground">
+                  <td colSpan={5} className="px-4 py-10 text-center text-sm text-muted-foreground">
                     No one to show here yet.
                   </td>
                 </tr>
@@ -942,12 +954,18 @@ function ScheduleTab() {
   );
 }
 
+/** Full IANA list, built once per module load rather than per row — it doesn't depend on props and Intl.supportedValuesOf/offset formatting isn't free at ~400 entries. */
+const timezoneOptions = listTimezones();
+
 function ScheduleRow({
   member,
   employment,
   updateMemberEmployment,
+  orgTimezone,
+  isAdmin,
+  updateMemberTimezone,
 }: {
-  member: { id: string; name: string; initials: string };
+  member: { id: string; name: string; initials: string; timezone: string };
   employment: WorkspaceEmployment | undefined;
   updateMemberEmployment: (
     userId: string,
@@ -957,12 +975,16 @@ function ScheduleRow({
       weeklySchedule?: string | null;
     },
   ) => Promise<void>;
+  orgTimezone: string;
+  isAdmin: boolean;
+  updateMemberTimezone: (memberId: string, timezone: string) => Promise<void>;
 }) {
   const [schedule, setSchedule] = useState(employment?.weeklySchedule ?? "");
   const [rate, setRate] = useState(
     employment?.hourlyRate != null ? String(employment.hourlyRate) : "",
   );
   const [savingType, setSavingType] = useState(false);
+  const [savingTz, setSavingTz] = useState(false);
 
   useEffect(() => {
     setSchedule(employment?.weeklySchedule ?? "");
@@ -992,6 +1014,20 @@ function ScheduleRow({
       setSchedule(employment?.weeklySchedule ?? "");
     }
   };
+
+  const saveTimezone = async (timezone: string) => {
+    setSavingTz(true);
+    try {
+      await updateMemberTimezone(member.id, timezone);
+    } catch (error) {
+      toast.error("Couldn't save timezone", { description: (error as Error).message });
+    } finally {
+      setSavingTz(false);
+    }
+  };
+
+  const auSchedule = convertScheduleTimes(schedule, member.timezone, orgTimezone);
+  const phSchedule = convertScheduleTimes(schedule, member.timezone, PH_TIMEZONE);
 
   const saveRate = async () => {
     const original = employment?.hourlyRate != null ? String(employment.hourlyRate) : "";
@@ -1037,6 +1073,21 @@ function ScheduleRow({
         </Select>
       </td>
       <td className="px-4 py-2.5">
+        {isAdmin ? (
+          <Combobox
+            options={timezoneOptions}
+            value={member.timezone}
+            onChange={(tz) => void saveTimezone(tz)}
+            disabled={savingTz}
+            placeholder="Set timezone"
+            searchPlaceholder="Search timezones…"
+            triggerClassName="h-8 w-52 text-xs"
+          />
+        ) : (
+          <span className="text-xs text-muted-foreground">{member.timezone}</span>
+        )}
+      </td>
+      <td className="px-4 py-2.5">
         <Input
           value={schedule}
           onChange={(e) => setSchedule(e.target.value)}
@@ -1045,6 +1096,13 @@ function ScheduleRow({
           placeholder="e.g. Mon–Fri, 9am–5pm"
           className="h-8 min-w-[220px]"
         />
+        {(auSchedule || phSchedule) && (
+          <p className="mt-1 text-xs text-muted-foreground">
+            {auSchedule && `AU ${auSchedule}`}
+            {auSchedule && phSchedule && " · "}
+            {phSchedule && `PH ${phSchedule}`}
+          </p>
+        )}
       </td>
       <td className="px-4 py-2.5">
         <Input
