@@ -1449,10 +1449,8 @@ function TeamEntriesTab({
                         </span>
                       ) : entry.running ? (
                         // Same escape hatch as the owner's own Time page: a
-                        // timer that ran past midnight into a day with other
-                        // entries can fail to stop (stopTimer's overlap
-                        // check), so a manager/admin needs to be able to fix
-                        // its start time too, not just view it.
+                        // manager/admin needs to be able to fix a stuck
+                        // timer's start time, not just view it.
                         <Button
                           size="icon"
                           variant="ghost"

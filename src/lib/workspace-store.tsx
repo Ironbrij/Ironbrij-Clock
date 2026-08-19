@@ -214,8 +214,13 @@ type WorkspaceContextValue = {
     task: string;
     description: string;
   }) => Promise<void>;
-  /** Stops a running entry, splitting it into one row per calendar day if it ran past midnight. */
-  stopTimer: (entryId: string) => Promise<{ splitAcrossDays: boolean }>;
+  /**
+   * Stops a running entry, splitting it into one row per calendar day if it
+   * ran past midnight. Pass the description currently shown in the timer
+   * bar — it's saved to the entry along with the stop time, since nothing
+   * else persists description edits made while the timer is running.
+   */
+  stopTimer: (entryId: string, description?: string) => Promise<{ splitAcrossDays: boolean }>;
   createEntry: (input: {
     projectId: string;
     task: string;

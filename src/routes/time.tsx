@@ -177,7 +177,7 @@ function TimerBar() {
     setBusy(true);
     try {
       if (runningEntry) {
-        const result = await stopTimer(runningEntry.id);
+        const result = await stopTimer(runningEntry.id, description);
         toast.success("Timer stopped", {
           description: result.splitAcrossDays
             ? "This ran past midnight, so it's been split into a separate entry for each day."
@@ -476,11 +476,9 @@ function EntryList({ entries }: { entries: WorkspaceEntry[] }) {
                     <Lock className="h-4 w-4" />
                   </span>
                 ) : entry.running ? (
-                  // A stuck timer (e.g. it ran past midnight into a day that
-                  // already has other entries) can't always be stopped — see
-                  // stopTimer's overlap check — so editing its start time is
-                  // the only way out, not gated behind !entry.running like
-                  // Repeat/Delete below.
+                  // A stuck timer's start time can be corrected without
+                  // stopping it first — the only edit not gated behind
+                  // !entry.running like Repeat/Delete below.
                   <Button
                     size="icon"
                     variant="ghost"

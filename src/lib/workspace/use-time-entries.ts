@@ -169,9 +169,14 @@ export function useTimeEntriesData(
   );
 
   const stopTimer = useCallback(
-    async (entryId: string): Promise<{ splitAcrossDays: boolean }> => {
+    async (
+      entryId: string,
+      /** Whatever's currently in the timer bar's description box — the entry's own `description` column is stale the moment someone types after starting, since nothing writes it back until now. */
+      description?: string,
+    ): Promise<{ splitAcrossDays: boolean }> => {
       const entry = entries.find((e) => e.id === entryId);
       if (!entry || !uid) return { splitAcrossDays: false };
+      const finalDescription = description ?? entry.description;
       const [firstSegment, ...laterSegments] = splitByDay(new Date(entry.startTime), new Date());
       const splitAcrossDays = laterSegments.length > 0;
 
@@ -187,7 +192,7 @@ export function useTimeEntriesData(
             user_id: uid,
             project_id: entry.projectId,
             task: entry.task,
-            description: entry.description,
+            description: finalDescription,
             start_time: seg.start.toISOString(),
             end_time: seg.end.toISOString(),
             entry_date: seg.date,
@@ -208,6 +213,7 @@ export function useTimeEntriesData(
         .update({
           end_time: firstSegment.end.toISOString(),
           duration_minutes: Math.max(1, firstSegment.minutes),
+          description: finalDescription,
         })
         .eq("id", entryId)
         .select("id");
