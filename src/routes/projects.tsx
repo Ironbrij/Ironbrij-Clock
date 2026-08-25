@@ -17,7 +17,7 @@ import { AppShell, ProjectDot } from "@/components/app-shell";
 import { ColorDotPicker } from "@/components/color-dot-picker";
 import { Combobox } from "@/components/combobox";
 import { MultiSelectList } from "@/components/multi-select-list";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -71,6 +71,7 @@ import {
   type ProjectInput,
   type WorkspaceTag,
   type WorkspaceProject,
+  type WorkspaceTaskCategory,
 } from "@/lib/workspace-store";
 
 const PROJECTS_PAGE_SIZE = 12;
@@ -122,6 +123,7 @@ function ProjectsPage() {
     createTag,
     updateTag,
     deleteTag,
+    taskCategories,
   } = useWorkspace();
   // Archived projects are only relevant to the people who manage them —
   // everyone else just sees the active roster, not a dimmed-out history.
@@ -367,6 +369,7 @@ function ProjectsPage() {
                             if (!m) return null;
                             return (
                               <Avatar key={id} className="h-8 w-8 border-2 border-card">
+                                <AvatarImage src={m.avatarUrl ?? undefined} alt={m.name} />
                                 <AvatarFallback className="bg-secondary text-[11px] text-secondary-foreground">
                                   {m.initials}
                                 </AvatarFallback>
@@ -435,6 +438,7 @@ function ProjectsPage() {
         teams={teams}
         people={activeMembers}
         tags={tags}
+        taskCategories={taskCategories}
         onSubmit={(input) => {
           if (editing) {
             updateProject(editing.id, input)
@@ -588,6 +592,7 @@ function ProjectFormDialog({
   teams,
   people,
   tags,
+  taskCategories,
   onSubmit,
   onArchive,
   onUnarchive,
@@ -600,6 +605,7 @@ function ProjectFormDialog({
   teams: { id: string; name: string; color: string }[];
   people: { id: string; name: string; title: string }[];
   tags: WorkspaceTag[];
+  taskCategories: WorkspaceTaskCategory[];
   onSubmit: (input: ProjectInput) => void;
   onArchive: () => void;
   onUnarchive: () => void;
@@ -612,6 +618,7 @@ function ProjectFormDialog({
   const [billable, setBillable] = useState(true);
   const [tagIds, setTagIds] = useState<string[]>([]);
   const [memberIds, setMemberIds] = useState<string[]>([]);
+  const [taskCategoryIds, setTaskCategoryIds] = useState<string[]>([]);
   // M27: text, not number, so the field can be legitimately empty (no
   // budget) rather than coercing to 0 — same pattern as
   // ClientProfileDialog's subscriptionHours input.
@@ -626,6 +633,7 @@ function ProjectFormDialog({
     setBillable(project?.billable ?? true);
     setTagIds(project?.tagIds ?? []);
     setMemberIds(project?.memberIds ?? []);
+    setTaskCategoryIds(project?.taskCategoryIds ?? []);
     setBudgetHours(project?.budgetHours != null ? String(project.budgetHours) : "");
   }, [open, project, clientNames, teams]);
 
@@ -738,6 +746,24 @@ function ProjectFormDialog({
               />
             </div>
           </div>
+          {/* M25: hidden entirely when there's nothing to scope from —
+              leaving none selected here means "every category," today's
+              exact default behavior, so this is additive, not a
+              requirement to touch on every project. */}
+          {taskCategories.length > 0 && (
+            <div className="grid gap-2">
+              <Label>Task categories</Label>
+              <MultiSelectList
+                options={taskCategories.map((t) => ({ id: t.id, label: t.name }))}
+                selected={taskCategoryIds}
+                onToggle={toggle(setTaskCategoryIds)}
+              />
+              <p className="text-xs text-muted-foreground">
+                Leave none selected to offer every task category, same as today. Pick specific
+                ones to scope this project's task picker to just those.
+              </p>
+            </div>
+          )}
         </div>
         <DialogFooter className="sm:justify-between">
           {project && !project.archived && (
@@ -771,6 +797,7 @@ function ProjectFormDialog({
                   billable,
                   tagIds,
                   memberIds,
+                  taskCategoryIds,
                   budgetHours: budgetHoursTrimmed === "" ? null : Number(budgetHoursTrimmed),
                 });
                 onOpenChange(false);

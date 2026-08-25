@@ -168,11 +168,21 @@ export function useTimesheetsData(enabled: boolean, uid: string | null) {
 
   const submitTimesheet = useCallback(
     async (weekStart: Date) => {
-      const { error } = await supabase.rpc("submit_timesheet", {
+      const { data, error } = await supabase.rpc("submit_timesheet", {
         _week_start: toDateKey(weekStart),
       });
       throwIf(error);
       qc.invalidateQueries({ queryKey: ["timesheets"] });
+      // M29: best-effort notification to whoever can review this — a
+      // failure here (network drop, the edge function not deployed yet,
+      // RESEND_API_KEY not configured) should never make the submit
+      // itself look like it failed. Fire-and-forget, not awaited by the
+      // caller of submitTimesheet().
+      if (data) {
+        supabase.functions
+          .invoke("notify-timesheet-submitted", { body: { timesheet_id: data.id } })
+          .catch(() => {});
+      }
     },
     [qc],
   );

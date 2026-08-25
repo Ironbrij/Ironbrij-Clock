@@ -28,6 +28,11 @@ export function useProjectsData(
       .on("postgres_changes", { event: "*", schema: "public", table: "project_tags" }, () =>
         qc.invalidateQueries({ queryKey: ["project_tags"] }),
       )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "project_task_categories" },
+        () => qc.invalidateQueries({ queryKey: ["project_task_categories"] }),
+      )
       .subscribe();
     return () => {
       supabase.removeChannel(channel);
@@ -67,6 +72,18 @@ export function useProjectsData(
     },
   });
 
+  const projectTaskCategoriesQ = useQuery({
+    queryKey: ["project_task_categories"],
+    enabled,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("project_task_categories")
+        .select("project_id, task_category_id");
+      if (error) throw error;
+      return data;
+    },
+  });
+
   const projectHoursQ = useQuery({
     queryKey: ["project_hours"],
     enabled,
@@ -81,6 +98,7 @@ export function useProjectsData(
     const clients = clientsData ?? [];
     const pm = projectMembersQ.data ?? [];
     const pt = projectTagsQ.data ?? [];
+    const ptc = projectTaskCategoriesQ.data ?? [];
     const hours = projectHoursQ.data ?? [];
     return (projectsQ.data ?? []).map((p) => {
       const h = hours.find((x) => x.project_id === p.id);
@@ -95,17 +113,33 @@ export function useProjectsData(
         weekHours: (h?.week_minutes ?? 0) / 60,
         memberIds: pm.filter((x) => x.project_id === p.id).map((x) => x.user_id),
         tagIds: pt.filter((x) => x.project_id === p.id).map((x) => x.tag_id),
+        taskCategoryIds: ptc
+          .filter((x) => x.project_id === p.id)
+          .map((x) => x.task_category_id),
         billable: p.is_billable,
         archived: p.is_archived,
         budgetHours: p.budget_hours,
       };
     });
-  }, [projectsQ.data, clientsData, projectMembersQ.data, projectTagsQ.data, projectHoursQ.data]);
+  }, [
+    projectsQ.data,
+    clientsData,
+    projectMembersQ.data,
+    projectTagsQ.data,
+    projectTaskCategoriesQ.data,
+    projectHoursQ.data,
+  ]);
 
   const writeProjectLinks = useCallback(
-    async (projectId: string, tagIds: string[], memberIds: string[]) => {
+    async (
+      projectId: string,
+      tagIds: string[],
+      memberIds: string[],
+      taskCategoryIds: string[],
+    ) => {
       await supabase.from("project_tags").delete().eq("project_id", projectId);
       await supabase.from("project_members").delete().eq("project_id", projectId);
+      await supabase.from("project_task_categories").delete().eq("project_id", projectId);
       if (tagIds.length)
         await supabase
           .from("project_tags")
@@ -114,6 +148,15 @@ export function useProjectsData(
         await supabase
           .from("project_members")
           .insert(memberIds.map((user_id) => ({ project_id: projectId, user_id })));
+      // M25: empty means unrestricted, so an empty list here correctly
+      // leaves no rows behind — nothing to insert.
+      if (taskCategoryIds.length)
+        await supabase.from("project_task_categories").insert(
+          taskCategoryIds.map((task_category_id) => ({
+            project_id: projectId,
+            task_category_id,
+          })),
+        );
     },
     [],
   );
@@ -133,10 +176,12 @@ export function useProjectsData(
         .select("id")
         .single();
       throwIf(error);
-      if (data) await writeProjectLinks(data.id, input.tagIds, input.memberIds);
+      if (data)
+        await writeProjectLinks(data.id, input.tagIds, input.memberIds, input.taskCategoryIds);
       qc.invalidateQueries({ queryKey: ["projects"] });
       qc.invalidateQueries({ queryKey: ["project_members"] });
       qc.invalidateQueries({ queryKey: ["project_tags"] });
+      qc.invalidateQueries({ queryKey: ["project_task_categories"] });
       qc.invalidateQueries({ queryKey: ["project_hours"] });
     },
     [qc, resolveClientId, writeProjectLinks],
@@ -156,10 +201,11 @@ export function useProjectsData(
         })
         .eq("id", projectId);
       throwIf(error);
-      await writeProjectLinks(projectId, input.tagIds, input.memberIds);
+      await writeProjectLinks(projectId, input.tagIds, input.memberIds, input.taskCategoryIds);
       qc.invalidateQueries({ queryKey: ["projects"] });
       qc.invalidateQueries({ queryKey: ["project_members"] });
       qc.invalidateQueries({ queryKey: ["project_tags"] });
+      qc.invalidateQueries({ queryKey: ["project_task_categories"] });
     },
     [qc, resolveClientId, writeProjectLinks],
   );
@@ -195,6 +241,7 @@ export function useProjectsData(
       qc.invalidateQueries({ queryKey: ["projects"] });
       qc.invalidateQueries({ queryKey: ["project_members"] });
       qc.invalidateQueries({ queryKey: ["project_tags"] });
+      qc.invalidateQueries({ queryKey: ["project_task_categories"] });
       qc.invalidateQueries({ queryKey: ["time_entries"] });
       qc.invalidateQueries({ queryKey: ["project_hours"] });
     },
@@ -224,6 +271,7 @@ export function useProjectsData(
     projectsQ,
     projectMembersQ,
     projectTagsQ,
+    projectTaskCategoriesQ,
     projectHoursQ,
     projects,
     writeProjectLinks,

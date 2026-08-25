@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { AppShell } from "@/components/app-shell";
 import { ColorDotPicker } from "@/components/color-dot-picker";
 import { MultiSelectList } from "@/components/multi-select-list";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -166,6 +166,7 @@ function TeamsPage() {
                         <div className="hidden -space-x-2 sm:flex">
                           {preview.slice(0, 3).map((m) => (
                             <Avatar key={m.id} className="h-7 w-7 border-2 border-card">
+                              <AvatarImage src={m.avatarUrl ?? undefined} alt={m.name} />
                               <AvatarFallback className="bg-secondary text-[10px]">
                                 {m.initials}
                               </AvatarFallback>
@@ -235,6 +236,7 @@ function TeamsPage() {
                   <li key={m.id} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3">
                     <div className="flex min-w-0 items-center gap-3">
                       <Avatar className="h-9 w-9 shrink-0">
+                        <AvatarImage src={m.avatarUrl ?? undefined} alt={m.name} />
                         <AvatarFallback className="bg-secondary text-xs">
                           {m.initials}
                         </AvatarFallback>

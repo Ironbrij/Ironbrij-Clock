@@ -41,6 +41,8 @@ export type WorkspaceMember = {
   pending?: boolean;
   active: boolean;
   timezone: string;
+  /** L31: null until someone uploads one — every Avatar render falls back to initials via AvatarFallback until then. */
+  avatarUrl: string | null;
 };
 
 export type WorkspaceProject = {
@@ -54,6 +56,8 @@ export type WorkspaceProject = {
   weekHours: number;
   memberIds: string[];
   tagIds: string[];
+  /** M25: empty means unrestricted — every task category is offered, today's exact default behavior. Non-empty scopes the task picker to just these. */
+  taskCategoryIds: string[];
   billable: boolean;
   archived: boolean;
   /** M27: optional cap on logged hours, for a fixed-scope/capped project — null means no budget set. All-time, same as `hours`, not scoped to any date range. */
@@ -199,6 +203,8 @@ export type ProjectInput = {
   billable: boolean;
   tagIds: string[];
   memberIds: string[];
+  /** M25: empty means unrestricted — see WorkspaceProject.taskCategoryIds. */
+  taskCategoryIds: string[];
   /** M27: null clears/omits the budget. */
   budgetHours: number | null;
 };
