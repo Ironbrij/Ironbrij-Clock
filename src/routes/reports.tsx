@@ -19,6 +19,13 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import {
+  Pagination,
+  PaginationContent,
+  PaginationItem,
+  PaginationNext,
+  PaginationPrevious,
+} from "@/components/ui/pagination";
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -26,9 +33,9 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { formatHours } from "@/lib/mock-data";
+import { formatHours, formatMinutes } from "@/lib/mock-data";
 import { addDays, fromDateKey, startOfWeek, toDateKey } from "@/lib/time-utils";
-import { useWorkspace } from "@/lib/workspace-store";
+import { useWorkspace, type DetailedEntry } from "@/lib/workspace-store";
 
 export const Route = createFileRoute("/reports")({
   head: () => ({
@@ -46,9 +53,11 @@ export const Route = createFileRoute("/reports")({
   component: Reports,
 });
 
-type ProjectSortKey = "name" | "hours" | "team";
-type EmployeeSortKey = "name" | "hours" | "team" | "overtime";
+type ProjectSortKey = "name" | "hours" | "billable" | "team";
+type EmployeeSortKey = "name" | "hours" | "billable" | "team" | "overtime" | "amount";
 type RangePreset = "this_week" | "this_month" | "last_30" | "this_quarter" | "this_year" | "custom";
+
+const DETAILED_PAGE_SIZE = 50;
 
 const presetLabels: Record<RangePreset, string> = {
   this_week: "This week",
@@ -82,6 +91,22 @@ function computeRange(preset: Exclude<RangePreset, "custom">): { from: string; t
   }
 }
 
+// H17: every value in `currencies` (workspace/types.ts) is a real ISO 4217
+// code today, but this guards against a future bad value rather than
+// letting Intl throw and blank the whole column.
+function formatCurrency(amount: number, currency: string) {
+  try {
+    return new Intl.NumberFormat(undefined, {
+      style: "currency",
+      currency,
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(amount);
+  } catch {
+    return `${amount.toFixed(2)} ${currency}`;
+  }
+}
+
 function downloadCsv(filename: string, rows: (string | number)[][]) {
   const csv = rows
     .map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(","))
@@ -96,7 +121,7 @@ function downloadCsv(filename: string, rows: (string | number)[][]) {
 }
 
 function Reports() {
-  const [view, setView] = useState<"project" | "employee">("project");
+  const [view, setView] = useState<"project" | "employee" | "detailed">("project");
   const [preset, setPreset] = useState<RangePreset>("this_month");
   const todayKey = toDateKey(new Date());
   const [customFrom, setCustomFrom] = useState(todayKey);
@@ -107,15 +132,35 @@ function Reports() {
   const [projSortKey, setProjSortKey] = useState<ProjectSortKey>("hours");
   const [projAsc, setProjAsc] = useState(false);
   const [projectMinutes, setProjectMinutes] = useState<Record<string, number> | null>(null);
+  // M28: billable-only, for the Billable column — total minus this is
+  // non-billable.
+  const [projectBillableMinutes, setProjectBillableMinutes] = useState<Record<
+    string,
+    number
+  > | null>(null);
   const [loadingProject, setLoadingProject] = useState(true);
 
   const [empSortKey, setEmpSortKey] = useState<EmployeeSortKey>("hours");
   const [empAsc, setEmpAsc] = useState(false);
   const [employeeMinutes, setEmployeeMinutes] = useState<Record<string, number> | null>(null);
+  const [employeeBillableMinutes, setEmployeeBillableMinutes] = useState<Record<
+    string,
+    number
+  > | null>(null);
   const [employeeClientMinutes, setEmployeeClientMinutes] = useState<Record<string, number> | null>(
     null,
   );
   const [loadingEmployee, setLoadingEmployee] = useState(true);
+
+  // H16: entry-level detail behind its own tab — projectFilter/employeeFilter/
+  // detailedSearch only apply here, on top of the team/client filters the
+  // other two tabs already share.
+  const [detailedEntries, setDetailedEntries] = useState<DetailedEntry[] | null>(null);
+  const [loadingDetailed, setLoadingDetailed] = useState(true);
+  const [projectFilter, setProjectFilter] = useState("all");
+  const [employeeFilter, setEmployeeFilter] = useState("all");
+  const [detailedSearch, setDetailedSearch] = useState("");
+  const [detailedPage, setDetailedPage] = useState(1);
 
   const {
     projects,
@@ -126,8 +171,11 @@ function Reports() {
     canManage,
     employmentByUser,
     projectHoursForRange,
+    projectBillableHoursForRange,
     employeeHoursForRange,
+    employeeBillableHoursForRange,
     employeeClientHoursForRange,
+    detailedEntriesForRange,
   } = useWorkspace();
 
   const { from, to } = useMemo(() => {
@@ -145,14 +193,19 @@ function Reports() {
   useEffect(() => {
     let cancelled = false;
     setLoadingProject(true);
-    projectHoursForRange(from, to)
-      .then((data) => {
+    Promise.all([projectHoursForRange(from, to), projectBillableHoursForRange(from, to)])
+      .then(([totals, billable]) => {
         if (cancelled) return;
         const map: Record<string, number> = {};
-        data.forEach((r) => {
+        totals.forEach((r) => {
           map[r.projectId] = r.minutes;
         });
         setProjectMinutes(map);
+        const billableMap: Record<string, number> = {};
+        billable.forEach((r) => {
+          billableMap[r.projectId] = r.minutes;
+        });
+        setProjectBillableMinutes(billableMap);
       })
       .catch((error: Error) => toast.error("Couldn't load report", { description: error.message }))
       .finally(() => {
@@ -161,7 +214,7 @@ function Reports() {
     return () => {
       cancelled = true;
     };
-  }, [from, to, projectHoursForRange]);
+  }, [from, to, projectHoursForRange, projectBillableHoursForRange]);
 
   // Only fetched for managers/admins — a plain Member's own row is all
   // they'd get back anyway (see the migration for why), so there's
@@ -173,14 +226,23 @@ function Reports() {
     }
     let cancelled = false;
     setLoadingEmployee(true);
-    Promise.all([employeeHoursForRange(from, to), employeeClientHoursForRange(from, to)])
-      .then(([totals, byClient]) => {
+    Promise.all([
+      employeeHoursForRange(from, to),
+      employeeBillableHoursForRange(from, to),
+      employeeClientHoursForRange(from, to),
+    ])
+      .then(([totals, billable, byClient]) => {
         if (cancelled) return;
         const map: Record<string, number> = {};
         totals.forEach((r) => {
           map[r.userId] = r.minutes;
         });
         setEmployeeMinutes(map);
+        const billableMap: Record<string, number> = {};
+        billable.forEach((r) => {
+          billableMap[r.userId] = r.minutes;
+        });
+        setEmployeeBillableMinutes(billableMap);
         const clientMap: Record<string, number> = {};
         byClient.forEach((r) => {
           clientMap[`${r.userId}::${r.clientId ?? "none"}`] = r.minutes;
@@ -194,7 +256,44 @@ function Reports() {
     return () => {
       cancelled = true;
     };
-  }, [from, to, canManage, employeeHoursForRange, employeeClientHoursForRange]);
+  }, [
+    from,
+    to,
+    canManage,
+    employeeHoursForRange,
+    employeeBillableHoursForRange,
+    employeeClientHoursForRange,
+  ]);
+
+  // H16: raw entries for the Detailed tab — only fetched for managers/
+  // admins, same reasoning as the employee totals above (a plain Member's
+  // own rows aren't a cross-team billing report on their own, and the tab
+  // itself is hidden for them).
+  useEffect(() => {
+    if (!canManage) {
+      setLoadingDetailed(false);
+      return;
+    }
+    let cancelled = false;
+    setLoadingDetailed(true);
+    detailedEntriesForRange(from, to)
+      .then((rows) => {
+        if (!cancelled) setDetailedEntries(rows);
+      })
+      .catch((error: Error) => toast.error("Couldn't load report", { description: error.message }))
+      .finally(() => {
+        if (!cancelled) setLoadingDetailed(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [from, to, canManage, detailedEntriesForRange]);
+
+  // Any filter/range change invalidates whatever page the table was
+  // scrolled to — resetting avoids landing on a now out-of-range page.
+  useEffect(() => {
+    setDetailedPage(1);
+  }, [from, to, teamFilter, clientFilter, projectFilter, employeeFilter, detailedSearch]);
 
   const projectRows = projects
     // A project with no team set isn't unassigned — the "All teams" choice
@@ -206,15 +305,25 @@ function Reports() {
       if (clientFilter === "none") return p.clientId === null;
       return p.clientId === clientFilter;
     })
-    .map((p) => ({
-      ...p,
-      hours: (projectMinutes?.[p.id] ?? 0) / 60,
-      team: teams.find((t) => t.id === p.teamId)?.name ?? "All teams",
-    }));
+    .map((p) => {
+      const hours = (projectMinutes?.[p.id] ?? 0) / 60;
+      const billableHours = (projectBillableMinutes?.[p.id] ?? 0) / 60;
+      return {
+        ...p,
+        hours,
+        // M28: summed from time_entries.is_billable, not projects.is_billable
+        // — a project's own flag is only the *default* now that M26 lets a
+        // single entry override it.
+        billableHours,
+        billablePct: hours > 0 ? Math.round((billableHours / hours) * 100) : null,
+        team: teams.find((t) => t.id === p.teamId)?.name ?? "All teams",
+      };
+    });
 
   const sortedProjects = [...projectRows].sort((a, b) => {
     const dir = projAsc ? 1 : -1;
     if (projSortKey === "hours") return (a.hours - b.hours) * dir;
+    if (projSortKey === "billable") return (a.billableHours - b.billableHours) * dir;
     if (projSortKey === "team") return a.team.localeCompare(b.team) * dir;
     return a.name.localeCompare(b.name) * dir;
   });
@@ -246,9 +355,23 @@ function Reports() {
       // workspace's full-time weeklyHours target would just be wrong — null
       // means "not applicable," not "no overtime."
       const isPartTime = employmentByUser.get(m.id)?.employmentType === "part_time";
+      // H17: billable hours * hourly_rate, in the workspace's own currency.
+      // Same reasoning as overtime below — this always reflects the
+      // person's full billable workload, not narrowed by the client filter
+      // (a per-client-and-billable breakdown doesn't exist as its own RPC,
+      // and "$ for one client" would need that, not just filtered hours).
+      const rate = employmentByUser.get(m.id)?.hourlyRate ?? null;
+      const billableHours = (employeeBillableMinutes?.[m.id] ?? 0) / 60;
+      const amount = rate != null ? billableHours * rate : null;
+      // M28: same "full workload, not client-filtered" reasoning as
+      // billableHours/amount above.
+      const billablePct = totalHours > 0 ? Math.round((billableHours / totalHours) * 100) : null;
       return {
         ...m,
         hours,
+        billableHours,
+        billablePct,
+        amount,
         // Overtime always reflects real total workload, even when a client
         // filter narrows which hours are shown — "overtime for one client"
         // isn't a meaningful figure on its own.
@@ -261,17 +384,68 @@ function Reports() {
   const sortedEmployees = [...employeeRows].sort((a, b) => {
     const dir = empAsc ? 1 : -1;
     if (empSortKey === "hours") return (a.hours - b.hours) * dir;
+    if (empSortKey === "billable") return (a.billableHours - b.billableHours) * dir;
+    if (empSortKey === "amount") return ((a.amount ?? -1) - (b.amount ?? -1)) * dir;
     if (empSortKey === "overtime") return ((a.overtime ?? -1) - (b.overtime ?? -1)) * dir;
     if (empSortKey === "team") return a.team.localeCompare(b.team) * dir;
     return a.name.localeCompare(b.name) * dir;
   });
 
+  // H16: entry-level rows for the Detailed tab, resolved against the
+  // already-loaded projects/members arrays rather than a DB join — same
+  // pattern ApprovalEntries/projectById already use for the Approvals
+  // expand-row.
+  const detailedRows = (detailedEntries ?? []).map((e) => {
+    const project = projects.find((p) => p.id === e.projectId);
+    const member = members.find((m) => m.id === e.userId);
+    return {
+      ...e,
+      hours: e.minutes / 60,
+      projectName: project?.name ?? "No project",
+      projectColor: project?.color ?? "var(--muted-foreground)",
+      teamId: project?.teamId ?? "",
+      clientId: project?.clientId ?? null,
+      employeeName: member?.name ?? "Former member",
+      employeeInitials: member?.initials ?? "—",
+    };
+  });
+
+  const filteredDetailed = detailedRows
+    .filter((r) => teamFilter === "all" || r.teamId === teamFilter || !r.teamId)
+    .filter((r) => {
+      if (clientFilter === "all") return true;
+      if (clientFilter === "none") return r.clientId === null;
+      return r.clientId === clientFilter;
+    })
+    .filter((r) => projectFilter === "all" || r.projectId === projectFilter)
+    .filter((r) => employeeFilter === "all" || r.userId === employeeFilter)
+    .filter((r) => {
+      const q = detailedSearch.trim().toLowerCase();
+      if (!q) return true;
+      return r.description.toLowerCase().includes(q) || r.task.toLowerCase().includes(q);
+    })
+    .sort((a, b) => b.date.localeCompare(a.date) || b.startTime.localeCompare(a.startTime));
+
+  const totalDetailedPages = Math.max(1, Math.ceil(filteredDetailed.length / DETAILED_PAGE_SIZE));
+  const currentDetailedPage = Math.min(detailedPage, totalDetailedPages);
+  const pagedDetailed = filteredDetailed.slice(
+    (currentDetailedPage - 1) * DETAILED_PAGE_SIZE,
+    currentDetailedPage * DETAILED_PAGE_SIZE,
+  );
+
   const rangeLabel = preset === "custom" ? `${from} to ${to}` : presetLabels[preset];
-  const loading = view === "project" ? loadingProject : loadingEmployee;
+  const loading =
+    view === "project" ? loadingProject : view === "employee" ? loadingEmployee : loadingDetailed;
   const total =
     view === "project"
       ? projectRows.reduce((s, r) => s + r.hours, 0)
-      : employeeRows.reduce((s, r) => s + r.hours, 0);
+      : view === "employee"
+        ? employeeRows.reduce((s, r) => s + r.hours, 0)
+        : filteredDetailed.reduce((s, r) => s + r.hours, 0);
+  // H17: only meaningful on the employee view — a project or a raw entry
+  // list has no single per-row rate to sum against.
+  const totalAmount =
+    view === "employee" ? employeeRows.reduce((s, r) => s + (r.amount ?? 0), 0) : null;
 
   const toggleProjSort = (key: ProjectSortKey) => {
     if (key === projSortKey) setProjAsc((v) => !v);
@@ -297,18 +471,49 @@ function Reports() {
           : (clients.find((c) => c.id === clientFilter)?.name.replace(/\s+/g, "-") ?? "client");
     if (view === "project") {
       downloadCsv(`ironbrij-hours-by-project_${clientLabel}_${from}_to_${to}.csv`, [
-        ["Project", "Team", "Hours", "Date range"],
-        ...sortedProjects.map((r) => [r.name, r.team, r.hours.toFixed(2), `${from} to ${to}`]),
+        ["Project", "Team", "Hours", "Billable Hours", "Date range"],
+        ...sortedProjects.map((r) => [
+          r.name,
+          r.team,
+          r.hours.toFixed(2),
+          r.billableHours.toFixed(2),
+          `${from} to ${to}`,
+        ]),
       ]);
-    } else {
+    } else if (view === "employee") {
       downloadCsv(`ironbrij-hours-by-employee_${clientLabel}_${from}_to_${to}.csv`, [
-        ["Employee", "Team", "Hours", "Overtime", "Date range"],
+        [
+          "Employee",
+          "Team",
+          "Hours",
+          "Billable Hours",
+          "Overtime",
+          `Amount (${settings.currency})`,
+          "Date range",
+        ],
         ...sortedEmployees.map((r) => [
           r.name,
           r.team,
           r.hours.toFixed(2),
+          r.billableHours.toFixed(2),
           r.overtime == null ? "N/A" : r.overtime.toFixed(2),
+          r.amount == null ? "No rate set" : r.amount.toFixed(2),
           `${from} to ${to}`,
+        ]),
+      ]);
+    } else {
+      // The full filtered set, not just the current page — pagination is a
+      // display convenience, not a limit on what the export should contain.
+      downloadCsv(`ironbrij-detailed-entries_${clientLabel}_${from}_to_${to}.csv`, [
+        ["Date", "Employee", "Project", "Task", "Description", "Hours", "Billable"],
+        ...filteredDetailed.map((r) => [
+          r.date,
+          r.employeeName,
+          r.projectName,
+          r.task || "",
+          r.description || "",
+          r.hours.toFixed(2),
+          r.billable ? "Yes" : "No",
         ]),
       ]);
     }
@@ -385,17 +590,58 @@ function Reports() {
           triggerClassName="w-48"
         />
         {canManage && (
-          <Tabs value={view} onValueChange={(v) => setView(v as "project" | "employee")}>
+          <Tabs
+            value={view}
+            onValueChange={(v) => setView(v as "project" | "employee" | "detailed")}
+          >
             <TabsList>
               <TabsTrigger value="project">By project</TabsTrigger>
               <TabsTrigger value="employee">By employee</TabsTrigger>
+              <TabsTrigger value="detailed">Detailed</TabsTrigger>
             </TabsList>
           </Tabs>
         )}
         <span className="text-sm text-muted-foreground">
-          {loading ? "Loading…" : `Total ${formatHours(total)}`}
+          {loading
+            ? "Loading…"
+            : `Total ${formatHours(total)}` +
+              (totalAmount != null ? ` · ${formatCurrency(totalAmount, settings.currency)} billable` : "")}
         </span>
       </div>
+
+      {/* H16: only meaningful once individual rows are on screen — kept as
+          its own row rather than crowding the range/team/client filters
+          every tab shares. */}
+      {view === "detailed" && (
+        <div className="mb-6 flex flex-wrap items-center gap-3">
+          <Input
+            placeholder="Search description or task…"
+            value={detailedSearch}
+            onChange={(e) => setDetailedSearch(e.target.value)}
+            className="w-64"
+          />
+          <Combobox
+            options={[
+              { value: "all", label: "All projects" },
+              ...projects.map((p) => ({ value: p.id, label: p.name })),
+            ]}
+            value={projectFilter}
+            onChange={setProjectFilter}
+            searchPlaceholder="Search projects…"
+            triggerClassName="w-48"
+          />
+          <Combobox
+            options={[
+              { value: "all", label: "All employees" },
+              ...members.filter((m) => !m.pending).map((m) => ({ value: m.id, label: m.name })),
+            ]}
+            value={employeeFilter}
+            onChange={setEmployeeFilter}
+            searchPlaceholder="Search employees…"
+            triggerClassName="w-48"
+          />
+        </div>
+      )}
 
       {view === "project" ? (
         <>
@@ -444,7 +690,7 @@ function Reports() {
 
           <Card className="mt-6 shadow-card">
             <CardContent className="overflow-x-auto p-0">
-              <table className="w-full min-w-[480px] text-sm">
+              <table className="w-full min-w-[580px] text-sm">
                 <thead>
                   <tr className="border-b border-border text-xs uppercase tracking-wide text-muted-foreground">
                     {(
@@ -452,12 +698,14 @@ function Reports() {
                         ["name", "Project"],
                         ["team", "Team"],
                         ["hours", "Hours"],
+                        ["billable", "Billable"],
                       ] as [ProjectSortKey, string][]
                     ).map(([key, label]) => (
                       <th
                         key={key}
                         className={
-                          "px-5 py-3 font-medium " + (key === "hours" ? "text-right" : "text-left")
+                          "px-5 py-3 font-medium " +
+                          (key === "hours" || key === "billable" ? "text-right" : "text-left")
                         }
                       >
                         <button
@@ -485,6 +733,12 @@ function Reports() {
                       </td>
                       <td className="px-5 py-3 text-muted-foreground">{r.team}</td>
                       <td className="px-5 py-3 text-right tabular-nums">{formatHours(r.hours)}</td>
+                      <td className="px-5 py-3 text-right tabular-nums text-muted-foreground">
+                        {formatHours(r.billableHours)}
+                        {r.billablePct != null && (
+                          <span className="ml-1 text-xs">({r.billablePct}%)</span>
+                        )}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -492,7 +746,7 @@ function Reports() {
             </CardContent>
           </Card>
         </>
-      ) : (
+      ) : view === "employee" ? (
         <>
           <Card className="shadow-card">
             <CardHeader>
@@ -503,8 +757,8 @@ function Reports() {
               </CardTitle>
               {clientFilter !== "all" && (
                 <p className="text-xs text-muted-foreground">
-                  Hours shown are just for this client. Overtime still reflects each person's full
-                  workload across everything, not only this slice.
+                  Hours shown are just for this client. Overtime and $ amount still reflect each
+                  person's full billable workload across everything, not only this slice.
                 </p>
               )}
             </CardHeader>
@@ -549,7 +803,7 @@ function Reports() {
 
           <Card className="mt-6 shadow-card">
             <CardContent className="overflow-x-auto p-0">
-              <table className="w-full min-w-[560px] text-sm">
+              <table className="w-full min-w-[680px] text-sm">
                 <thead>
                   <tr className="border-b border-border text-xs uppercase tracking-wide text-muted-foreground">
                     {(
@@ -557,14 +811,21 @@ function Reports() {
                         ["name", "Employee"],
                         ["team", "Team"],
                         ["hours", "Hours"],
+                        ["billable", "Billable"],
                         ["overtime", "Overtime"],
+                        ["amount", `Amount (${settings.currency})`],
                       ] as [EmployeeSortKey, string][]
                     ).map(([key, label]) => (
                       <th
                         key={key}
                         className={
                           "px-5 py-3 font-medium " +
-                          (key === "hours" || key === "overtime" ? "text-right" : "text-left")
+                          (key === "hours" ||
+                          key === "billable" ||
+                          key === "overtime" ||
+                          key === "amount"
+                            ? "text-right"
+                            : "text-left")
                         }
                       >
                         <button
@@ -596,6 +857,12 @@ function Reports() {
                       </td>
                       <td className="px-5 py-3 text-muted-foreground">{r.team}</td>
                       <td className="px-5 py-3 text-right tabular-nums">{formatHours(r.hours)}</td>
+                      <td className="px-5 py-3 text-right tabular-nums text-muted-foreground">
+                        {formatHours(r.billableHours)}
+                        {r.billablePct != null && (
+                          <span className="ml-1 text-xs">({r.billablePct}%)</span>
+                        )}
+                      </td>
                       <td
                         className={
                           "px-5 py-3 text-right tabular-nums " +
@@ -607,12 +874,18 @@ function Reports() {
                       >
                         {r.overtime != null && r.overtime > 0 ? formatHours(r.overtime) : "—"}
                       </td>
+                      <td
+                        className="px-5 py-3 text-right tabular-nums text-muted-foreground"
+                        title={r.amount == null ? "No hourly rate set for this person" : undefined}
+                      >
+                        {r.amount == null ? "—" : formatCurrency(r.amount, settings.currency)}
+                      </td>
                     </tr>
                   ))}
                   {sortedEmployees.length === 0 && (
                     <tr>
                       <td
-                        colSpan={4}
+                        colSpan={6}
                         className="px-5 py-8 text-center text-sm text-muted-foreground"
                       >
                         No one in this filter yet.
@@ -623,6 +896,121 @@ function Reports() {
               </table>
             </CardContent>
           </Card>
+        </>
+      ) : (
+        <>
+          <Card className="shadow-card">
+            <CardContent className="overflow-x-auto p-0">
+              <table className="w-full min-w-[760px] text-sm">
+                <thead>
+                  <tr className="border-b border-border text-xs uppercase tracking-wide text-muted-foreground">
+                    <th className="px-5 py-3 text-left font-medium">Date</th>
+                    <th className="px-5 py-3 text-left font-medium">Employee</th>
+                    <th className="px-5 py-3 text-left font-medium">Project</th>
+                    <th className="px-5 py-3 text-left font-medium">Task</th>
+                    <th className="px-5 py-3 text-left font-medium">Description</th>
+                    <th className="px-5 py-3 text-right font-medium">Hours</th>
+                    <th className="px-5 py-3 text-center font-medium">Billable</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {pagedDetailed.map((r) => (
+                    <tr
+                      key={r.id}
+                      className="border-b border-border last:border-0 hover:bg-muted/40"
+                    >
+                      <td className="whitespace-nowrap px-5 py-3 text-muted-foreground">
+                        {fromDateKey(r.date).toLocaleDateString(undefined, {
+                          month: "short",
+                          day: "numeric",
+                          year: "numeric",
+                        })}
+                      </td>
+                      <td className="px-5 py-3">
+                        <span className="flex items-center gap-2">
+                          <Avatar className="h-6 w-6 shrink-0">
+                            <AvatarFallback className="bg-secondary text-[10px]">
+                              {r.employeeInitials}
+                            </AvatarFallback>
+                          </Avatar>
+                          <span className="font-medium">{r.employeeName}</span>
+                        </span>
+                      </td>
+                      <td className="px-5 py-3">
+                        <span className="flex items-center gap-2">
+                          <ProjectDot color={r.projectColor} />
+                          {r.projectName}
+                        </span>
+                      </td>
+                      <td className="px-5 py-3 text-muted-foreground">{r.task || "—"}</td>
+                      <td
+                        className="max-w-[280px] truncate px-5 py-3 text-muted-foreground"
+                        title={r.description || undefined}
+                      >
+                        {r.description || "—"}
+                      </td>
+                      <td className="px-5 py-3 text-right tabular-nums">
+                        {formatMinutes(r.minutes)}
+                      </td>
+                      <td className="px-5 py-3 text-center text-xs text-muted-foreground">
+                        {r.billable ? "Billable" : "Non-billable"}
+                      </td>
+                    </tr>
+                  ))}
+                  {pagedDetailed.length === 0 && (
+                    <tr>
+                      <td
+                        colSpan={7}
+                        className="px-5 py-8 text-center text-sm text-muted-foreground"
+                      >
+                        No entries in this filter.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </CardContent>
+          </Card>
+
+          {filteredDetailed.length > 0 && (
+            <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+              <p className="text-sm text-muted-foreground">
+                {filteredDetailed.length} {filteredDetailed.length === 1 ? "entry" : "entries"}
+                {totalDetailedPages > 1 && ` · page ${currentDetailedPage} of ${totalDetailedPages}`}
+              </p>
+              {totalDetailedPages > 1 && (
+                <Pagination className="mx-0 w-auto">
+                  <PaginationContent>
+                    <PaginationItem>
+                      <PaginationPrevious
+                        className={
+                          currentDetailedPage <= 1
+                            ? "pointer-events-none opacity-50"
+                            : "cursor-pointer"
+                        }
+                        onClick={() =>
+                          currentDetailedPage > 1 && setDetailedPage(currentDetailedPage - 1)
+                        }
+                      />
+                    </PaginationItem>
+                    <PaginationItem>
+                      <PaginationNext
+                        className={
+                          currentDetailedPage >= totalDetailedPages
+                            ? "pointer-events-none opacity-50"
+                            : "cursor-pointer"
+                        }
+                        onClick={() =>
+                          currentDetailedPage < totalDetailedPages &&
+                          setDetailedPage(currentDetailedPage + 1)
+                        }
+                      />
+                    </PaginationItem>
+                  </PaginationContent>
+                </Pagination>
+              )}
+            </div>
+          )}
         </>
       )}
     </AppShell>

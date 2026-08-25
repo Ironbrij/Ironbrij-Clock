@@ -13,6 +13,7 @@ import {
   toDbReviewStatus,
   toTimesheetStatus,
   type DbTimesheetStatus,
+  type DetailedEntry,
   type EmploymentType,
   type PendingApproval,
   type PendingApprovalEntry,
@@ -59,6 +60,7 @@ export {
   NO_CLIENT,
   timezones,
   type ActiveTimer,
+  type DetailedEntry,
   type EmploymentType,
   type PendingApproval,
   type PendingApprovalEntry,
@@ -158,8 +160,18 @@ type WorkspaceContextValue = {
     from: string,
     to: string,
   ) => Promise<{ projectId: string; minutes: number }[]>;
+  /** M28: billable-only hours by project, for Reports' billable/non-billable split — summed from time_entries.is_billable, not projects.is_billable. */
+  projectBillableHoursForRange: (
+    from: string,
+    to: string,
+  ) => Promise<{ projectId: string; minutes: number }[]>;
   /** Hours by employee for an arbitrary date range — scoped server-side to self/admin/manager's-team, unlike the project version. */
   employeeHoursForRange: (
+    from: string,
+    to: string,
+  ) => Promise<{ userId: string; minutes: number }[]>;
+  /** H17: billable-only hours by employee, for Reports' $ column — hours * hourly_rate has to use billable hours specifically, not the total from employeeHoursForRange. */
+  employeeBillableHoursForRange: (
     from: string,
     to: string,
   ) => Promise<{ userId: string; minutes: number }[]>;
@@ -179,6 +191,8 @@ type WorkspaceContextValue = {
       minutes: number;
     }[]
   >;
+  /** H16: every entry in a date range that time_entries' own RLS lets the viewer see — backs the Reports page's Detailed tab. */
+  detailedEntriesForRange: (from: string, to: string) => Promise<DetailedEntry[]>;
 
   invitePeople: (input: { emails: string[]; teamId: string; role: Role }) => Promise<number>;
   resendInvite: (email: string) => Promise<void>;
@@ -230,6 +244,8 @@ type WorkspaceContextValue = {
     endTime: string;
     /** M21: only needed for a shift that runs past midnight — defaults to `date` when omitted. */
     endDate?: string;
+    /** M26: omit to fall back to the project's own billable default. */
+    billable?: boolean;
   }) => Promise<void>;
   updateEntry: (
     entryId: string,
@@ -237,6 +253,8 @@ type WorkspaceContextValue = {
       projectId?: string;
       task?: string;
       description?: string;
+      /** M26: independent of the project's own default — omit for no change. */
+      billable?: boolean;
       date?: string;
       startTime?: string;
       /** `null` means "still running, leave it open" — see use-time-entries.ts's updateEntry. */
@@ -291,6 +309,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     updateProfile,
     updateMemberTimezone,
     employeeHoursForRange,
+    employeeBillableHoursForRange,
     employeeClientHoursForRange,
   } = useMembersData(enabled, uid, session);
 
@@ -340,6 +359,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     unarchiveProject,
     deleteProject,
     projectHoursForRange,
+    projectBillableHoursForRange,
   } = useProjectsData(enabled, clientsQ.data, resolveClientId);
 
   const { settingsQ, settings, updateSettings } = useSettingsData(enabled);
@@ -354,6 +374,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     createEntry,
     deleteEntry,
     entriesForTag,
+    detailedEntriesForRange,
   } = useTimeEntriesData(enabled, uid, projects, settings);
 
   const {
@@ -421,6 +442,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       unarchiveProject,
       deleteProject,
       projectHoursForRange,
+      projectBillableHoursForRange,
       tags,
       createTag,
       updateTag,
@@ -453,8 +475,10 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       memberById,
       projectById: (id) => (id ? projects.find((p) => p.id === id) : undefined),
       employeeHoursForRange,
+      employeeBillableHoursForRange,
       employeeClientHoursForRange,
       entriesForTag,
+      detailedEntriesForRange,
       invitePeople,
       resendInvite,
       updateMemberRole,
@@ -497,6 +521,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     updateProfile,
     updateMemberTimezone,
     employeeHoursForRange,
+    employeeBillableHoursForRange,
     employeeClientHoursForRange,
     teams,
     createTeam,
@@ -509,6 +534,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     unarchiveProject,
     deleteProject,
     projectHoursForRange,
+    projectBillableHoursForRange,
     tags,
     createTag,
     updateTag,
@@ -533,6 +559,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     createEntry,
     deleteEntry,
     entriesForTag,
+    detailedEntriesForRange,
     timesheets,
     pendingApprovals,
     entriesForApproval,
@@ -584,11 +611,11 @@ export type ClientBudgetStatus = {
   remainingHours: number;
   /** Every subscription hour has already been used (or exceeded). */
   isOver: boolean;
-  /** Not over yet, but within CLIENT_BUDGET_WARNING_THRESHOLD of the cap — a heads-up before it actually runs out. */
+  /** Not over yet, but within BUDGET_WARNING_THRESHOLD of the cap — a heads-up before it actually runs out. */
   isNearLimit: boolean;
 };
 
-const CLIENT_BUDGET_WARNING_THRESHOLD = 0.9;
+const BUDGET_WARNING_THRESHOLD = 0.9;
 
 /**
  * Budget status for every client that has a subscription-hours cap set,
@@ -618,11 +645,50 @@ export function useClientBudgets() {
         isOver: remainingHours <= 0,
         isNearLimit:
           remainingHours > 0 &&
-          renderedHours >= c.subscriptionHours * CLIENT_BUDGET_WARNING_THRESHOLD,
+          renderedHours >= c.subscriptionHours * BUDGET_WARNING_THRESHOLD,
       });
     }
     return map;
   }, [clients, projects]);
+}
+
+export type ProjectBudgetStatus = {
+  projectId: string;
+  budgetHours: number;
+  renderedHours: number;
+  remainingHours: number;
+  /** Every budgeted hour has already been used (or exceeded). */
+  isOver: boolean;
+  /** Not over yet, but within BUDGET_WARNING_THRESHOLD of the cap — a heads-up before it actually runs out. */
+  isNearLimit: boolean;
+};
+
+/**
+ * M27: same shape as useClientBudgets above, one level down — for a
+ * fixed-scope/capped-hours *project* rather than an open client retainer.
+ * `renderedHours` reuses the project's own all-time `hours` (already
+ * computed from project_hours()), not scoped to any date range, matching
+ * how the client version already treats "rendered."
+ */
+export function useProjectBudgets() {
+  const { projects } = useWorkspace();
+  return useMemo(() => {
+    const map = new Map<string, ProjectBudgetStatus>();
+    for (const p of projects) {
+      if (p.budgetHours == null) continue;
+      const remainingHours = p.budgetHours - p.hours;
+      map.set(p.id, {
+        projectId: p.id,
+        budgetHours: p.budgetHours,
+        renderedHours: p.hours,
+        remainingHours,
+        isOver: remainingHours <= 0,
+        isNearLimit:
+          remainingHours > 0 && p.hours >= p.budgetHours * BUDGET_WARNING_THRESHOLD,
+      });
+    }
+    return map;
+  }, [projects]);
 }
 
 /** Hours per project per weekday for the given week, from the signed-in person's entries. */

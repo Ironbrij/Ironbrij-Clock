@@ -227,6 +227,7 @@ export type Database = {
       };
       projects: {
         Row: {
+          budget_hours: number | null;
           client_id: string | null;
           color: string;
           created_at: string;
@@ -237,6 +238,7 @@ export type Database = {
           team_id: string | null;
         };
         Insert: {
+          budget_hours?: number | null;
           client_id?: string | null;
           color?: string;
           created_at?: string;
@@ -247,6 +249,7 @@ export type Database = {
           team_id?: string | null;
         };
         Update: {
+          budget_hours?: number | null;
           client_id?: string | null;
           color?: string;
           created_at?: string;
@@ -526,7 +529,15 @@ export type Database = {
     Functions: {
       approve_member: { Args: { _user_id: string }; Returns: undefined };
       can_manage: { Args: { _user_id: string }; Returns: boolean };
+      delete_tag: { Args: { _tag_id: string }; Returns: undefined };
       employee_hours_range: {
+        Args: { _from: string; _to: string };
+        Returns: {
+          minutes: number;
+          user_id: string;
+        }[];
+      };
+      employee_billable_hours_range: {
         Args: { _from: string; _to: string };
         Returns: {
           minutes: number;
@@ -554,6 +565,13 @@ export type Database = {
           project_id: string;
           total_minutes: number;
           week_minutes: number;
+        }[];
+      };
+      project_billable_hours_range: {
+        Args: { _from: string; _to: string };
+        Returns: {
+          billable_minutes: number;
+          project_id: string;
         }[];
       };
       project_hours_range: {
@@ -596,6 +614,10 @@ export type Database = {
         Returns: undefined;
       };
       shares_team: { Args: { _a: string; _b: string }; Returns: boolean };
+      stop_timer: {
+        Args: { _description: string; _entry_id: string; _segments: Json };
+        Returns: undefined;
+      };
       submit_timesheet: {
         Args: { _week_start: string };
         Returns: {

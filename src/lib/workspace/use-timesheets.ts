@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import { dayIndexOf, fromDateKey, toDateKey } from "@/lib/time-utils";
+import { dayIndexOf, fromDateKey, oldestLoadedWeekStart, toDateKey } from "@/lib/time-utils";
 import { throwIf } from "./utils";
 import {
   toDbReviewStatus,
@@ -24,6 +24,14 @@ export function useTimesheetsData(enabled: boolean, uid: string | null) {
         .select(
           "id, user_id, week_start, status, submitted_at, reviewed_by, reviewed_at, review_note, entries_modified_at",
         )
+        // M41: unbounded before this — for an admin, every timesheet ever
+        // submitted workspace-wide, forever, growing by active_members × 52
+        // rows a year with no cap. Bounded to the same rolling window
+        // `entries` itself already uses (oldestLoadedWeekStart /
+        // ENTRIES_HISTORY_DAYS) — nothing in the app shows or acts on a
+        // timesheet older than that boundary anyway, since Timesheet's own
+        // week-nav already refuses to page any further back (H10/L22).
+        .gte("week_start", toDateKey(oldestLoadedWeekStart()))
         .order("week_start", { ascending: false });
       if (error) throw error;
       return data;

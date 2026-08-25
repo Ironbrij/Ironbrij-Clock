@@ -289,37 +289,48 @@ function TimerBar() {
           className="lg:flex-1"
         />
         <div className="grid gap-3 sm:grid-cols-2 lg:w-[380px]">
-          <Select value={project} onValueChange={setProject} disabled={running}>
-            <SelectTrigger>
-              <SelectValue placeholder="Project" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value={NO_PROJECT}>No project</SelectItem>
-              {(recentProjects.length > 0 || otherProjects.length > 0) && <SelectSeparator />}
-              {recentProjects.length > 0 && (
-                <SelectGroup>
-                  <SelectLabel>Recent</SelectLabel>
-                  {recentProjects.map((p) => (
-                    <SelectItem key={p.id} value={p.id}>
-                      <span className="flex items-center gap-2">
-                        <ProjectDot color={p.color} />
-                        {p.name}
-                      </span>
-                    </SelectItem>
-                  ))}
-                </SelectGroup>
-              )}
-              {recentProjects.length > 0 && otherProjects.length > 0 && <SelectSeparator />}
-              {otherProjects.map((p) => (
-                <SelectItem key={p.id} value={p.id}>
-                  <span className="flex items-center gap-2">
-                    <ProjectDot color={p.color} />
-                    {p.name}
-                  </span>
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <div>
+            <Select value={project} onValueChange={setProject} disabled={running}>
+              <SelectTrigger>
+                <SelectValue placeholder="Project" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={NO_PROJECT}>No project</SelectItem>
+                {(recentProjects.length > 0 || otherProjects.length > 0) && <SelectSeparator />}
+                {recentProjects.length > 0 && (
+                  <SelectGroup>
+                    <SelectLabel>Recent</SelectLabel>
+                    {recentProjects.map((p) => (
+                      <SelectItem key={p.id} value={p.id}>
+                        <span className="flex items-center gap-2">
+                          <ProjectDot color={p.color} />
+                          {p.name}
+                        </span>
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                )}
+                {recentProjects.length > 0 && otherProjects.length > 0 && <SelectSeparator />}
+                {otherProjects.map((p) => (
+                  <SelectItem key={p.id} value={p.id}>
+                    <span className="flex items-center gap-2">
+                      <ProjectDot color={p.color} />
+                      {p.name}
+                    </span>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {/* L39: the dropdown itself always has "No project" so it's
+                never literally empty, but with zero active projects
+                there's nothing else to explain why — a first-day
+                workspace hits this immediately. */}
+            {active.length === 0 && (
+              <p className="mt-1 text-xs text-muted-foreground">
+                No projects yet — ask an admin to create one.
+              </p>
+            )}
+          </div>
           <Select value={task} onValueChange={setTask} disabled={running}>
             <SelectTrigger>
               <SelectValue placeholder="Task" />
@@ -628,6 +639,11 @@ function CopyYesterdayButton() {
           date: todayKey,
           startTime: `${pad(start.getHours())}:${pad(start.getMinutes())}`,
           endTime: `${pad(end.getHours())}:${pad(end.getMinutes())}`,
+          // M26: a copy should carry over whatever billable status
+          // yesterday's entry actually had, not silently fall back to
+          // the project's current default — a non-billable exception
+          // (an internal sync, rework) stays non-billable when repeated.
+          billable: e.billable,
         });
         succeeded++;
       } catch {
