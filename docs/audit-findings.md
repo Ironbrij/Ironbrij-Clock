@@ -2061,6 +2061,41 @@ unconditional filter was deliberately avoided: seeing every assigned project, ev
 sometimes exactly the point (a checklist of what's expected that week), so this preserves both
 behaviors rather than picking one.
 
+**M45. ✅ Fixed 2026-08-25. Re-inviting a previously-removed email address permanently forks their
+history across a new, duplicate `profiles` row instead of reusing the old one.** Found live in
+production, not via code review — the user noticed "Andre" and "Mark" each appearing as two/three
+separate bars on the Reports "By employee" chart.
+- **Root cause:** `removeUserAccess()` (`admin.functions.ts`) revokes access by calling
+  `supabaseAdmin.auth.admin.deleteUser()` — which deletes the underlying Supabase Auth account —
+  then sets `profiles.is_active = false` on that same row. It deliberately does **not** delete the
+  `profiles` row itself, since `time_entries`/`timesheets` cascade or restrict on `profiles(id)` and
+  deleting it would destroy that person's logged history. But `inviteMembers()` always calls
+  `inviteUserByEmail()`, which mints a brand-new Auth user (and therefore a brand-new `profiles.id`)
+  with no check for whether an inactive orphan already exists for that email — so every
+  remove-then-reinvite cycle for the same address leaves one more permanent duplicate `profiles`
+  row behind, silently splitting that person's past and future hours across separate identities.
+- **Real-world impact found in production:** `it@ironbrij.com.au` had accumulated 3 profile rows
+  (one, `3baa2087...`, had 2 real `time_entries` and had both submitted and — self-approved —
+  reviewed a `timesheets` row), and `mvbartolay5@gmail.com` had accumulated 4. All were traced to
+  invite-flow testing during initial build-out (created within days of each other in early August),
+  not real rehire scenarios, but the underlying bug would trigger identically for a genuine
+  remove-then-later-rehire of the same person.
+- **Priority:** Medium — not a security issue (RLS/`is_active_user()` already correctly blocks the
+  orphaned rows from being usable accounts), but a real, recurring data-integrity and
+  reporting-accuracy bug that will keep resurfacing every time someone is removed and later
+  re-invited.
+- **Fixed:** two parts. (1) One-time cleanup against production — reassigned the orphaned
+  `time_entries`/`timesheets` rows onto each person's real active profile, then deleted the 5 empty
+  duplicate rows (17 profiles → 12), verified directly against the database afterward. (2) Root
+  cause closed in `inviteMembers()` itself: after minting the new user, it now looks up any
+  `is_active = false` profile row sharing the same email, migrates its `time_entries.user_id`,
+  `timesheets.user_id`/`reviewed_by`, `member_employment.user_id`, and
+  `activity_log.actor_id`/`target_user_id` onto the new id, then deletes the orphan — so a future
+  remove-then-reinvite of the same address folds onto one profile automatically instead of forking
+  again. No new migration needed; implemented directly against `supabaseAdmin`, matching this file's
+  existing style (`removeUserAccess()` already does raw table operations the same way rather than
+  going through an RPC).
+
 ### 31. Top 10 Issues (fix before replacing Clockify)
 
 Ranked by actual day-one impact on Ironbrij's team, not by document order. **H23 has been resolved
@@ -2572,3 +2607,26 @@ function), M24 (product decision, explicitly deferred), L32 (skipped by explicit
 the DB-dependent half of M43 (needs a live Postgres instance to test the `SECURITY DEFINER`
 functions against). Every other item this document tracked as open at the start of 2026-08-25 —
 including H18 itself — is now fixed.
+
+### Fourth round, same day (2026-08-25) — a new bug found live, not via review
+
+With H18 closed and the real historical data now flowing through Reports, the user spotted
+something no code review would have caught: the "By employee" chart showed "Andre" and "Mark" each
+as two/three separate bars. Traced with the same live-database access used for the H18 cutover — see
+**M45** (new finding, above) for the full account. Summarized here since it closes out the same day:
+
+- Root cause confirmed in `admin.functions.ts`: `removeUserAccess()` deletes the Auth user but
+  intentionally keeps the `profiles` row (to preserve history), while `inviteMembers()` always mints
+  a fresh `profiles.id` on invite with no check for a matching inactive orphan — so remove-then-
+  reinvite cycles for the same email silently accumulate duplicate profiles forever.
+- Confirmed with the user before touching anything, then cleaned up the two real clusters this had
+  already produced in production: reassigned the one orphan's real `time_entries` and `timesheets`
+  (submitter *and* reviewer) rows onto each person's canonical active profile, deleted the 5 resulting
+  empty duplicates. 17 profiles → 12.
+- Closed the root cause in code: `inviteMembers()` now folds any same-email inactive orphan's data
+  onto the newly-invited id automatically, so this can't silently recur.
+- `tsc --noEmit`, `npm run build`, and `npm run test` (31 tests) all clean after the change.
+
+**Updated final remainder:** unchanged from above — M29, M24, L32, and the DB-dependent half of M43.
+M45 was found and fixed the same day it was introduced-by-discovery, so it never spent time on the
+open list.
