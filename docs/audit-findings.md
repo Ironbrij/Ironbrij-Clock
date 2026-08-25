@@ -6,7 +6,7 @@ Original audit performed 2026-08-11 against `src/lib/workspace/*`, `src/routes/*
 
 ---
 
-## 1. Critical Issues — all fixed
+## 1. Critical Issues — all fixed, except C4 (deliberately reverted 2026-08-19 — see below)
 
 **C1. ✅ Fixed.** Managers/admins could approve their own submitted timesheet (`shares_team(x, x)` is trivially true for oneself). Fixed in `review_timesheet()` — self-review now raises an exception — and `pendingApprovals` filters out the viewer's own id.
 
@@ -14,7 +14,9 @@ Original audit performed 2026-08-11 against `src/lib/workspace/*`, `src/routes/*
 
 **C3. ✅ Fixed.** No DB constraint stopped multiple concurrent active timers per user (only in-memory client state guarded it). Fixed via `CREATE UNIQUE INDEX time_entries_one_running_per_user ON time_entries (user_id) WHERE end_time IS NULL`.
 
-**C4. ✅ Fixed.** No overlap validation on time entries. Fixed via a Postgres `EXCLUDE` constraint (`btree_gist`, `tstzrange(start_time, end_time)`) plus a client-side pre-check for a friendlier error.
+**C4. ⚠️ Reverted 2026-08-19 — this is now a deliberate product decision, not a regression.** No overlap validation on time entries. Was fixed via a Postgres `EXCLUDE` constraint (`btree_gist`, `tstzrange(start_time, end_time)`) plus a client-side pre-check for a friendlier error.
+
+**Reverted:** `20260819000000_time_entries_allow_overlap.sql` drops the `EXCLUDE` constraint entirely, and the matching client-side pre-check was removed from `use-time-entries.ts` — commit `df512c1`, "Allow timer-less starts, overlapping entries, and add a searchable client filter," explicitly "matching Clockify." Flagged here because this directly contradicts this document's own "Fixed" marker on a *Critical* finding from five audit passes ago — anyone reading only the original section 1 table would believe overlaps are still blocked. They are not, as of 2026-08-19, on purpose. This also changed the failure shape H21's own fix (the atomic `stop_timer()` RPC, added 2026-08-25) was written against: the "later-day segment insert collides with an overlap" scenario H21 originally described can no longer happen, since overlaps are now allowed — H21's atomicity fix is still correct and still needed for other failure causes (network drop, tab close, a locked week), just no longer for that specific one.
 
 **C5. ✅ Fixed.** Approvers couldn't see what they were approving — just a name and an aggregate total. Fixed: Approvals queue rows are now expandable to show the actual entries (project/task/description/duration) behind the total.
 
@@ -93,6 +95,10 @@ Original audit performed 2026-08-11 against `src/lib/workspace/*`, `src/routes/*
 ---
 
 ## 6. Status Summary
+
+*(Snapshot from this original 2026-08-11 pass — see the "Same-Day Implementation Pass (2026-08-25)"
+section at the end of this document for the current picture. One correction: C4, "fixed" below, was
+deliberately reverted 2026-08-19 — see C4's own entry above.)*
 
 - **Critical (C1–C5):** all fixed.
 - **High (H6–H12):** all fixed.
@@ -312,7 +318,7 @@ constraint on scope, not a coincidence — see the "Unnecessary" section.
 
 ### 12. Must-Have Gaps
 
-**H16. ⏳ Open. No entry-level ("Detailed") time report.** Reports (`src/routes/reports.tsx`) only
+**H16. ✅ Fixed 2026-08-25. No entry-level ("Detailed") time report.** Reports (`src/routes/reports.tsx`) only
 ever offers two *aggregated* views — hours-by-project and hours-by-employee, both pre-summed by
 `project_hours_range`/`employee_hours_range` RPCs — with CSV export of those summary rows. There is
 no view anywhere in the app that lists individual time entries across people/projects/date ranges
@@ -329,7 +335,16 @@ on the page, with the same CSV export pattern (`downloadCsv`) the other two tabs
 **Priority:** High. **Complexity:** Medium — mostly UI; the data (`time_entries`) and filters
 already exist, this is a new query + table, not new policy work.
 
-**H17. ⏳ Open. No cost/billing ($) report.** `member_employment.hourly_rate` (Schedule tab,
+**Fixed:** built exactly as recommended — a third "Detailed" Reports tab (canManage-gated, same as
+"By employee"), backed by a new `detailedEntriesForRange()` client query that reads `time_entries`
+directly for a date range with no `user_id` filter, relying entirely on the table's own RLS
+(self/admin/manager-shares-team) for scoping — no new RPC or policy work needed, exactly as this
+finding predicted. Searchable (description/task), filterable by project/employee on top of the
+existing team/client filters, paginated at 50 rows/page, with CSV export of the full filtered set
+(not just the current page). Capped at 5000 rows server-side, same reasoning as H25's cap on the
+personal entries fetch.
+
+**H17. ✅ Fixed 2026-08-25. No cost/billing ($) report.** `member_employment.hourly_rate` (Schedule tab,
 `manage.tsx`), `projects.is_billable`, and `clients.subscription_hours` all already exist and are
 each shown in isolation (Schedule tab, project badges, Client profile dialog) — but nothing
 multiplies hours × rate, or rolls billable hours up by client into a dollar figure. Reports shows
@@ -346,6 +361,17 @@ filter/column rather than something only visible one client at a time.
 **Priority:** High. **Complexity:** Medium — new RPC(s) to join `time_entries` with
 `member_employment` and `projects.is_billable`, respecting the same RLS scoping
 `employee_hours_range` already does.
+
+**Fixed:** took the recommended $-column option — a new `employee_billable_hours_range` RPC (same
+shape and RLS-replication as `employee_hours_range`, filtered to `is_billable`) backs an "Amount"
+column on Reports' "By employee" tab (billable hours × `hourly_rate`, in the workspace's own
+`currency`, via a new `formatCurrency` helper), sortable, in the CSV export, and rolled into the
+header's total line. **Not done**, as a deliberate scope call: subscription-hours-remaining was not
+pulled into Reports — that figure is all-time (not date-ranged) in `ClientProfileDialog`/
+`useClientBudgets`, a different shape than everything else on this otherwise date-ranged page, and
+it's already visible one click away on the Clients tab. Pulling it in would mean a new all-time
+per-client query duplicating existing logic for a "nice to have," not the core "$ figure to hand to
+Xero" ask this finding was actually about.
 
 **H18. ⚠️ Improved — the import tool now exists and is validated against a real export; the
 actual cutover import hasn't been run yet.** There's no CSV/API import anywhere in the app itself —
@@ -421,7 +447,7 @@ today in Clockify — worth confirming with the team before building. If so: a `
 join (or per-project override list) rather than a global table.
 **Priority:** Medium — contingent on confirming the need first. **Complexity:** Medium.
 
-**M26. ⏳ Open. A time entry's billable status can't be overridden per entry.** `is_billable` is
+**M26. ✅ Fixed 2026-08-25. A time entry's billable status can't be overridden per entry.** `is_billable` is
 set once, at insert time, from the project's `is_billable` flag (`use-time-entries.ts`:
 `is_billable: project?.billable ?? true`) and is never editable afterward in
 `EntryFormDialog`/`updateEntry`. Clockify lets any entry be flagged billable/non-billable
@@ -435,7 +461,15 @@ this is additive.
 **Priority:** Medium. **Complexity:** Low — one new column is already present (`is_billable` sits
 on `time_entries` already), this is UI + wiring, not schema work.
 
-**M27. ⏳ Open. No project-level budget or estimated-hours tracking.** Clients already have this
+**Fixed:** exactly as recommended — `WorkspaceEntry`/`updateEntry`/`createEntry` all carry a new
+`billable` field, and `EntryFormDialog` has a "Billable" checkbox (hidden for a running entry, which
+only supports correcting its start time). It defaults to the selected project's own setting and
+keeps following it as the project changes, until the checkbox itself is touched once — then it's a
+fixed override for that entry, same as an existing entry's stored value is from the moment the
+dialog opens. `CopyYesterdayButton` (M33) now also carries over the *original* entry's billable
+status when duplicating a day, rather than silently re-defaulting to the project's current setting.
+
+**M27. ✅ Fixed 2026-08-25. No project-level budget or estimated-hours tracking.** Clients already have this
 (`subscription_hours` + rendered-hours-remaining math in `ClientProfileDialog`,
 `src/routes/projects.tsx`), but individual projects don't — a project has no estimate to compare
 logged hours against, no progress bar, no "over budget" signal anywhere `projects.tsx` or
@@ -448,7 +482,20 @@ surfaced the same way client subscription hours already are — a remaining/over
 project card and in Reports.
 **Priority:** Medium. **Complexity:** Medium.
 
-**M28. ⏳ Open. Reports has no billable vs. non-billable breakdown.** The Dashboard computes a
+**Fixed:** added a nullable `budget_hours numeric(10,2)` column on `projects` (with a non-negative
+`CHECK` from the start — `subscription_hours` didn't get one until L24 covered a different table,
+added here proactively instead of waiting for a follow-up pass), a "Budget (hours)" input on
+`ProjectFormDialog`, and a new `useProjectBudgets()` — structurally identical to the existing
+`useClientBudgets()`, same all-time "rendered vs. budget" semantics and 90%-threshold near-limit
+warning (the shared constant was renamed from `CLIENT_BUDGET_WARNING_THRESHOLD` to
+`BUDGET_WARNING_THRESHOLD` since it's no longer client-only). Project cards now show "Over budget"
+(red) / "Near budget" (amber) badges, distinct from the existing client-level "Client over budget"
+badge — a project can be over its own cap while its client's retainer still has room, and vice
+versa. **Not added to Reports**, consistent with the same scope call made for H17's client
+subscription-hours-remaining: this is an all-time figure, not date-ranged, and would sit oddly in an
+otherwise entirely date-ranged table.
+
+**M28. ✅ Fixed 2026-08-25. Reports has no billable vs. non-billable breakdown.** The Dashboard computes a
 personal "billable share" percentage (`src/routes/index.tsx`), but Reports — the actual
 cross-team, exportable view — never splits hours by billable status at all, on either the project
 or employee tab.
@@ -458,6 +505,12 @@ all in this app.
 **Recommended behavior:** an extra column (or stacked-bar split) on both Reports tabs using the
 `is_billable` flag already on every entry/project.
 **Priority:** Medium. **Complexity:** Low.
+
+**Fixed:** added a new `project_billable_hours_range` RPC (company-wide visibility, same shape as
+`project_hours_range`, summed from `time_entries.is_billable` per row rather than
+`projects.is_billable`, since M26 now lets any entry override the project's default) and reused the
+employee-side billable data already fetched for H17. Both Reports tabs now have a "Billable" column
+(hours + %), sortable, in both CSV exports.
 
 **M29. ⏳ Open. Notifications tab is entirely non-functional.** Every switch in Settings →
 Notifications (`src/routes/settings.tsx`) is `disabled`, backed by a hardcoded local array, with an
@@ -1005,7 +1058,7 @@ other until it commits, so the two can no longer interleave — the "start timer
 week already locked and gets rejected normally, or completes and commits before `submit_timesheet()`
 ever runs its `_has_running` check.
 
-**H21. ⏳ Open.**
+**H21. ✅ Fixed 2026-08-25.**
 - **Database object:** no single database object — this is about the *absence* of one: `stopTimer`'s
   multi-day split (`use-time-entries.ts`) is implemented as two separate, sequential client-side
   Supabase calls (`INSERT` of later-day segments, then `UPDATE` of the original row) with no
@@ -1042,9 +1095,28 @@ ever runs its `_has_running` check.
   commits, or none of it does, and the client goes back to a single round trip instead of an
   N+1 sequence it can't make atomic on its own.
 
+**Fixed:** exactly as recommended — a new `stop_timer(_entry_id, _description, _segments)`
+`SECURITY DEFINER` RPC (`20260825010000_atomic_stop_timer.sql`) does the whole close-and-split in
+one transaction; a `RAISE EXCEPTION` at any point rolls back everything the call already did. Takes
+a row lock (`FOR UPDATE`) on the entry so two concurrent stop attempts serialize instead of racing —
+a robustness win the old client-side implementation never had. Day-splitting itself is still
+computed client-side (`splitByDay`, unchanged, browser-local time) and passed in as ordered JSON
+segments; only the writes moved server-side. Since `SECURITY DEFINER` bypasses RLS, every rule the
+bypassed policies would have enforced is replicated explicitly inside the function:
+`is_active_user` (H15), `week_is_locked` with the same admin override, `description_required`, and
+`manual_entry_allowed` (preserved exactly as it already behaved — it already applied to a later-day
+segment insert since its `end_time` is set at insert time — not reconsidered as part of this fix).
+Note: the specific *overlap-collision* failure mode this finding originally described can no longer
+happen, since C4's overlap constraint was separately removed on 2026-08-19 (see C4 above) — this fix
+still matters for every other partial-failure cause (network drop, tab close, a locked week).
+**Not independently verified against a live database** — this is the most structurally complex
+migration added this session (a loop, `WITH ORDINALITY`, row locking), more so than the plain-SQL
+functions elsewhere in this pass; flagged for a real syntax/behavior check before relying on it, per
+H23's standing recommendation for every migration in this repo.
+
 ### 24. Medium-Priority Issues
 
-**M34. ⏳ Open.**
+**M34. ✅ Fixed 2026-08-25.**
 - **Database object:** `timesheets.week_start` (date, `20260804110000_timesheet_approvals.sql`) and
   `submit_timesheet(_week_start date)`.
 - **Problem:** nothing constrains `week_start` to actually be a Monday — the app's own notion of
@@ -1068,7 +1140,14 @@ ever runs its `_has_running` check.
   more forgiving (silently corrects rather than rejects) and matches how the rest of this schema
   prefers to guide behavior over hard-failing where it reasonably can.
 
-**M35. ⏳ Open.**
+**Fixed:** took the recommended normalization option — `submit_timesheet()` now runs
+`_week_start := date_trunc('week', _week_start)::date;` as its first statement
+(`20260825040000_normalize_submit_timesheet_week_start.sql`). No `CHECK` constraint added alongside
+it: `authenticated` has no INSERT/UPDATE grant on `public.timesheets` at all, so `submit_timesheet()`
+is the *only* write path — normalizing there closes the gap completely, not just partially, making a
+table-level constraint genuinely redundant rather than defense-in-depth.
+
+**M35. ✅ Fixed 2026-08-25.**
 - **Database object:** `time_entries.tag_ids` (`uuid[]`, `20260804000910_5a7605fb-...sql`).
 - **Problem:** `tag_ids` is a plain array column, not a real relationship — Postgres can't put a
   foreign key on individual array elements, so nothing enforces that every UUID inside it still
@@ -1090,7 +1169,16 @@ ever runs its `_has_running` check.
   delete itself, so it's atomic with the `tags` row deletion rather than a second client-side call
   that could itself fail independently.
 
-**M36. ⏳ Open.**
+**Fixed:** took the recommended cleanup option — a new `delete_tag(_tag_id)` `SECURITY DEFINER` RPC
+(`20260825050000_delete_tag_cleans_up_entries.sql`) strips the id from every entry's `tag_ids` first
+(`UPDATE ... SET tag_ids = array_remove(tag_ids, _tag_id) WHERE _tag_id = ANY(tag_ids)`), then
+deletes the tag row, in one call — atomic with the delete, exactly as recommended. A `can_manage()`
+check up front replicates `tags_write_manage`'s own RLS policy exactly (and already folds in
+`is_active_user` per H15), since this has to bypass RLS to reach every user's `time_entries` rows
+workspace-wide, not just rows the caller could update directly under `shares_team()` scoping.
+`deleteTag()` in `use-tags.ts` now calls the RPC instead of a bare `DELETE`.
+
+**M36. ✅ Fixed 2026-08-25.**
 - **Database object:** `time_entries.entry_date` (date) vs. `time_entries.start_time` (timestamptz),
   both `20260804000910_5a7605fb-...sql`.
 - **Problem:** nothing in the database enforces that `entry_date` actually corresponds to the local
@@ -1118,9 +1206,20 @@ ever runs its `_has_running` check.
   profiles WHERE id = NEW.user_id))::date`), rather than trusting the client-supplied value —
   removing the possibility of drift entirely instead of trying to detect it after the fact.
 
+**Fixed:** took the recommended trigger option — a new `BEFORE INSERT OR UPDATE` trigger
+(`20260825060000_derive_entry_date_from_timezone.sql`) recomputes `entry_date` server-side from
+`start_time` interpreted through the entry owner's *current* `profiles.timezone`, on every write,
+same pattern C6/H20 already established for `duration_minutes`. Plain `SECURITY INVOKER` — no
+elevated privilege needed, since `profiles_select_all` already lets any active authenticated user
+read any profile's timezone. **Known accepted edge case, documented in the migration, not fixed
+here:** H8/M21's multi-day split still splits at *browser*-local midnight, not the entry owner's
+`profiles.timezone` — if those genuinely differ, a split entry's segments can straddle this
+trigger's day boundary differently than the browser-time split intended. Making the split itself
+timezone-aware is a separate, larger change this finding didn't ask for.
+
 ### 25. Low-Priority Issues
 
-**L34. ⏳ Open.**
+**L34. ✅ Fixed 2026-08-25.**
 - **Database object:** `public.profiles` — specifically the client-side bootstrap insert in
   `use-members.ts` that creates a person's own profile row on first sign-in (`supabase.from
   ("profiles").insert({ id: uid, ... })`), not a schema object itself.
@@ -1145,6 +1244,18 @@ ever runs its `_has_running` check.
   everywhere else in this codebase) — no schema change needed, this is a client-code gap that
   happens to matter for data-flow completeness around user creation, which is why it's included
   here rather than in the automation/parity passes above.
+
+**Fixed:** took the recommended option, with one adjustment noted below. `use-members.ts`'s bootstrap
+effect now checks the resolved `{ error }` (Supabase's query builder resolves rather than rejects on
+a Postgres/API error, so the old bare `.then()` was silently ignoring `error` even when it *did*
+fire) and toasts "Couldn't set up your account" for anything other than a `23505` unique violation
+(the harmless race case — Realtime's own `profiles` subscription already picks up the other tab's
+successful insert and invalidates). A second `.then()` callback (not a chained `.catch()` — the
+Supabase builder is a `PromiseLike`, not a real `Promise`, so `.catch()` doesn't type-check on it)
+covers a genuine network-level rejection with the same toast. This one hook file now imports
+`sonner` directly, unlike every other `workspace/*.ts` data hook (which leave toasting to the
+calling component) — a deliberate exception: this is a background bootstrap effect with no caller
+awaiting it, so there's no other way for this specific failure to reach the person at all.
 
 ### 26. Migration Considerations
 
@@ -1664,7 +1775,7 @@ find anyone past the first 50 accounts.**
 `profiles` row by email (`.ilike("email", data.email).maybeSingle()`) to confirm the account exists,
 skipping `listUsers()`'s pagination problem entirely instead of looping around it.
 
-**M41. ⏳ Open. Two unbounded, workspace-wide fetches with no cap: `timesheetsQ` and
+**M41. ✅ Fixed 2026-08-25. Two unbounded, workspace-wide fetches with no cap: `timesheetsQ` and
 `activity_log`'s missing index.**
 - **Current behavior:** `useTimesheetsData`'s `timesheetsQ` (`src/lib/workspace/use-timesheets.ts`,
   line 18) fetches **every** `timesheets` row RLS lets the viewer see — for an admin, that's every
@@ -1687,6 +1798,14 @@ skipping `listUsers()`'s pagination problem entirely instead of looping around i
 - **Complexity:** Low for the index; Low-Medium for bounding `timesheetsQ` (touches what "all
   timesheets" means for Reports/Approvals elsewhere in the app, needs a quick check nothing else
   assumes the full history is always loaded).
+
+**Fixed:** both pieces, exactly as recommended. `timesheetsQ` now bounds to
+`.gte("week_start", toDateKey(oldestLoadedWeekStart()))` — the same rolling window `entries` already
+uses — after confirming nothing that reads `timesheets` (Approvals, week-status lookups, the H19
+Dashboard banner, L33's last-week recap) ever looks further back than that boundary anyway, since
+Timesheet's own week-nav already refuses to page any further (H10/L22). Added
+`CREATE INDEX activity_log_created_at_idx ON activity_log (created_at DESC)`
+(`20260825070000_activity_log_created_at_index.sql`).
 
 **M42. ✅ Fixed 2026-08-14. Three permanently-"coming soon" Manage tabs, recommended for removal
 once already, still present.**
@@ -1740,7 +1859,7 @@ verified by hand, once, and never re-verified automatically again.**
 - **Complexity:** Medium — needs picking a test runner and a way to run migrations against a local
   Postgres/Supabase instance in CI, which doesn't exist yet either.
 
-**M44. ⏳ Open. The Projects tab has no search, filter, or pagination — the busiest list in the app
+**M44. ✅ Fixed — already resolved before this document was updated to say so.** The Projects tab has no search, filter, or pagination — the busiest list in the app
 has less findability than the Clients tab one click away in the same file.**
 - **Current behavior:** `projects.tsx:198-294` renders every project as an unconditional
   `projects.map(...)` grid of cards, with no name search, no team/client filter, and no pagination.
@@ -1763,7 +1882,15 @@ has less findability than the Clients tab one click away in the same file.**
 - **Complexity:** Low — same reusable-component pattern M39 already proved out, just pointed at
   projects instead of members.
 
-**L37. ⏳ Open. No `typecheck` script in `package.json` despite the codebase relying on `tsc
+**Fixed — status corrected 2026-08-25, not fixed as part of this pass.** Commit `c155050`
+("Add project pagination and an 'All teams' option," 2026-08-18, between this audit pass and the
+next commit on the branch) already shipped `PROJECTS_PAGE_SIZE`, a search input, and a team filter
+on `projects.tsx` — confirmed by reading the current file directly. This finding's own marker was
+simply never updated when that shipped, the same class of drift L30 called out and corrected once
+already. Marking fixed here rather than leaving it permanently open for something that's actually
+done.
+
+**L37. ✅ Fixed 2026-08-25. No `typecheck` script in `package.json` despite the codebase relying on `tsc
 --noEmit` for verification.**
 - **Current behavior:** `package.json`'s `scripts` has `lint` (ESLint) and `format` (Prettier) but
   nothing that runs the TypeScript compiler in check-only mode — every verification pass in this
@@ -1775,6 +1902,10 @@ has less findability than the Clients tab one click away in the same file.**
   mention it either).
 - **Priority:** Low.
 - **Complexity:** Trivial — `"typecheck": "tsc --noEmit"`.
+
+**Fixed:** added `"typecheck": "tsc --noEmit"` to `package.json`, and added it to `CLAUDE.md`'s own
+"Commands" section too — the second half of this finding's complaint ("it isn't in the list of
+documented commands") would otherwise still be true even with the script added.
 
 **L38. ✅ Fixed 2026-08-14. `/manage`'s deep-linked `TeamEntriesTab` doesn't re-sync on a second
 consecutive deep-link while already mounted — a real, narrow bug in this session's own M37
@@ -1803,20 +1934,33 @@ implementation.**
 on `` `${entriesTarget?.memberId ?? ""}-${entriesTarget?.weekStart ?? ""}` ``, forcing a clean
 remount (and fresh `useState` initializer run) on every distinct deep-link target.
 
-**L39. ⏳ Open. No empty-state message when a project picker has nothing to show.** `TimerBar`
+**L39. ✅ Fixed 2026-08-25. No empty-state message when a project picker has nothing to show.** `TimerBar`
 (`time.tsx`) and `EntryFormDialog` (`entry-form-dialog.tsx`) both render a plain, empty
 `<Select>` with no explanatory copy if every project is archived or none exist yet — a first-day
 workspace with no projects created hits this immediately, sees an empty dropdown, then only
 learns why on submit via a generic "Pick a project first" error.
 - **Priority:** Low. **Complexity:** Very low — one conditional empty-state message per picker.
 
-**L40. ⏳ Open. The Timesheet Grid lists every non-archived project as a row every week, even ones
+**Fixed:** a small muted-text hint ("No projects yet — ask an admin to create one") now appears
+under both pickers when there are zero active projects. Worth noting: `TimerBar`'s picker is no
+longer ever *truly* empty since the "Allow timer-less starts" change (2026-08-19) added a permanent
+"No project" option to it — this finding's original "cryptic empty dropdown" framing applies more
+squarely to `EntryFormDialog` now, which still requires a real project for a manual entry and has no
+such fallback option. Fixed in both anyway, for the same "why is there nothing to pick" clarity.
+
+**L40. ✅ Fixed 2026-08-25. The Timesheet Grid lists every non-archived project as a row every week, even ones
 with zero hours that week.** `timesheet-grid.tsx` includes any project that's either non-archived
 or has at least one non-zero day — meaning every active project shows up regardless of whether it
 was touched that week, which for a workspace with many concurrent projects turns the weekly grid
 into mostly `—` cells to scroll past to find the two or three rows with real data.
 - **Priority:** Low today, worth revisiting as Medium once project counts grow. **Complexity:**
   Low — filter to rows with a non-zero weekly total, or add a "hide empty rows" toggle.
+
+**Fixed:** took the toggle option over an unconditional filter — a "Hide rows with nothing logged
+this week" checkbox (default off, so nothing changes unless asked for) above the grid. An
+unconditional filter was deliberately avoided: seeing every assigned project, even at zero, is
+sometimes exactly the point (a checklist of what's expected that week), so this preserves both
+behaviors rather than picking one.
 
 ### 31. Top 10 Issues (fix before replacing Clockify)
 
@@ -1825,16 +1969,22 @@ and removed from this list** — the product owner checked the Supabase dashboar
 2026-08-14 and confirmed both `20260814000000` and `20260814010000` (the migrations C6/C7 depend
 on) are live; see H23's own entry above for the full note. Five more items below (H25, H24, H26,
 M42, H20) were implemented the same day and are marked accordingly, kept in place rather than
-renumbered so the list still reads as a record of what this pass identified — the genuinely open
-remainder is H18, H16, H17, M29, M24:
+renumbered so the list still reads as a record of what this pass identified.
+
+**Update 2026-08-25:** H16 and H17 (below) are now also fixed — see each entry above for detail.
+**The genuinely open remainder of this list is now just H18, M29, M24** — the two of those three
+that are engineering work (H16/H17) are done; what's left is a real service-role-credentialed
+cutover run (H18) and two product decisions (M29, M24), none of which this pass could do from here.
 
 1. **H18 — No path to bring historical Clockify data across.** ⚠️ Improved 2026-08-14 — the tool
    (`scripts/import-clockify-history.mjs`) is built and validated against a real Clockify export;
    what's left is running it against the real project, not more engineering.
-2. **H16 — No entry-level Detailed report.** An agency billing clients by the hour needs entry-level
-   backup, not just project totals, to justify an invoice.
-3. **H17 — No cost/billing ($) report.** "What did we spend/bill this month" is unanswerable in-app
-   today despite every input (`hourly_rate`, `is_billable`) already existing.
+2. **H16 — ✅ Fixed 2026-08-25.** No entry-level Detailed report — an agency billing clients by the
+   hour needs entry-level backup, not just project totals, to justify an invoice. A new Detailed
+   Reports tab (searchable, filterable, paginated, CSV-exportable) now covers this.
+3. **H17 — ✅ Fixed 2026-08-25.** No cost/billing ($) report — "what did we spend/bill this month"
+   was unanswerable in-app despite every input (`hourly_rate`, `is_billable`) already existing. An
+   Amount column (billable hours × rate) on Reports' employee view now covers this.
 4. **H25 — ✅ Fixed 2026-08-14.** Own time-entry history can silently truncate past ~400 days of
    real use — the exact failure shape H10 already cost real effort to fix once, from a new cause.
    `entriesQ` now carries an explicit `.limit(5000)`.
@@ -1860,28 +2010,37 @@ remainder is H18, H16, H17, M29, M24:
 
 ### 32. Top 10 Improvements (quality-of-life, not launch-blocking)
 
-1. **M26 — Per-entry billable override.** A billable project still has real non-billable moments
-   (internal syncs, rework); can't be excluded today without polluting project-level totals.
-2. **M28 — Billable vs. non-billable split in Reports.** The data (`is_billable`) exists; nothing
-   surfaces it cross-team.
-3. **M44 — Search/filter/pagination on the Projects tab.** The busiest list in the app has less
-   findability than the Clients tab one click away in the same file — the same M39 pattern, applied
-   to a different data model.
-4. **M27 — Project-level budget/estimated-hours tracking.** Clients already have this
-   (`subscription_hours`); individual fixed-scope projects don't.
-5. **M41 — Bound `timesheetsQ`, index `activity_log`.** Both cheap, both worth doing before they're
-   a real slowdown rather than a theoretical one.
-6. **M35 — Clean up dangling `tag_ids` on tag deletion.** Harmless today, permanent technical debt
-   otherwise.
-7. **M34 — Constrain/normalize `timesheets.week_start` to Monday server-side.** Cheap insurance
-   against a direct-API-call edge case that would otherwise be genuinely confusing to debug.
-8. **M36 — Derive `entry_date` server-side from `start_time` + the entry owner's timezone.** Closes
-   a real (if low-frequency) drift risk for a team that's explicitly distributed across timezones.
-9. **L34 — Add error handling to the profile-bootstrap insert.** A brand-new user's very first
-   sign-in shouldn't be able to fail silently with no retry affordance.
-10. **M43 — A handful of integration tests around the highest-stakes `SECURITY DEFINER` functions.**
-    Not full coverage — just enough to make the next audit pass faster and less error-prone than
-    this one and the five before it.
+**Update 2026-08-25: 9 of these 10 are now fixed** — only M43 (automated tests) remains, kept in
+place below rather than renumbered so this still reads as a record of what this pass identified.
+
+1. **M26 — ✅ Fixed 2026-08-25. Per-entry billable override.** A billable project still has real
+   non-billable moments (internal syncs, rework); couldn't be excluded before without polluting
+   project-level totals. `EntryFormDialog` now has a billable checkbox, defaulting to the project's
+   own setting but overridable.
+2. **M28 — ✅ Fixed 2026-08-25. Billable vs. non-billable split in Reports.** The data
+   (`is_billable`) existed but nothing surfaced it cross-team — both Reports tabs now have a
+   Billable column (hours + %).
+3. **M44 — ✅ Fixed — already done before this document said so (see M44's own entry above).**
+   Search/filter/pagination on the Projects tab.
+4. **M27 — ✅ Fixed 2026-08-25. Project-level budget/estimated-hours tracking.** Clients already had
+   this (`subscription_hours`); individual fixed-scope projects now have their own `budget_hours`
+   too, with the same over/near-budget badges.
+5. **M41 — ✅ Fixed 2026-08-25. Bound `timesheetsQ`, index `activity_log`.** Both done, before either
+   became a real slowdown rather than a theoretical one.
+6. **M35 — ✅ Fixed 2026-08-25. Clean up dangling `tag_ids` on tag deletion.** `delete_tag()` now
+   strips the id from every entry first, atomically with the delete.
+7. **M34 — ✅ Fixed 2026-08-25. Constrain/normalize `timesheets.week_start` to Monday server-side.**
+   `submit_timesheet()` now normalizes via `date_trunc('week', ...)`.
+8. **M36 — ✅ Fixed 2026-08-25. Derive `entry_date` server-side from `start_time` + the entry owner's
+   timezone.** A new trigger closes this drift risk for a team explicitly distributed across
+   timezones — see M36's own entry for a documented, accepted edge case with H8/M21's day-splitting.
+9. **L34 — ✅ Fixed 2026-08-25. Add error handling to the profile-bootstrap insert.** A brand-new
+   user's very first sign-in can no longer fail silently with no retry affordance.
+10. **M43 — ⏳ Still open. A handful of integration tests around the highest-stakes `SECURITY
+    DEFINER` functions.** Not full coverage — just enough to make the next audit pass faster and
+    less error-prone than this one and the six before it. The one item on this list this pass didn't
+    touch — needs a test runner and a way to run migrations against a local Postgres/Supabase
+    instance in CI, neither of which exist yet, a bigger lift than everything else here.
 
 ### 33. Features We Should NOT Build
 
@@ -1919,7 +2078,10 @@ the kind of scope creep this instruction set was explicit about avoiding:
 ### 34. Logic That Needs Strengthening
 
 Business logic and data-integrity rules that are directionally correct today but have a real,
-identifiable gap — distinct from missing features above:
+identifiable gap — distinct from missing features above. **Update 2026-08-25: every item in this
+list is now fixed** (H20, H24, H25 were already fixed 2026-08-14; H21, M34, M35, M36 were fixed this
+pass — see each finding's own entry above for detail). Left as a historical snapshot of what this
+pass identified, not rewritten into a status list:
 
 - **H20 — `submit_timesheet()`'s running-timer check and its own submit/lock aren't atomic.** A
   second tab/device can start a timer in the narrow window between the check and the commit,
@@ -1972,31 +2134,42 @@ identifiable gap — distinct from missing features above:
 - ~~Row-lock (or advisory-lock) `submit_timesheet()`'s running-timer check against its own commit
   (H20)~~ **Done 2026-08-14** — `20260814030000_atomic_submit_timesheet_lock.sql`.
 
-**After launch (soon, not day one):**
-- H16 (Detailed report) and H17 (cost/billing report) — both genuinely important for an agency
-  billing by the hour, neither blocks the core timer/timesheet/approval loop from working correctly
-  on day one.
-- M26, M27, M28 — per-entry billable override, project budgets, billable/non-billable Reports split.
-- H21 — make the multi-day timer split one transaction (a `SECURITY DEFINER` RPC, mirroring
-  `submit_timesheet`/`review_timesheet`), so a failure partway through can't leave later segments
-  committed but the original entry stuck running indefinitely.
-- M34, M35, M36 — the three remaining data-integrity hardening items from the Database audit.
-- M44 — search/filter/pagination on the Projects tab, same pattern M39 already proved out.
-- L34 — profile-bootstrap error handling.
-- M41 — bound `timesheetsQ`, index `activity_log`, before either becomes a real slowdown.
+**After launch (soon, not day one):** — **all done 2026-08-25**, see each finding's own entry above.
+- ~~H16 (Detailed report) and H17 (cost/billing report)~~ **Done.**
+- ~~M26, M27, M28 — per-entry billable override, project budgets, billable/non-billable Reports
+  split.~~ **Done.**
+- ~~H21 — make the multi-day timer split one transaction.~~ **Done** —
+  `20260825010000_atomic_stop_timer.sql`.
+- ~~M34, M35, M36 — the three remaining data-integrity hardening items from the Database audit.~~
+  **Done.**
+- ~~M44 — search/filter/pagination on the Projects tab.~~ **Done — turned out to already be shipped
+  by an earlier commit (`c155050`) whose status this document simply never caught up to; corrected
+  here rather than treated as new work.**
+- ~~L34 — profile-bootstrap error handling.~~ **Done.**
+- ~~M41 — bound `timesheetsQ`, index `activity_log`.~~ **Done.**
 
 **Future / optional:**
 - M24 — a real (minimal) time-off workflow, or a decision to remove the page entirely — a product
-  call, not an engineering one.
+  call, not an engineering one. **Still open.**
 - M25 — project-scoped task categories, only if task lists genuinely differ per project in practice
-  (worth confirming with the team before building anything).
-- L31 (avatar upload), L32 (structured weekly schedule), L37 (`typecheck` script), L39 (empty
-  project-picker messaging), L40 (Timesheet Grid empty rows).
-- M43 — investment in automated testing, scoped to the highest-stakes business logic first.
+  (worth confirming with the team before building anything). **Still open.**
+- ~~L37 (`typecheck` script), L39 (empty project-picker messaging), L40 (Timesheet Grid empty
+  rows)~~ **Done 2026-08-25.** L31 (avatar upload) and L32 (structured weekly schedule) remain
+  open — L32's UX half was separately addressed by prior commits (a real day/time-picker replaced
+  the free-text box), but the underlying `weekly_schedule` column is still a plain string; not
+  restructured to per-weekday columns, per this finding's own "not worth it unless something
+  downstream needs to compute against it" caveat, which still holds — nothing does yet.
+- M43 — investment in automated testing, scoped to the highest-stakes business logic first. **Still
+  open** — the one item from both Top 10 lists this pass didn't touch.
 - Everything listed under "Features We Should NOT Build" above — revisit only if a real, named need
   emerges, not preemptively.
 
 ### 36. Final Status Summary
+
+**This section is a snapshot from 2026-08-14 — left as-is below as a historical record. See the
+"Same-Day Implementation Pass (2026-08-25)" section at the very end of this document for what's
+changed since, including one correction this snapshot needs: C4 (below, listed as fixed) was
+deliberately reverted on 2026-08-19 — see C4's own entry near the top of this document.**
 
 - **Critical (C1–C7):** all fixed in the committed codebase **and now confirmed live** — C6/C7's
   migrations were verified directly against the Supabase dashboard on 2026-08-14 (H23). The
@@ -2097,3 +2270,115 @@ same five-minute dashboard check, not done as part of this pass.
 
 Still open from the "Before launch" list: **H18** (execute the actual import) and **M29**
 (notifications — a product decision on channel/ownership, not a mechanical fix).
+
+---
+
+## Same-Day Implementation Pass (2026-08-25)
+
+Eleven days after the 2026-08-14 pass above, this session re-read the full document, cross-checked
+its "still open" claims against the current code (the branch had moved on — 8 commits since,
+2026-08-18 through 2026-08-19, none of which had updated this document), then worked through the
+genuinely open remainder highest-priority-first. No code was changed in the drift-check itself; the
+findings below reflect real implementation work that followed it.
+
+### Drift found before any new work started
+
+- **C4 (overlap validation) was deliberately reverted**, not merely regressed. Commit `df512c1`
+  ("Allow timer-less starts, overlapping entries, and add a searchable client filter," 2026-08-19)
+  dropped the `EXCLUDE` constraint and its client-side pre-check entirely, "matching Clockify." This
+  document's own section 1 table still called it "✅ Fixed" until this pass — a real accuracy gap,
+  now corrected at C4's own entry. Not re-litigated or reversed back here: it reads as an
+  intentional product call the team made, not an oversight to fix.
+- **Two real bugs were fixed in the same commit window with no corresponding audit entry at all:**
+  commit `6fabeaa` ("Fix stuck-forever timers by letting a running entry's start time be corrected")
+  addressed a real recovery gap — a multi-day split whose later-day insert collided with the (then
+  still-present) overlap constraint left the timer stuck running with no way to fix it, since editing
+  or deleting a running entry was blocked everywhere; and commit `4b3823c` ("Fix a running timer's
+  typed-in description not being saved on stop") fixed `stopTimer` silently discarding whatever
+  description was typed while the timer ran. Neither needed further work this pass — noted here so
+  the document's own history stays complete, not because either was reopened.
+- **M44 (Projects tab search/filter/pagination)** turned out to already be shipped by commit
+  `c155050` (2026-08-18) — this document's own marker was simply never updated, the same class of
+  drift L30 already corrected once. Verified directly against the current file rather than assumed.
+
+### Findings fixed this pass, highest priority first
+
+Ranked by the same "genuinely open, highest impact first" ordering the document's own Top 10 lists
+already established — H18 and M29 skipped as not actionable from this environment (H18 needs real
+service-role credentials and the full export; M29 needs a product decision on channel/ownership),
+M24 skipped as a product decision, not an engineering task:
+
+- **H16** — entry-level Detailed report: new Reports tab, `detailedEntriesForRange()` client query
+  (no new RPC — `time_entries`' own RLS already scopes it correctly), search/project/employee
+  filters, pagination, CSV export.
+- **H17** — cost/billing ($) report: new `employee_billable_hours_range` RPC, Amount column on
+  Reports' employee view.
+- **H21** — atomic multi-day timer split: new `stop_timer()` `SECURITY DEFINER` RPC
+  (`20260825010000_atomic_stop_timer.sql`) replacing the old insert-loop-then-update sequence.
+- **M26** — per-entry billable override: `EntryFormDialog` billable checkbox.
+- **M28** — billable/non-billable split in Reports: new `project_billable_hours_range` RPC, Billable
+  column on both tabs.
+- **M27** — project-level budget/estimated-hours: new `budget_hours` column, `useProjectBudgets()`,
+  over/near-budget badges on project cards.
+- **M34** — `timesheets.week_start` normalized to Monday inside `submit_timesheet()`.
+- **M35** — `delete_tag()` RPC strips dangling `tag_ids` atomically with the tag delete.
+- **M36** — `entry_date` now derived server-side from `start_time` + the entry owner's
+  `profiles.timezone` via a new trigger.
+- **M41** — `timesheetsQ` bounded to the same rolling window `entries` already uses;
+  `activity_log_created_at_idx` added.
+- **M44** — confirmed already fixed (see drift note above), not duplicated.
+- **L34** — profile-bootstrap insert now surfaces a real failure instead of swallowing it.
+- **L37** — `npm run typecheck` added, and documented in `CLAUDE.md`.
+- **L39** — empty-state messaging on the TimerBar/EntryFormDialog project pickers.
+- **L40** — "hide empty rows" toggle on the Timesheet Grid.
+
+Eight new migrations: `20260825000000_employee_billable_hours_range.sql`,
+`20260825010000_atomic_stop_timer.sql`, `20260825020000_project_billable_hours_range.sql`,
+`20260825030000_project_budget_hours.sql`, `20260825040000_normalize_submit_timesheet_week_start.sql`,
+`20260825050000_delete_tag_cleans_up_entries.sql`, `20260825060000_derive_entry_date_from_timezone.sql`,
+`20260825070000_activity_log_created_at_index.sql`. Committed as `055c10b` on
+`claude/timer-stop-issues-1hj575`.
+
+**Not done this pass, by explicit scope decision, not oversight:**
+- **L31** (avatar upload) and **L32** (structured weekly-schedule storage) remain open — see each
+  finding's own entry / the roadmap above for why.
+- **M43** (automated tests) remains open — the one item from both prior Top 10 lists this pass didn't
+  touch.
+- Client subscription-hours-remaining (H17) and the new project-budget status (M27) were both
+  deliberately *not* added to Reports — both are all-time figures, not date-ranged, and would sit
+  oddly in an otherwise entirely date-ranged page. Consistent scope call across both findings, not
+  two different answers to the same question.
+
+### Verification
+
+`npx tsc --noEmit` and `npm run build` both clean after every individual change (not just once at
+the end). `npx eslint` run against every touched file after each change, filtered for the
+`prettier/prettier` noise this document's prior passes already established as unrelated repo-wide
+CRLF noise — clean aside from that and pre-existing `react-refresh/only-export-components` warnings
+on `workspace-store.tsx` (a file that was already exporting both components and constants/hooks
+before this pass, not a new problem introduced here).
+
+**Not done, same as every prior pass:** no live database access in this environment (the `.env` here
+only carries the anon/publishable key, not a service-role key or DB password), so **none of the
+eight new migrations have been run against the real Supabase project.** `H21`'s `stop_timer()` RPC
+is flagged specifically — it's the most structurally complex migration added this session (a
+`plpgsql` loop, `WITH ORDINALITY`, explicit row locking), meaningfully more so than the plain-SQL
+functions elsewhere in this pass, and is the one most worth a real syntax/behavior check before
+relying on it. No browser session either — no Chrome tooling available and no login credentials for
+this app, so nothing here has been visually confirmed working in an actual browser. This is the same
+standing gap H23 already named for this document's entire history: a migration file existing and
+that migration having actually run against production are two different facts, and nothing in this
+environment can close that gap on its own.
+
+### Updated launch-readiness read
+
+The "Overall launch readiness: ⚠️ Almost ready" call in section 36 (2026-08-14) named three specific
+reasons: H18 not yet run, H16/H17/M29 as day-one product gaps, and the three dead Manage tabs (M42).
+M42 was fixed the same day it was named. H16 and H17 are now fixed by this pass. That leaves the
+same two items this document has been circling for two passes: **H18 (execute the real import)** and
+**M29 (notification delivery)** — both explicitly out of this pass's reach (credentials/export for
+one, a product decision for the other), not because they're hard, but because they're not
+engineering-shaped tasks answerable from inside this repo. Nothing else found this pass suggests the
+core timer/timesheet/approval loop is anything other than what six prior passes already
+established: solid, defense-in-depth, not a prototype. The honest read is the same "almost ready"
+shape as before, narrowed to fewer, more specific, non-code blockers than it had two passes ago.
