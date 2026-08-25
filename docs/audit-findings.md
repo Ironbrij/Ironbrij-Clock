@@ -373,8 +373,7 @@ it's already visible one click away on the Clients tab. Pulling it in would mean
 per-client query duplicating existing logic for a "nice to have," not the core "$ figure to hand to
 Xero" ask this finding was actually about.
 
-**H18. ⚠️ Improved — the import tool now exists and is validated against a real export; the
-actual cutover import hasn't been run yet.** There's no CSV/API import anywhere in the app itself —
+**H18. ✅ Fixed 2026-08-25 — the actual cutover import has run against production.** There's no CSV/API import anywhere in the app itself —
 every time entry starts empty at rollout.
 **Why it matters:** "stop using Clockify" implies Ironbrij's historical hours (for reports,
 client history, payroll reference) either migrate or are lost. This blocks the actual cutover more
@@ -416,6 +415,49 @@ was separately verified against synthetic overnight and multi-day cases (23:00�
 Ironbrij's real Supabase project, using the full historical export (not just the one-week sample
 used to validate the tool) — hasn't happened. That's why this is `⚠️ Improved`, not `✅ Fixed`:
 the path now exists and is tested, but the historical data itself hasn't actually moved yet.
+
+**Cutover run 2026-08-25.** Ran against production with the real service-role key and two full
+years of Ironbrij's actual Clockify export (This Year: 7,885 rows; Last Year: 10,777 rows) —
+17,290 time entries ultimately inserted, verified independently by querying `time_entries` counts
+in the live database directly (not just trusting the script's own summary): 10,219 for 2025, 7,211
+for 2026 (the gap from the 7,051+20 actually imported this session is real entries already logged
+live in 2026 before this cutover ran), 738 with no project attached, all matching the dry run's
+predictions exactly.
+
+Along the way this surfaced real IronTrack data-quality issues the dry run's plain unmatched-list
+report wouldn't have caught on its own:
+- **5 accidentally-duplicated projects** (`Joanne Williams`, `Carol Stimpson`, `Monica Hill`,
+  `Samala Robinson` each existed twice; `Jim O'Connor`/`Jim O' Connor` as an apostrophe-spacing
+  near-duplicate) — confirmed as accidental and archived (not deleted — all were either empty or
+  had the same or less usage than their kept twin).
+- **9 people/projects that already existed as `clients` rows but had no matching `projects` row**
+  (Nicholas Blewett, Zada Lau, Noy Shani, Ryan Prospi, Craig Jones, Alex Quinn, Laurence Murray,
+  Frida Lezius, plus Kaley Chu who needed a client created fresh) — created, archived by default
+  since they're purely historical.
+- **A "VA name | Client" naming convention** Clockify used for ~70 rows-worth of project names that
+  don't match any IronTrack project directly — `Tessa Jetson`, `Tex He Yit`, and `Tracey Clarke`
+  each get worked by multiple different VAs, with Clockify's own `Project` field encoding
+  `{VA name} | {client bucket}` instead of just the client. Confirmed with the product owner and
+  mapped accordingly, including several abbreviated variants (`Tex`, `Tex Client`, `Tracey FT`,
+  `Tracey FT Assets`) the exact-string dry run alone wouldn't have caught.
+- **4 of the "missing" projects turned out to be the same engagement under a different name**
+  (`Samurai Marketing`→`Tex He Yit`, `Kickass Buddy Team`→`Preetah Bolaky`, `Pulsefire Training`→
+  `Frances Davidson`, `Adventure Support`→`Rachel Ware`), discovered by cross-referencing Clockify's
+  own `Client` column against IronTrack's existing client roster rather than trusting the `Project`
+  column name alone.
+- A new `--allow-unmatched-projects` flag was added to the import script itself (still off by
+  default) so a project that's neither renamed nor worth creating imports anyway with `project_id`
+  left null, rather than losing the row outright — recovered several thousand rows across the long
+  tail of one-off, low-volume historical project names that weren't worth creating permanent
+  projects for.
+- One person (`careers@ironbrij.com.au`, "Mitch") was invited into IronTrack mid-cutover
+  specifically so her 19 rows could be imported too, once confirmed she's still with Ironbrij (the
+  rest of the originally-unmatched people were confirmed gone and intentionally left out).
+
+Cross-checked at the end against every one of the 15 distinct emails in the export: 9 matched and
+imported, exactly the 6 confirmed as no longer with Ironbrij are the only ones left out — no
+unexplained gap. `scripts/import-clockify-history.mjs` and its `--mapping` file have been deleted
+per the script's own header comment, now that the cutover is done.
 
 ### 13. Useful Improvements
 
@@ -537,7 +579,7 @@ back them.
 **Priority:** Medium. **Complexity:** Medium — needs an actual email-sending path, which doesn't
 exist anywhere in this codebase yet.
 
-**Fixed (partially — same "improved, not run" shape as H18):** took exactly the recommended scope —
+**Fixed (partially — built and wired, not yet deployed):** took exactly the recommended scope —
 just "timesheet submitted for your review," the rest of the mocked list left alone. A new
 `timesheet_submission_recipients()` `SECURITY DEFINER` RPC answers "who should be told" (re-verifies
 the caller owns a *submitted* timesheet with the given id before returning anyone — admins, plus
@@ -551,7 +593,7 @@ as equally fake.
 (and optionally `NOTIFY_FROM_ADDRESS`) set as project secrets, and the function actually deployed
 (`supabase functions deploy notify-timesheet-submitted`). Until both happen, the function is a
 no-op by design (returns `{ sent: 0 }` rather than erroring) — nothing breaks, but no email goes out
-either. Same "built but not live" gap H18 already has; not yet verified against a live send.
+either, until someone with real project access configures and deploys it.
 
 ### 14. Lower-Priority / Polish
 
@@ -647,6 +689,13 @@ display it.
   role-based user management (invite/approve/remove, last-admin protection, self-role-change
   blocked), Reports summary views with CSV export, and Realtime sync across tabs/devices for every
   mutable table in the workspace.
+
+**Status correction (2026-08-25):** left as-is above as a historical snapshot from when this audit
+was written, but every must-have gap it named is now closed — H16, H17, and H18 are all
+`✅ Fixed` (see each entry above; H18 specifically was a real production cutover, not just tooling),
+and M24–M29 are resolved one way or another (M25–M28 built, M24 a deliberate deferral, M29 built but
+not yet deployed) — see each finding's own entry and the "Same-Day Implementation Pass" sections at
+the end of this document for the current, authoritative status.
 
 ---
 
@@ -2021,14 +2070,16 @@ on) are live; see H23's own entry above for the full note. Five more items below
 M42, H20) were implemented the same day and are marked accordingly, kept in place rather than
 renumbered so the list still reads as a record of what this pass identified.
 
-**Update 2026-08-25:** H16 and H17 (below) are now also fixed — see each entry above for detail.
-**The genuinely open remainder of this list is now just H18, M29, M24** — the two of those three
-that are engineering work (H16/H17) are done; what's left is a real service-role-credentialed
-cutover run (H18) and two product decisions (M29, M24), none of which this pass could do from here.
+**Update 2026-08-25:** H16, H17, and H18 (below) are all now fixed — see each entry above for
+detail. **The genuinely open remainder of this list is now just M29 and M24** — both product
+decisions (channel/ownership for notifications; build-or-remove for time off), neither an
+engineering gap this pass could close unprompted.
 
-1. **H18 — No path to bring historical Clockify data across.** ⚠️ Improved 2026-08-14 — the tool
-   (`scripts/import-clockify-history.mjs`) is built and validated against a real Clockify export;
-   what's left is running it against the real project, not more engineering.
+1. **H18 — ✅ Fixed 2026-08-25.** No path to bring historical Clockify data across — the actual
+   cutover ran against production (17,290 entries across two years), not just the tool existing.
+   See H18's own entry above for the full account, including several real IronTrack data-quality
+   issues (accidental duplicate projects, missing project rows for existing clients) the cutover
+   itself surfaced.
 2. **H16 — ✅ Fixed 2026-08-25.** No entry-level Detailed report — an agency billing clients by the
    hour needs entry-level backup, not just project totals, to justify an invoice. A new Detailed
    Reports tab (searchable, filterable, paginated, CSV-exportable) now covers this.
@@ -2162,12 +2213,15 @@ pass identified, not rewritten into a status list:
   **Done 2026-08-14** — verified directly against the Supabase dashboard; both migrations are live.
   The remaining piece of H23 (no CI/automated deployment check, so this was a one-time manual
   verification rather than a fixed process) is a lower-stakes follow-up, not a launch blocker.
-- Execute the historical-data import (H18): the tool exists
+- ~~Execute the historical-data import (H18): the tool exists
   (`scripts/import-clockify-history.mjs`) and is validated against a real export — get the
   service-role key, the full historical CSV (not just the one-week sample used to build/test it),
   run it in dry-run mode first to review the unmatched-users/unmatched-projects report, fix any
-  mapping gaps, then `--commit`. Delete the script once done, per its own header comment. **Still
-  the one item on this list that isn't done** — everything else below was implemented 2026-08-14.
+  mapping gaps, then `--commit`. Delete the script once done, per its own header comment.~~
+  **Done 2026-08-25** — ran for real against production with the real service-role key and both
+  years of the actual Clockify export; 17,290 time entries imported, verified directly against the
+  live database. Script and mapping file deleted per their own header comment. See H18's own entry
+  above and the "Third round" section at the end of this document for the full account.
 - ~~Add a `.limit()`/pagination bound to the personal entries fetch (H25)~~ **Done 2026-08-14** —
   `entriesQ` now caps at 5000 rows.
 - ~~Fix `resendInvite()`'s pagination (H26)~~ **Done 2026-08-14** — looks the account up by email in
@@ -2224,9 +2278,11 @@ pass identified, not rewritten into a status list:
 ### 36. Final Status Summary
 
 **This section is a snapshot from 2026-08-14 — left as-is below as a historical record. See the
-"Same-Day Implementation Pass (2026-08-25)" section at the very end of this document for what's
-changed since, including one correction this snapshot needs: C4 (below, listed as fixed) was
-deliberately reverted on 2026-08-19 — see C4's own entry near the top of this document.**
+"Same-Day Implementation Pass (2026-08-25)" sections at the very end of this document for what's
+changed since, including two corrections this snapshot needs: C4 (below, listed as fixed) was
+deliberately reverted on 2026-08-19 — see C4's own entry near the top of this document — and H18
+(below, listed as "⚠️ Improved") is now genuinely `✅ Fixed` — the actual production cutover ran
+2026-08-25, see H18's own entry.**
 
 - **Critical (C1–C7):** all fixed in the committed codebase **and now confirmed live** — C6/C7's
   migrations were verified directly against the Supabase dashboard on 2026-08-14 (H23). The
@@ -2450,7 +2506,7 @@ M43, and L32 were explicitly discussed and scoped with the user first, rather th
   real email via Resend for "timesheet submitted for your review," called client-side right after
   `submitTimesheet()` succeeds. **Requires `RESEND_API_KEY` (and optionally `NOTIFY_FROM_ADDRESS`)
   set as project secrets and the function deployed — neither possible from this environment**, so
-  this is built and wired but not yet live, the same "improved, not run" shape H18 already has.
+  this is built and wired but not yet live.
 - **M25 — ✅ Fixed.** Confirmed the need first (task lists do differ meaningfully by project), then
   built the recommended `project_task_categories` join — empty means unrestricted, so no existing
   project is affected unless deliberately scoped.
@@ -2475,7 +2531,44 @@ edge function are all committed and locally verified but **not run against produ
 includes actually sending a test email, which needs the Resend secret configured first regardless of
 anything else.
 
-**Updated remainder:** H18 (execute the real import — credentials), M29 (configure + deploy — the
-code exists now), M24 (product decision, explicitly deferred), L32 (skipped by explicit
-confirmation, not oversight), and the DB-dependent half of M43 (needs a live Postgres instance).
-Every other item this document tracked as open at the start of 2026-08-25 is now fixed.
+**Updated remainder at the end of this second round:** H18 (execute the real import — credentials),
+M29 (configure + deploy — the code exists now), M24 (product decision, explicitly deferred), L32
+(skipped by explicit confirmation, not oversight), and the DB-dependent half of M43 (needs a live
+Postgres instance).
+
+### Third round, same day (2026-08-25) — the H18 cutover itself
+
+The user came back later the same day with real service-role credentials and Ironbrij's own full
+two-year Clockify export (This Year: 7,885 rows; Last Year: 10,777 rows) — the one item on the
+remainder above that genuinely just needed access, not more engineering. See H18's own entry above
+for the full account; summarized here because it closes out the last open item from both prior
+rounds combined:
+
+- Ran the existing dry-run/offline structural check first (no writes), then a credentialed dry run
+  against the real database, before ever passing `--commit` — same order the script's own header
+  always recommended.
+- The real data surfaced things a synthetic test never would have: **5 accidentally-duplicated
+  projects** in IronTrack itself (confirmed with the user, archived — not deleted — the
+  emptier/less-used one of each pair), **8 people who already existed as `clients` rows but had no
+  matching `projects` row** (created, archived by default since purely historical), and a
+  **"VA name | Client" naming convention** Clockify used for the `Tessa Jetson`/`Tex He
+  Yit`/`Tracey Clarke` accounts that the exact-string matching alone couldn't resolve — confirmed
+  with the user and mapped, including abbreviated variants (`Tex`, `Tracey FT`, etc.) a naive
+  suffix-only check would have missed.
+- Added `--allow-unmatched-projects` to the import script itself (default off) so the long tail of
+  one-off historical project names that weren't worth creating permanent projects for still import
+  with `project_id` left null, rather than being lost outright.
+- One person (`careers@ironbrij.com.au`, "Mitch") was invited into IronTrack specifically so her 19
+  rows could be imported too, confirmed still with Ironbrij; the remaining 6 originally-unmatched
+  people were confirmed gone and correctly left out — cross-checked against all 15 distinct emails
+  in the export at the end, with no unexplained gap.
+- **17,290 time entries inserted total**, independently verified against live `time_entries` counts
+  in the database (not just the script's own reported summary) before declaring it done.
+- `scripts/import-clockify-history.mjs` and its `--mapping` file have been deleted, per the script's
+  own header comment, now that the cutover is complete.
+
+**Final remainder after all three rounds:** M29 (configure `RESEND_API_KEY` + deploy the edge
+function), M24 (product decision, explicitly deferred), L32 (skipped by explicit confirmation), and
+the DB-dependent half of M43 (needs a live Postgres instance to test the `SECURITY DEFINER`
+functions against). Every other item this document tracked as open at the start of 2026-08-25 —
+including H18 itself — is now fixed.
