@@ -28,6 +28,14 @@
 //                                             exactly, shape:
 //                                             { "users": { "clockify@email.com": "irontrack@email.com" },
 //                                               "projects": { "Clockify Project Name": "IronTrack Project Name" } }
+//     --allow-unmatched-projects              import a row whose Project doesn't match any
+//                                             IronTrack project anyway, with project_id left
+//                                             null, instead of skipping it — recovers the
+//                                             hours/description/person even when nobody's
+//                                             gotten around to creating or mapping every
+//                                             historical project. Does NOT apply to an
+//                                             unmatched *person* — there's no equivalent
+//                                             fallback for user_id, which is NOT NULL.
 //
 // CREDENTIALS
 //   SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY — the service-role key, not the anon key.
@@ -40,8 +48,12 @@
 //   commit it, never put it in .env, pass it as an env var for this one run only.
 //
 // WHAT THIS DOES NOT DO
-//   - Does not create missing users or projects. An unmatched email/project name is
-//     reported and skipped, never guessed at or auto-created.
+//   - Does not create missing users or projects, ever. An unmatched email/project name is
+//     always reported. An unmatched *email* is always skipped — there's no fallback for
+//     user_id, which is NOT NULL. An unmatched *project* is skipped by default too, unless
+//     --allow-unmatched-projects is passed, in which case that row still imports with
+//     project_id left null rather than being lost. Neither path ever guesses at or invents
+//     a new user/project row.
 //   - Does not attempt to detect near-duplicate/overlapping entries itself beyond an
 //     exact-duplicate check within the file — the database's own overlap constraint is
 //     the real backstop, and a per-row rejection from it is reported as a skip, not a
@@ -63,9 +75,11 @@ function parseArgs(argv) {
     fallbackTimezone: "Australia/Sydney",
     mapping: null,
     csvPath: null,
+    allowUnmatchedProjects: false,
   };
   for (const arg of argv) {
     if (arg === "--commit") args.commit = true;
+    else if (arg === "--allow-unmatched-projects") args.allowUnmatchedProjects = true;
     else if (arg.startsWith("--fallback-timezone=")) args.fallbackTimezone = arg.split("=")[1];
     else if (arg.startsWith("--mapping=")) args.mapping = arg.split("=")[1];
     else if (!arg.startsWith("--")) args.csvPath = arg;
@@ -364,8 +378,9 @@ async function main() {
   // --- Match every row, building the actual insert candidates ---
   const candidates = [];
   const unmatchedUsers = new Map(); // email -> count
-  const unmatchedProjects = new Map(); // name -> count
+  const unmatchedProjects = new Map(); // name -> count (still tracked/reported either way)
   const skippedBadDate = [];
+  let importedWithoutProject = 0;
 
   for (const r of rows) {
     const csvEmail = (r.Email ?? "").trim();
@@ -379,7 +394,12 @@ async function main() {
     }
     if (!project) {
       unmatchedProjects.set(csvProject, (unmatchedProjects.get(csvProject) ?? 0) + 1);
-      continue;
+      // Unlike an unmatched person (user_id is NOT NULL — there's no
+      // fallback), project_id is nullable, so --allow-unmatched-projects
+      // can still import the row unattributed rather than lose it
+      // outright. Off by default: silently landing entries with no
+      // project is its own kind of surprise, so this stays opt-in.
+      if (!args.allowUnmatchedProjects) continue;
     }
 
     const timeZone = profile.timezone || args.fallbackTimezone;
@@ -397,17 +417,24 @@ async function main() {
     const resolvedTagIds = tagNames.map((t) => tagByName.get(t.toLowerCase())?.id).filter(Boolean);
     const tagIds = resolvedTagIds.length
       ? resolvedTagIds
-      : (defaultTagsByProject.get(project.id) ?? []);
+      : project
+        ? (defaultTagsByProject.get(project.id) ?? [])
+        : [];
 
     const billableRaw = (r.Billable ?? "").trim().toLowerCase();
+    // No project to read a default billable flag from — same true-by-default
+    // fallback the app itself uses (project?.billable ?? true in
+    // use-time-entries.ts) when an entry has no project.
     const isBillable =
-      billableRaw === "yes" ? true : billableRaw === "no" ? false : project.is_billable;
+      billableRaw === "yes" ? true : billableRaw === "no" ? false : (project?.is_billable ?? true);
+
+    if (!project) importedWithoutProject += 1;
 
     for (const seg of splitByDayInZone(start, end, timeZone)) {
       candidates.push({
         __line: r.__line,
         user_id: profile.id,
-        project_id: project.id,
+        project_id: project?.id ?? null,
         task: (r.Task ?? "").trim(),
         description: (r.Description ?? "").trim(),
         start_time: seg.start.toISOString(),
@@ -416,7 +443,7 @@ async function main() {
         duration_minutes: seg.minutes,
         is_billable: isBillable,
         tag_ids: tagIds,
-        __archived_project: project.is_archived,
+        __archived_project: project?.is_archived ?? false,
       });
     }
   }
@@ -438,6 +465,12 @@ async function main() {
   // --- Report ---
   console.log("\n--- Match report ---");
   console.log(`Rows matched and ready to import (after day-splitting): ${deduped.length}`);
+  if (args.allowUnmatchedProjects) {
+    console.log(
+      `  ...of which ${importedWithoutProject} have no project (unmatched, imported with ` +
+        "project_id left null — see the unmatched-projects list below).",
+    );
+  }
   console.log(`Exact duplicate rows within the file (dropped): ${exactDupes}`);
   console.log(
     `Rows skipped — unparseable start/end time: ${skippedBadDate.length}${skippedBadDate.length ? ` (lines: ${skippedBadDate.join(", ")})` : ""}`,
@@ -450,11 +483,19 @@ async function main() {
   }
   if (unmatchedProjects.size) {
     console.log(
-      `\nUnmatched projects (${unmatchedProjects.size}) — these rows were skipped entirely:`,
+      `\nUnmatched projects (${unmatchedProjects.size}) — these rows were ` +
+        `${args.allowUnmatchedProjects ? "imported with no project attached" : "skipped entirely"}:`,
     );
     for (const [name, count] of unmatchedProjects)
       console.log(`  ${name || "(blank)"} — ${count} row(s)`);
-    console.log("  Fix via --mapping, or by creating/renaming these projects in IronTrack first.");
+    console.log(
+      args.allowUnmatchedProjects
+        ? "  Fix via --mapping, or by creating/renaming these projects in IronTrack first — " +
+            "otherwise these rows land with no project, same as any other entry logged with " +
+            '"No project" today.'
+        : "  Fix via --mapping, or by creating/renaming these projects in IronTrack first, or " +
+            "pass --allow-unmatched-projects to import these rows anyway with no project attached.",
+    );
   }
   const archivedHits = deduped.filter((c) => c.__archived_project);
   if (archivedHits.length) {
