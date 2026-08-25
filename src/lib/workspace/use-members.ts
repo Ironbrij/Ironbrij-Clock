@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { Session } from "@supabase/supabase-js";
+import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { throwIf } from "./utils";
 import {
@@ -79,6 +80,17 @@ export function useMembersData(enabled: boolean, uid: string | null, session: Se
     if (profilesQ.data.some((p) => p.id === uid)) return;
     const email = session.user.email ?? "";
     const meta = session.user.user_metadata ?? {};
+    // L34: this used to be a bare `.then(() => invalidateQueries(...))` with
+    // no error check at all — Supabase's query builder resolves with
+    // `{ error }` rather than rejecting, so a genuine failure (RLS denial,
+    // a real network error) was silently ignored and the person was just
+    // left on whatever "no profile yet" state renders, indistinguishable
+    // from the app still loading, with no retry affordance. Nothing calls
+    // this effect and awaits it — it's a background bootstrap on first
+    // sign-in — so there's no caller to propagate an error to; toasting
+    // directly here (unlike every other workspace/*.ts hook, which leaves
+    // toasting to the calling component) is the only way this specific
+    // failure can reach the person at all.
     supabase
       .from("profiles")
       .insert({
@@ -90,7 +102,33 @@ export function useMembersData(enabled: boolean, uid: string | null, session: Se
         job_title: "Team member",
         is_pending: true,
       })
-      .then(() => qc.invalidateQueries({ queryKey: ["profiles"] }));
+      .then(
+        ({ error }) => {
+          // A 23505 unique-violation means another tab (or a second run of
+          // this same effect) already created this exact row first — the
+          // correct, safe outcome for this table, not a real failure.
+          // Realtime's own "profiles" subscription already picks up that
+          // other insert and invalidates for us.
+          if (error && error.code !== "23505") {
+            toast.error("Couldn't set up your account", {
+              id: "profile-bootstrap-error",
+              description: "Try refreshing the page. If this keeps happening, contact an admin.",
+            });
+            return;
+          }
+          qc.invalidateQueries({ queryKey: ["profiles"] });
+        },
+        // Supabase's query builder is a PromiseLike, not a real Promise, so
+        // a genuine network-level rejection (as opposed to the {error}
+        // shape above, which covers Postgres/API errors) only reaches this
+        // second .then() callback, not a chained .catch().
+        () => {
+          toast.error("Couldn't set up your account", {
+            id: "profile-bootstrap-error",
+            description: "Check your connection, then try refreshing the page.",
+          });
+        },
+      );
   }, [uid, session, profilesQ.data, profilesQ.isLoading, qc]);
 
   const members = useMemo<WorkspaceMember[]>(() => {
@@ -257,6 +295,18 @@ export function useMembersData(enabled: boolean, uid: string | null, session: Se
     return (data ?? []).map((r) => ({ userId: r.user_id, minutes: r.minutes }));
   }, []);
 
+  // H17: billable-only hours per employee, for Reports' $ column — separate
+  // RPC rather than reusing employee_hours_range's total, since a $ figure
+  // has to be billable hours * rate, not total hours * rate.
+  const employeeBillableHoursForRange = useCallback(async (from: string, to: string) => {
+    const { data, error } = await supabase.rpc("employee_billable_hours_range", {
+      _from: from,
+      _to: to,
+    });
+    throwIf(error);
+    return (data ?? []).map((r) => ({ userId: r.user_id, minutes: r.minutes }));
+  }, []);
+
   const employeeClientHoursForRange = useCallback(async (from: string, to: string) => {
     const { data, error } = await supabase.rpc("employee_client_hours_range", {
       _from: from,
@@ -291,6 +341,7 @@ export function useMembersData(enabled: boolean, uid: string | null, session: Se
     updateProfile,
     updateMemberTimezone,
     employeeHoursForRange,
+    employeeBillableHoursForRange,
     employeeClientHoursForRange,
   };
 }

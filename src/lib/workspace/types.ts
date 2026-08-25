@@ -56,6 +56,8 @@ export type WorkspaceProject = {
   tagIds: string[];
   billable: boolean;
   archived: boolean;
+  /** M27: optional cap on logged hours, for a fixed-scope/capped project — null means no budget set. All-time, same as `hours`, not scoped to any date range. */
+  budgetHours: number | null;
 };
 
 export type WorkspaceTag = { id: string; name: string; color: string; entryCount: number };
@@ -98,6 +100,8 @@ export type WorkspaceEntry = {
   endTime: string | null;
   date: string;
   running: boolean;
+  /** M26: per-entry override, independent of the project's own default — set at creation from the project's billable flag, but editable afterward. */
+  billable: boolean;
 };
 
 export type WorkspaceTimesheet = {
@@ -123,6 +127,19 @@ export type PendingApprovalEntry = {
   task: string;
   description: string;
   minutes: number;
+  startTime: string;
+};
+
+/** H16: one raw entry, scoped by time_entries' own RLS — backs the Reports page's Detailed tab. */
+export type DetailedEntry = {
+  id: string;
+  userId: string;
+  projectId: string | null;
+  task: string;
+  description: string;
+  date: string;
+  minutes: number;
+  billable: boolean;
   startTime: string;
 };
 
@@ -182,4 +199,6 @@ export type ProjectInput = {
   billable: boolean;
   tagIds: string[];
   memberIds: string[];
+  /** M27: null clears/omits the budget. */
+  budgetHours: number | null;
 };

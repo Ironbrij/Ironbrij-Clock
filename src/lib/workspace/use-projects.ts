@@ -40,7 +40,7 @@ export function useProjectsData(
     queryFn: async () => {
       const { data, error } = await supabase
         .from("projects")
-        .select("id, name, client_id, team_id, color, is_billable, is_archived")
+        .select("id, name, client_id, team_id, color, is_billable, is_archived, budget_hours")
         .order("created_at");
       if (error) throw error;
       return data;
@@ -97,6 +97,7 @@ export function useProjectsData(
         tagIds: pt.filter((x) => x.project_id === p.id).map((x) => x.tag_id),
         billable: p.is_billable,
         archived: p.is_archived,
+        budgetHours: p.budget_hours,
       };
     });
   }, [projectsQ.data, clientsData, projectMembersQ.data, projectTagsQ.data, projectHoursQ.data]);
@@ -127,6 +128,7 @@ export function useProjectsData(
           team_id: input.teamId || null,
           color: input.color,
           is_billable: input.billable,
+          budget_hours: input.budgetHours,
         })
         .select("id")
         .single();
@@ -150,6 +152,7 @@ export function useProjectsData(
           team_id: input.teamId || null,
           color: input.color,
           is_billable: input.billable,
+          budget_hours: input.budgetHours,
         })
         .eq("id", projectId);
       throwIf(error);
@@ -204,6 +207,19 @@ export function useProjectsData(
     return (data ?? []).map((r) => ({ projectId: r.project_id, minutes: r.minutes }));
   }, []);
 
+  // M28: billable-only hours per project, for Reports' billable/
+  // non-billable split — has to be summed from time_entries.is_billable
+  // per row (M26 lets any entry override its project's default), not
+  // read off projects.is_billable directly.
+  const projectBillableHoursForRange = useCallback(async (from: string, to: string) => {
+    const { data, error } = await supabase.rpc("project_billable_hours_range", {
+      _from: from,
+      _to: to,
+    });
+    throwIf(error);
+    return (data ?? []).map((r) => ({ projectId: r.project_id, minutes: r.billable_minutes }));
+  }, []);
+
   return {
     projectsQ,
     projectMembersQ,
@@ -217,5 +233,6 @@ export function useProjectsData(
     unarchiveProject,
     deleteProject,
     projectHoursForRange,
+    projectBillableHoursForRange,
   };
 }

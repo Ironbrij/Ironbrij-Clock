@@ -19,6 +19,7 @@ npm run build       # production build, nitro/cloudflare target
 npm run build:dev   # development-mode build
 npm run preview     # preview a production build
 npm run lint         # eslint .
+npm run typecheck    # tsc --noEmit
 npm run format       # prettier --write .
 ```
 

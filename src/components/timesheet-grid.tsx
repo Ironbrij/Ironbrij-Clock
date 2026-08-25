@@ -1,5 +1,8 @@
+import { useState } from "react";
 import { ProjectDot } from "@/components/app-shell";
 import { Card, CardContent } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Label } from "@/components/ui/label";
 import { formatHours } from "@/lib/mock-data";
 import { weekdayNames } from "@/lib/time-utils";
 import { useWeekGrid, useWorkspace } from "@/lib/workspace-store";
@@ -7,7 +10,17 @@ import { useWeekGrid, useWorkspace } from "@/lib/workspace-store";
 export function TimesheetGrid({ weekStart }: { weekStart: Date }) {
   const { projects } = useWorkspace();
   const grid = useWeekGrid(weekStart);
-  const rows = projects.filter((p) => (grid[p.id] ?? []).some((h) => h > 0) || !p.archived);
+  // L40: every non-archived project shows as a row regardless of whether it
+  // was touched this week — fine for a handful of projects, but turns into
+  // mostly "—" cells to scroll past once a workspace has many. A toggle
+  // (default off, so nothing changes unless asked for) rather than an
+  // unconditional filter, since seeing every assigned project — even at
+  // zero — is sometimes exactly the point (a checklist of what's expected).
+  const [hideEmpty, setHideEmpty] = useState(false);
+  const allRows = projects.filter((p) => (grid[p.id] ?? []).some((h) => h > 0) || !p.archived);
+  const rows = hideEmpty
+    ? allRows.filter((p) => (grid[p.id] ?? []).some((h) => h > 0))
+    : allRows;
   const dayTotals = weekdayNames.map((_, i) =>
     rows.reduce((sum, p) => sum + (grid[p.id]?.[i] ?? 0), 0),
   );
@@ -15,6 +28,21 @@ export function TimesheetGrid({ weekStart }: { weekStart: Date }) {
 
   return (
     <Card className="overflow-hidden shadow-card">
+      {allRows.length > 0 && (
+        <div className="flex items-center gap-2 border-b border-border px-5 py-2.5">
+          <Checkbox
+            id="timesheet-grid-hide-empty"
+            checked={hideEmpty}
+            onCheckedChange={(checked) => setHideEmpty(checked === true)}
+          />
+          <Label
+            htmlFor="timesheet-grid-hide-empty"
+            className="cursor-pointer text-xs font-normal text-muted-foreground"
+          >
+            Hide rows with nothing logged this week
+          </Label>
+        </div>
+      )}
       <CardContent className="overflow-x-auto p-0">
         <table className="w-full min-w-[720px] border-collapse text-sm">
           <thead>

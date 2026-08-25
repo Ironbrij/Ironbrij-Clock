@@ -78,7 +78,12 @@ export function useTagsData(enabled: boolean) {
 
   const deleteTag = useCallback(
     async (id: string) => {
-      const { error } = await supabase.from("tags").delete().eq("id", id);
+      // M35: delete_tag() strips the id from every entry's tag_ids first,
+      // then deletes the tag itself, in one transaction — a plain
+      // DELETE FROM tags left every historical entry's array carrying a
+      // permanently dangling id, since tag_ids is a plain uuid[], not a
+      // real foreign key Postgres could cascade through.
+      const { error } = await supabase.rpc("delete_tag", { _tag_id: id });
       throwIf(error);
       // Deleting a tag affects project_tags (cascade) and tag_usage counts
       // too, not just the tags list itself.

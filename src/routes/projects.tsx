@@ -64,6 +64,7 @@ import {
   dotColors,
   NO_CLIENT,
   useClientBudgets,
+  useProjectBudgets,
   useWorkspace,
   useWorkspaceClients,
   useWorkspaceTags,
@@ -130,6 +131,7 @@ function ProjectsPage() {
   );
   const clientGroups = useWorkspaceClients();
   const clientBudgets = useClientBudgets();
+  const projectBudgets = useProjectBudgets();
   const tags = useWorkspaceTags();
   const clientNames = useMemo(() => {
     const names = realClients.map((c) => c.name).filter((n) => n !== NO_CLIENT);
@@ -267,6 +269,7 @@ function ProjectsPage() {
                 const team = teams.find((t) => t.id === p.teamId);
                 const projectTags = tags.filter((t) => p.tagIds.includes(t.id));
                 const budget = p.clientId ? clientBudgets.get(p.clientId) : undefined;
+                const projectBudget = projectBudgets.get(p.id);
                 return (
                   <Card
                     key={p.id}
@@ -333,6 +336,27 @@ function ProjectsPage() {
                             title={`${p.client} has used all ${formatHours(budget.subscriptionHours)} of their subscription hours`}
                           >
                             <AlertTriangle className="h-3 w-3" /> Client over budget
+                          </Badge>
+                        )}
+                        {/* M27: this project's own budget_hours cap — distinct from the
+                            client-level subscription budget above, which can be over even
+                            while this specific project still has room, and vice versa. */}
+                        {projectBudget?.isOver && (
+                          <Badge
+                            variant="destructive"
+                            className="gap-1 text-[10px]"
+                            title={`${formatHours(projectBudget.renderedHours)} logged against a ${formatHours(projectBudget.budgetHours)} budget`}
+                          >
+                            <AlertTriangle className="h-3 w-3" /> Over budget
+                          </Badge>
+                        )}
+                        {!projectBudget?.isOver && projectBudget?.isNearLimit && (
+                          <Badge
+                            variant="outline"
+                            className="gap-1 text-[10px] text-amber-600 dark:text-amber-400"
+                            title={`${formatHours(projectBudget.renderedHours)} logged against a ${formatHours(projectBudget.budgetHours)} budget`}
+                          >
+                            <AlertTriangle className="h-3 w-3" /> Near budget
                           </Badge>
                         )}
                       </div>
@@ -588,6 +612,10 @@ function ProjectFormDialog({
   const [billable, setBillable] = useState(true);
   const [tagIds, setTagIds] = useState<string[]>([]);
   const [memberIds, setMemberIds] = useState<string[]>([]);
+  // M27: text, not number, so the field can be legitimately empty (no
+  // budget) rather than coercing to 0 — same pattern as
+  // ClientProfileDialog's subscriptionHours input.
+  const [budgetHours, setBudgetHours] = useState("");
 
   useEffect(() => {
     if (!open) return;
@@ -598,7 +626,13 @@ function ProjectFormDialog({
     setBillable(project?.billable ?? true);
     setTagIds(project?.tagIds ?? []);
     setMemberIds(project?.memberIds ?? []);
+    setBudgetHours(project?.budgetHours != null ? String(project.budgetHours) : "");
   }, [open, project, clientNames, teams]);
+
+  const budgetHoursTrimmed = budgetHours.trim();
+  const budgetHoursInvalid =
+    budgetHoursTrimmed !== "" &&
+    (Number.isNaN(Number(budgetHoursTrimmed)) || Number(budgetHoursTrimmed) < 0);
 
   const toggle = (setter: (fn: (prev: string[]) => string[]) => void) => (id: string) =>
     setter((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
@@ -667,6 +701,25 @@ function ProjectFormDialog({
             </div>
             <Switch checked={billable} onCheckedChange={setBillable} />
           </div>
+          <div className="grid gap-2">
+            <Label htmlFor="project-budget-hours">Budget (hours)</Label>
+            <Input
+              id="project-budget-hours"
+              type="number"
+              min="0"
+              step="0.25"
+              placeholder="No budget set — this project isn't tracked against a cap"
+              value={budgetHours}
+              onChange={(e) => setBudgetHours(e.target.value)}
+            />
+            {budgetHoursInvalid && (
+              <p className="text-xs text-destructive">Enter a positive number, or leave it blank.</p>
+            )}
+            <p className="text-xs text-muted-foreground">
+              For fixed-scope or capped-hours work — flags the project once logged hours reach
+              this. Leave blank for open-ended work like an ongoing retainer.
+            </p>
+          </div>
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="grid gap-2">
               <Label>Tags</Label>
@@ -708,7 +761,7 @@ function ProjectFormDialog({
               Cancel
             </Button>
             <Button
-              disabled={!name.trim() || !client}
+              disabled={!name.trim() || !client || budgetHoursInvalid}
               onClick={() => {
                 onSubmit({
                   name: name.trim(),
@@ -718,6 +771,7 @@ function ProjectFormDialog({
                   billable,
                   tagIds,
                   memberIds,
+                  budgetHours: budgetHoursTrimmed === "" ? null : Number(budgetHoursTrimmed),
                 });
                 onOpenChange(false);
               }}

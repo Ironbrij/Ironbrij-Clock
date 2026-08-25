@@ -10,7 +10,7 @@ import {
   toDateKey,
 } from "@/lib/time-utils";
 import { throwIf } from "./utils";
-import type { WorkspaceEntry, WorkspaceProject, WorkspaceSettings } from "./types";
+import type { DetailedEntry, WorkspaceEntry, WorkspaceProject, WorkspaceSettings } from "./types";
 
 type TimeEntryUpdate = Database["public"]["Tables"]["time_entries"]["Update"];
 type TimeEntryRow = {
@@ -22,6 +22,7 @@ type TimeEntryRow = {
   end_time: string | null;
   entry_date: string;
   duration_minutes: number | null;
+  is_billable: boolean;
 };
 
 function mapEntryRow(e: TimeEntryRow): WorkspaceEntry {
@@ -35,6 +36,7 @@ function mapEntryRow(e: TimeEntryRow): WorkspaceEntry {
     endTime: e.end_time,
     date: e.entry_date,
     running: !e.end_time,
+    billable: e.is_billable,
   };
 }
 
@@ -177,52 +179,32 @@ export function useTimeEntriesData(
       const entry = entries.find((e) => e.id === entryId);
       if (!entry || !uid) return { splitAcrossDays: false };
       const finalDescription = description ?? entry.description;
-      const [firstSegment, ...laterSegments] = splitByDay(new Date(entry.startTime), new Date());
-      const splitAcrossDays = laterSegments.length > 0;
+      const segments = splitByDay(new Date(entry.startTime), new Date());
+      const splitAcrossDays = segments.length > 1;
 
-      // Insert any later-day segments *before* touching the original row —
-      // if one of these fails partway through (e.g. it collides with
-      // another entry someone added for the new day while this timer was
-      // still running), the original entry is left exactly as it was:
-      // still running and visible, not silently missing time.
-      if (splitAcrossDays) {
-        const project = projects.find((p) => p.id === entry.projectId);
-        for (const seg of laterSegments) {
-          const { error } = await supabase.from("time_entries").insert({
-            user_id: uid,
-            project_id: entry.projectId,
-            task: entry.task,
-            description: finalDescription,
-            start_time: seg.start.toISOString(),
-            end_time: seg.end.toISOString(),
-            entry_date: seg.date,
-            duration_minutes: Math.max(1, seg.minutes),
-            is_billable: project?.billable ?? true,
-            tag_ids: project?.tagIds ?? [],
-          });
-          throwIf(error, { "42501": POLICY_VIOLATION_MESSAGE });
-        }
-      }
-
-      // A locked week doesn't make an UPDATE error — Postgres RLS just
-      // excludes the row from the USING clause, so this would otherwise
-      // report success while changing nothing. .select() plus checking for
-      // an empty result is what turns that silent no-op into a real error.
-      const { data, error } = await supabase
-        .from("time_entries")
-        .update({
-          end_time: firstSegment.end.toISOString(),
-          duration_minutes: Math.max(1, firstSegment.minutes),
-          description: finalDescription,
-        })
-        .eq("id", entryId)
-        .select("id");
-      throwIf(error, { "42501": POLICY_VIOLATION_MESSAGE });
-      if (!data || data.length === 0) throw new Error(LOCKED_WEEK_MESSAGE);
+      // H21: closing the original entry and inserting any later-day
+      // segments used to be a sequence of independent client-side calls —
+      // a failure partway through (network drop, tab close, a locked week)
+      // could leave later segments committed while the original entry
+      // stayed stuck running forever. stop_timer() does the whole thing in
+      // one transaction: either every row this stop touches is written, or
+      // none of them are. Day-splitting itself is still computed here
+      // (browser-local time, same as before) — only the writes moved
+      // server-side.
+      const { error } = await supabase.rpc("stop_timer", {
+        _entry_id: entryId,
+        _description: finalDescription,
+        _segments: segments.map((seg) => ({
+          date: seg.date,
+          start: seg.start.toISOString(),
+          end: seg.end.toISOString(),
+        })),
+      });
+      throwIf(error);
       invalidateEntries();
       return { splitAcrossDays };
     },
-    [entries, uid, projects, invalidateEntries],
+    [entries, uid, invalidateEntries],
   );
 
   const updateEntry = useCallback(
@@ -232,6 +214,8 @@ export function useTimeEntriesData(
         projectId?: string;
         task?: string;
         description?: string;
+        /** M26: independent of the project's own default — omit for no change. */
+        billable?: boolean;
         date?: string;
         startTime?: string;
         /**
@@ -255,6 +239,7 @@ export function useTimeEntriesData(
       if (patch.projectId !== undefined) dbPatch.project_id = patch.projectId;
       if (patch.task !== undefined) dbPatch.task = patch.task;
       if (patch.description !== undefined) dbPatch.description = patch.description;
+      if (patch.billable !== undefined) dbPatch.is_billable = patch.billable;
 
       if (patch.endTime === null) {
         // Still running — the dialog always supplies both when editing this
@@ -345,6 +330,8 @@ export function useTimeEntriesData(
       endTime: string;
       /** M21: only needed for a shift that runs past midnight — defaults to `date` when omitted. */
       endDate?: string;
+      /** M26: omit to fall back to the project's own billable default, same as before this existed. */
+      billable?: boolean;
     }) => {
       if (!uid) return;
       if (!settings.allowManualEntry) {
@@ -368,6 +355,7 @@ export function useTimeEntriesData(
       // as a single multi-row statement rather than one insert per segment
       // so it's atomic — either the whole shift is saved, or none of it is.
       const segments = splitByDay(start, end);
+      const billable = input.billable ?? project?.billable ?? true;
       const rows = segments.map((seg) => ({
         user_id: uid,
         project_id: input.projectId,
@@ -377,7 +365,7 @@ export function useTimeEntriesData(
         end_time: seg.end.toISOString(),
         entry_date: seg.date,
         duration_minutes: Math.max(1, seg.minutes),
-        is_billable: project?.billable ?? true,
+        is_billable: billable,
         tag_ids: project?.tagIds ?? [],
       }));
       const { error } = await supabase.from("time_entries").insert(rows);
@@ -402,6 +390,42 @@ export function useTimeEntriesData(
     },
     [invalidateEntries],
   );
+
+  // H16: every entry across whoever RLS lets the viewer see (self; every
+  // employee for an admin; shared-team for a manager) for the Reports
+  // page's Detailed tab — unlike projectHoursForRange/employeeHoursForRange
+  // this doesn't need a SECURITY DEFINER RPC, since time_entries' own
+  // per-row RLS already implements exactly this visibility rule for a
+  // plain SELECT.
+  const detailedEntriesForRange = useCallback(async (from: string, to: string): Promise<
+    DetailedEntry[]
+  > => {
+    const { data, error } = await supabase
+      .from("time_entries")
+      .select(
+        "id, user_id, project_id, task, description, start_time, entry_date, duration_minutes, is_billable",
+      )
+      .gte("entry_date", from)
+      .lte("entry_date", to)
+      .order("entry_date", { ascending: false })
+      .order("start_time", { ascending: false })
+      // Same reasoning as H25's cap on the personal entries fetch — an
+      // explicit bound so a wide range across many people fails loudly
+      // (a real bug to raise) instead of silently truncating.
+      .limit(5000);
+    throwIf(error);
+    return (data ?? []).map((e) => ({
+      id: e.id,
+      userId: e.user_id,
+      projectId: e.project_id,
+      task: e.task ?? "",
+      description: e.description,
+      date: e.entry_date,
+      minutes: e.duration_minutes ?? 0,
+      billable: e.is_billable,
+      startTime: e.start_time,
+    }));
+  }, []);
 
   const entriesForTag = useCallback(async (tagId: string) => {
     const { data, error } = await supabase
@@ -431,6 +455,7 @@ export function useTimeEntriesData(
     createEntry,
     deleteEntry,
     entriesForTag,
+    detailedEntriesForRange,
   };
 }
 

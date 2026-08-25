@@ -103,17 +103,36 @@ export function EntryFormDialog({
   // day boundary before it's saved), so there's nothing to toggle back on
   // when editing one.
   const [endsNextDay, setEndsNextDay] = useState(false);
+  // M26: billable defaults to the selected project's own setting and keeps
+  // following it as the project changes, until the person explicitly
+  // touches the checkbox once — then it's a fixed override for this entry,
+  // same as the stored value an existing entry already has.
+  const [billable, setBillable] = useState(true);
+  const [billableTouched, setBillableTouched] = useState(false);
 
   useEffect(() => {
     if (open) {
       setValues(toFormValues(entry, defaultTask));
       setEndsNextDay(false);
+      setBillable(entry ? entry.billable : true);
+      setBillableTouched(!!entry);
     }
     // defaultTask intentionally excluded — it should only affect the
     // initial value when the dialog opens, not overwrite whatever the
     // person has already picked while it's sitting open.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, entry]);
+
+  // Adding a new entry: keep following the selected project's billable
+  // default until the checkbox itself has been touched. Editing an
+  // existing one: entry.billable is a real stored value from the moment
+  // the dialog opens, not a "default" to keep recomputing.
+  useEffect(() => {
+    if (!open || entry || billableTouched) return;
+    const project = projects.find((p) => p.id === values.projectId);
+    setBillable(project?.billable ?? true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [values.projectId, open, entry, billableTouched]);
 
   const endDate = endsNextDay ? toDateKey(addDays(fromDateKey(values.date), 1)) : values.date;
 
@@ -135,10 +154,16 @@ export function EntryFormDialog({
     setBusy(true);
     try {
       if (entry) {
-        await updateEntry(entry.id, isRunning ? { ...values, endTime: null } : values);
+        // billable isn't part of the running-timer patch — the checkbox is
+        // hidden in that case (only the start time is correctable), so
+        // there's nothing to apply.
+        await updateEntry(
+          entry.id,
+          isRunning ? { ...values, endTime: null } : { ...values, billable },
+        );
         toast.success("Entry updated");
       } else {
-        await createEntry({ ...values, endDate: endsNextDay ? endDate : undefined });
+        await createEntry({ ...values, endDate: endsNextDay ? endDate : undefined, billable });
         toast.success("Entry added", { description: "Logged to your timesheet." });
       }
       // Non-blocking heads-up, same as TimerBar's — the entry is already
@@ -217,6 +242,15 @@ export function EntryFormDialog({
                   ))}
                 </SelectContent>
               </Select>
+              {/* L39: this picker has no fallback item (a manual entry needs
+                  a real project, unlike the timer's "No project" option) —
+                  with zero active projects it's a genuinely empty dropdown
+                  that only explained itself on submit before this. */}
+              {active.length === 0 && (
+                <p className="text-xs text-muted-foreground">
+                  No projects yet — ask an admin to create one.
+                </p>
+              )}
             </div>
             <div className="grid gap-2">
               <Label>Task</Label>
@@ -294,6 +328,24 @@ export function EntryFormDialog({
               <Label htmlFor="entry-ends-next-day" className="cursor-pointer font-normal">
                 Ends after midnight, the next day
                 {endsNextDay && ` — ${formatDayLong(fromDateKey(endDate))}`}
+              </Label>
+            </div>
+          )}
+          {/* M26: hidden for a running entry — that case only supports
+              correcting the start time, same as every other field but
+              startTime/date above. */}
+          {!isRunning && (
+            <div className="flex items-center gap-2">
+              <Checkbox
+                id="entry-billable"
+                checked={billable}
+                onCheckedChange={(checked) => {
+                  setBillableTouched(true);
+                  setBillable(checked === true);
+                }}
+              />
+              <Label htmlFor="entry-billable" className="cursor-pointer font-normal">
+                Billable
               </Label>
             </div>
           )}
