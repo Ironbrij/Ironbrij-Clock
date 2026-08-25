@@ -434,7 +434,7 @@ half-real (styled, honest, but non-functional) is the worst of both options long
 **Priority:** Medium. **Complexity:** Medium-High if built for real (new tables, RLS, balance
 accrual rules); Low if the decision is to remove it.
 
-**M25. ⏳ Open. Task categories are a flat, workspace-wide list — not scoped to a project.**
+**M25. ✅ Fixed 2026-08-25. Task categories are a flat, workspace-wide list — not scoped to a project.**
 `task_categories` (Settings → Admin → Task categories, `use-task-categories.ts`) is a single global
 list every project shares; `WorkspaceEntry.task` is a free-text label with no `task_id`, estimate,
 assignee, or completion state. Clockify's Tasks live *inside* a Project, each with their own
@@ -446,6 +446,14 @@ current model can't express that — every project offers the identical task lis
 today in Clockify — worth confirming with the team before building. If so: a `project_task_categories`
 join (or per-project override list) rather than a global table.
 **Priority:** Medium — contingent on confirming the need first. **Complexity:** Medium.
+
+**Fixed:** confirmed the need first, per this finding's own condition — task lists do differ
+meaningfully by project — then took the recommended `project_task_categories` join option. Empty means unrestricted (today's exact
+default behavior, so every project that doesn't opt in is unaffected); a project deliberately given
+a scoped list narrows its task picker (`TimerBar`, `EntryFormDialog`) to just those categories, live
+against whichever project is currently selected. New "Task categories" multi-select in
+`ProjectFormDialog`, hidden entirely when no categories exist yet so it never demands attention on a
+brand-new workspace.
 
 **M26. ✅ Fixed 2026-08-25. A time entry's billable status can't be overridden per entry.** `is_billable` is
 set once, at insert time, from the project's `is_billable` flag (`use-time-entries.ts`:
@@ -512,7 +520,7 @@ all in this app.
 employee-side billable data already fetched for H17. Both Reports tabs now have a "Billable" column
 (hours + %), sortable, in both CSV exports.
 
-**M29. ⏳ Open. Notifications tab is entirely non-functional.** Every switch in Settings →
+**M29. ⚠️ Improved 2026-08-25 — built and wired client-side, not yet configured or deployed.** Every switch in Settings →
 Notifications (`src/routes/settings.tsx`) is `disabled`, backed by a hardcoded local array, with an
 explicit "Coming soon — these preferences aren't saved yet" disclaimer. Nothing in the app sends an
 email/push notification for anything — a submitted timesheet, an approval, a long-running timer —
@@ -529,6 +537,22 @@ back them.
 **Priority:** Medium. **Complexity:** Medium — needs an actual email-sending path, which doesn't
 exist anywhere in this codebase yet.
 
+**Fixed (partially — same "improved, not run" shape as H18):** took exactly the recommended scope —
+just "timesheet submitted for your review," the rest of the mocked list left alone. A new
+`timesheet_submission_recipients()` `SECURITY DEFINER` RPC answers "who should be told" (re-verifies
+the caller owns a *submitted* timesheet with the given id before returning anyone — admins, plus
+managers sharing a team with the submitter, reusing `shares_team()` rather than reimplementing it),
+and a new `notify-timesheet-submitted` edge function (`supabase/functions/`) sends the actual email
+via Resend, called client-side (fire-and-forget, best-effort — a failed notification never blocks or
+fails the submit itself) right after `submitTimesheet()` succeeds. Settings → Notifications now
+shows this one as real/"Live," kept visually separate from the still-mocked five so it doesn't read
+as equally fake.
+**What's still open:** this needs two things this environment has no way to do — `RESEND_API_KEY`
+(and optionally `NOTIFY_FROM_ADDRESS`) set as project secrets, and the function actually deployed
+(`supabase functions deploy notify-timesheet-submitted`). Until both happen, the function is a
+no-op by design (returns `{ sent: 0 }` rather than erroring) — nothing breaks, but no email goes out
+either. Same "built but not live" gap H18 already has; not yet verified against a live send.
+
 ### 14. Lower-Priority / Polish
 
 **L30. ✅ Fixed (superseded by M33 below).** No "copy previous day" or duplicate-entry shortcut.
@@ -544,11 +568,25 @@ updated when the Smart Automation audit built exactly this feature under M33 —
 `src/routes/time.tsx` (`CopyYesterdayButton`, line 586 at time of writing). Marking fixed here
 rather than leaving it permanently open.*
 
-**L31. ⏳ Open. Avatar upload is still a disabled placeholder.** `ProfileTab`
+**L31. ✅ Fixed 2026-08-25. Avatar upload is still a disabled placeholder.** `ProfileTab`
 (`src/routes/settings.tsx`) shows "Change avatar" disabled with a "coming soon" title — unchanged
 since the original audit's L21 pass made the *messaging* honest without building the feature.
 **Priority:** Low. **Complexity:** Low (file upload to Supabase Storage + `avatar_url` column,
 which already exists on `profiles`).
+
+**Fixed:** first use of Supabase Storage in this repo — a new public `avatars` bucket (2 MB /
+PNG-JPEG limits matching the exact copy the old placeholder already promised) with owner-only
+write/update/delete RLS policies on `storage.objects`, keyed by the caller's uid as the path's first
+segment. New `uploadAvatar()` validates client-side, uploads to a fixed per-person path (`{uid}/avatar`,
+`upsert: true`, so a re-upload replaces in place with no orphaned objects left behind from switching
+file types), writes a cache-busted public URL to `profiles.avatar_url`. `WorkspaceMember` now carries
+`avatarUrl`. Went beyond just unblocking the settings-page button: added `AvatarImage` (with its
+automatic fallback to initials) everywhere a member's avatar already rendered — the nav sidebar,
+both Reports tabs, four spots in `manage.tsx`, Settings → Users, `projects.tsx`, `teams.tsx` — so an
+uploaded avatar is actually visible to teammates, not just on the uploader's own settings page.
+**Not independently verified against a live database** — same caveat as every Storage/edge-function
+piece added this session; this environment only has anon-key access, no way to actually exercise an
+upload against a real bucket.
 
 **L32. ⏳ Open. Weekly schedule is a free-text note, not structured data.** `member_employment
 .weekly_schedule` (Manage → Schedule tab) is a single text field ("e.g. Mon–Fri, 9am–5pm") with no
@@ -1837,7 +1875,7 @@ rendered (with all four remaining tabs handled by an explicit branch, that fallb
 once the placeholders were gone). Also trimmed the now-inaccurate "expenses... kiosks and invoices"
 wording from the route's own `head()` meta description.
 
-**M43. ⏳ Open. No automated test suite, no CI — every fix in this document (40+ and counting) is
+**M43. ⚠️ Improved 2026-08-25 — a test runner and a scoped starting set of tests now exist; the specific integration-test ask below is still open.** No automated test suite, no CI — every fix in this document (40+ and counting) is
 verified by hand, once, and never re-verified automatically again.**
 - **Current behavior:** confirmed via `package.json` (`scripts`: `dev`, `build`, `build:dev`,
   `preview`, `lint`, `format` — no `test`) and the absence of any `.github/workflows/` directory.
@@ -1858,6 +1896,18 @@ verified by hand, once, and never re-verified automatically again.**
 - **Priority:** Medium — a process/maintainability risk, not a user-facing bug today.
 - **Complexity:** Medium — needs picking a test runner and a way to run migrations against a local
   Postgres/Supabase instance in CI, which doesn't exist yet either.
+
+**Improved:** picked the test runner (vitest — `npm run test`, config in `vitest.config.ts`, kept
+deliberately separate from `vite.config.ts` per that file's own "don't add plugins manually"
+warning) and wrote 31 tests against `src/lib/time-utils.ts` and `src/lib/mock-data.ts` — day-splitting
+(H8's own `splitByDay`, including the overnight and multi-day cases), week-boundary math,
+`composeWeeklySchedule`/`parseWeeklySchedule` round-tripping, timezone conversion, and the hour/minute
+formatters. Deliberately scoped to pure business logic that needs no database, not the
+`SECURITY DEFINER` functions this finding's own "Recommended action" specifically names
+(`submit_timesheet`, `review_timesheet`, `set_member_role`) — those still need a live Postgres
+instance to test against, which this environment doesn't have, and still rely entirely on manual
+verification. **Still open:** the CI wiring, and the actual integration tests against those
+functions once a real database is reachable from wherever this runs next.
 
 **M44. ✅ Fixed — already resolved before this document was updated to say so.** The Projects tab has no search, filter, or pagination — the busiest list in the app
 has less findability than the Clients tab one click away in the same file.**
@@ -2036,11 +2086,12 @@ place below rather than renumbered so this still reads as a record of what this 
    timezones — see M36's own entry for a documented, accepted edge case with H8/M21's day-splitting.
 9. **L34 — ✅ Fixed 2026-08-25. Add error handling to the profile-bootstrap insert.** A brand-new
    user's very first sign-in can no longer fail silently with no retry affordance.
-10. **M43 — ⏳ Still open. A handful of integration tests around the highest-stakes `SECURITY
-    DEFINER` functions.** Not full coverage — just enough to make the next audit pass faster and
-    less error-prone than this one and the six before it. The one item on this list this pass didn't
-    touch — needs a test runner and a way to run migrations against a local Postgres/Supabase
-    instance in CI, neither of which exist yet, a bigger lift than everything else here.
+10. **M43 — ⚠️ Improved 2026-08-25.** A handful of integration tests around the highest-stakes
+    `SECURITY DEFINER` functions. Not full coverage — just enough to make the next audit pass faster
+    and less error-prone than this one and the six before it. **Update:** the test runner (vitest)
+    and a scoped set of 31 tests against the pure business logic (`time-utils.ts`, `mock-data.ts`)
+    now exist — the `SECURITY DEFINER` integration tests this item specifically named still need a
+    live Postgres instance, still not available here.
 
 ### 33. Features We Should NOT Build
 
@@ -2127,8 +2178,10 @@ pass identified, not rewritten into a status list:
   `manage.tsx`.
 - Make a call on M29 (notifications): even just "timesheet submitted for your review" via email
   closes the biggest real gap; if that's not feasible for launch, that's an acceptable v1 scope cut,
-  but it should be a decision, not an oversight. **Not implemented this pass** — a product decision
-  (which channel, whose inbox) rather than a mechanical fix, left for the team to make.
+  but it should be a decision, not an oversight. **⚠️ Built 2026-08-25, not yet live** — email
+  (Resend, via a new `notify-timesheet-submitted` edge function) for exactly this one case. Needs
+  `RESEND_API_KEY` set as a project secret and the function deployed before any email actually
+  sends — neither possible from this environment.
 - ~~Add a `key` prop to the deep-linked `<TeamEntriesTab>` in `ManagePage` (L38)~~
   **Done 2026-08-14.**
 - ~~Row-lock (or advisory-lock) `submit_timesheet()`'s running-timer check against its own commit
@@ -2150,17 +2203,21 @@ pass identified, not rewritten into a status list:
 
 **Future / optional:**
 - M24 — a real (minimal) time-off workflow, or a decision to remove the page entirely — a product
-  call, not an engineering one. **Still open.**
-- M25 — project-scoped task categories, only if task lists genuinely differ per project in practice
-  (worth confirming with the team before building anything). **Still open.**
+  call, not an engineering one. **Still open** — explicitly deferred 2026-08-25 rather than guessed
+  at from this environment.
+- ~~M25 — project-scoped task categories~~ **Done 2026-08-25** — confirmed the need first (task
+  lists do differ meaningfully by project), then built the `project_task_categories` join.
 - ~~L37 (`typecheck` script), L39 (empty project-picker messaging), L40 (Timesheet Grid empty
-  rows)~~ **Done 2026-08-25.** L31 (avatar upload) and L32 (structured weekly schedule) remain
-  open — L32's UX half was separately addressed by prior commits (a real day/time-picker replaced
-  the free-text box), but the underlying `weekly_schedule` column is still a plain string; not
-  restructured to per-weekday columns, per this finding's own "not worth it unless something
-  downstream needs to compute against it" caveat, which still holds — nothing does yet.
-- M43 — investment in automated testing, scoped to the highest-stakes business logic first. **Still
-  open** — the one item from both Top 10 lists this pass didn't touch.
+  rows)~~ **Done 2026-08-25.** ~~L31 (avatar upload)~~ **Done 2026-08-25** — new `avatars` Storage
+  bucket + RLS, `uploadAvatar()`, wired everywhere a member's avatar already renders. **L32
+  (structured weekly schedule) remains open** — L32's UX half was separately addressed by prior
+  commits (a real day/time-picker replaced the free-text box), but the underlying `weekly_schedule`
+  column is still a plain string; not restructured to per-weekday columns, per this finding's own
+  "not worth it unless something downstream needs to compute against it" caveat — confirmed 2026-08-25
+  that nothing does yet, so this was deliberately skipped rather than built speculatively.
+- ~~M43 — investment in automated testing~~ **Improved 2026-08-25** — vitest + 31 tests against pure
+  business logic now exist; the `SECURITY DEFINER` integration tests this item specifically asked
+  for still need a live Postgres instance this environment doesn't have.
 - Everything listed under "Features We Should NOT Build" above — revisit only if a real, named need
   emerges, not preemptively.
 
@@ -2382,3 +2439,43 @@ engineering-shaped tasks answerable from inside this repo. Nothing else found th
 core timer/timesheet/approval loop is anything other than what six prior passes already
 established: solid, defense-in-depth, not a prototype. The honest read is the same "almost ready"
 shape as before, narrowed to fewer, more specific, non-code blockers than it had two passes ago.
+
+### Second round, same day (2026-08-25)
+
+After the work above, four more items from the remaining open list were picked up — M24, M29, M25,
+M43, and L32 were explicitly discussed and scoped with the user first, rather than guessed at:
+
+- **M29 — ⚠️ Improved, not fixed.** Built exactly the scope this finding recommended — a new
+  `timesheet_submission_recipients()` RPC plus a `notify-timesheet-submitted` edge function, sending
+  real email via Resend for "timesheet submitted for your review," called client-side right after
+  `submitTimesheet()` succeeds. **Requires `RESEND_API_KEY` (and optionally `NOTIFY_FROM_ADDRESS`)
+  set as project secrets and the function deployed — neither possible from this environment**, so
+  this is built and wired but not yet live, the same "improved, not run" shape H18 already has.
+- **M25 — ✅ Fixed.** Confirmed the need first (task lists do differ meaningfully by project), then
+  built the recommended `project_task_categories` join — empty means unrestricted, so no existing
+  project is affected unless deliberately scoped.
+- **M43 — ⚠️ Improved, not fully closed.** vitest added, 31 tests written against the pure business
+  logic in `time-utils.ts`/`mock-data.ts` (day-splitting, week boundaries, schedule round-tripping,
+  timezone conversion, formatters). Does **not** cover this finding's actual named target — the
+  `SECURITY DEFINER` functions — which needs a live Postgres instance this environment doesn't have.
+- **L31 — ✅ Fixed.** First use of Supabase Storage in this repo — a public `avatars` bucket with
+  owner-only write RLS, `uploadAvatar()`, and `AvatarImage` wired into every existing avatar render
+  site across the app (not just the settings page), not only the disabled button this finding named.
+- **M24 — deliberately skipped.** Discussed with the user and left open rather than guessed at — a
+  product decision (build a minimal leave workflow, or remove the page) this pass isn't positioned
+  to make unprompted.
+- **L32 — deliberately skipped**, per its own explicit "not worth it unless something downstream
+  needs to compute against it" caveat — confirmed nothing does yet, so left as speculative work
+  rather than built.
+
+Same verification standard as the first round: `tsc --noEmit`, `npm run build`, `npm run test`
+(new — the 31 tests all pass), and `eslint` on every touched file, all clean. Same standing caveat:
+no live Supabase access from this environment, so the new Storage bucket, the two new RPCs, and the
+edge function are all committed and locally verified but **not run against production** — that
+includes actually sending a test email, which needs the Resend secret configured first regardless of
+anything else.
+
+**Updated remainder:** H18 (execute the real import — credentials), M29 (configure + deploy — the
+code exists now), M24 (product decision, explicitly deferred), L32 (skipped by explicit
+confirmation, not oversight), and the DB-dependent half of M43 (needs a live Postgres instance).
+Every other item this document tracked as open at the start of 2026-08-25 is now fixed.
