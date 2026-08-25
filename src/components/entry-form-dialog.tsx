@@ -93,9 +93,13 @@ export function EntryFormDialog({
   const isRunning = !!entry?.running;
   const active = projects.filter((p) => !p.archived);
   const { recent: recentProjects, rest: otherProjects } = orderByRecency(active, entries);
-  const { recent: recentTasks, rest: otherTasks } = orderByRecencyName(taskCategories, entries);
   // M32: matches the project field's default (most recently used first).
-  const defaultTask = recentTasks[0]?.name ?? taskCategories[0]?.name ?? "";
+  // M25: taskCategories here is only used for this initial default, before
+  // a project has necessarily even been picked yet for a brand-new entry
+  // — the live Task field's own options are scoped separately below, once
+  // values.projectId is known.
+  const defaultTask =
+    orderByRecencyName(taskCategories, entries).recent[0]?.name ?? taskCategories[0]?.name ?? "";
   const [values, setValues] = useState<EntryFormValues>(() => toFormValues(entry, defaultTask));
   const [busy, setBusy] = useState(false);
   // M21: only meaningful for "add" (entry === null) — a stored entry never
@@ -133,6 +137,19 @@ export function EntryFormDialog({
     setBillable(project?.billable ?? true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [values.projectId, open, entry, billableTouched]);
+
+  // M25: empty taskCategoryIds means unrestricted (today's exact default)
+  // — only a project deliberately scoped to specific categories narrows
+  // the picker. Live against values.projectId, unlike defaultTask above.
+  const selectedProject = active.find((p) => p.id === values.projectId);
+  const scopedTaskCategories =
+    selectedProject && selectedProject.taskCategoryIds.length > 0
+      ? taskCategories.filter((t) => selectedProject.taskCategoryIds.includes(t.id))
+      : taskCategories;
+  const { recent: recentTasks, rest: otherTasks } = orderByRecencyName(
+    scopedTaskCategories,
+    entries,
+  );
 
   const endDate = endsNextDay ? toDateKey(addDays(fromDateKey(values.date), 1)) : values.date;
 

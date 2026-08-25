@@ -14,7 +14,7 @@ import {
 import { toast } from "sonner";
 import { AppShell, ProjectDot } from "@/components/app-shell";
 import { Combobox } from "@/components/combobox";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -407,6 +407,7 @@ function Reports() {
       clientId: project?.clientId ?? null,
       employeeName: member?.name ?? "Former member",
       employeeInitials: member?.initials ?? "—",
+      employeeAvatarUrl: member?.avatarUrl ?? null,
     };
   });
 
@@ -848,6 +849,7 @@ function Reports() {
                       <td className="px-5 py-3">
                         <span className="flex items-center gap-2">
                           <Avatar className="h-6 w-6 shrink-0">
+                            <AvatarImage src={r.avatarUrl ?? undefined} alt={r.name} />
                             <AvatarFallback className="bg-secondary text-[10px]">
                               {r.initials}
                             </AvatarFallback>
@@ -929,6 +931,7 @@ function Reports() {
                       <td className="px-5 py-3">
                         <span className="flex items-center gap-2">
                           <Avatar className="h-6 w-6 shrink-0">
+                            <AvatarImage src={r.employeeAvatarUrl ?? undefined} alt={r.employeeName} />
                             <AvatarFallback className="bg-secondary text-[10px]">
                               {r.employeeInitials}
                             </AvatarFallback>

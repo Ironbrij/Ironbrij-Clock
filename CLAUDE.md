@@ -20,10 +20,18 @@ npm run build:dev   # development-mode build
 npm run preview     # preview a production build
 npm run lint         # eslint .
 npm run typecheck    # tsc --noEmit
+npm run test         # vitest run
 npm run format       # prettier --write .
 ```
 
-There is no test suite / test script in this repo currently. `bun.lock` and `bunfig.toml` are
+`npm run test` (vitest, config in `vitest.config.ts` — deliberately separate from `vite.config.ts`,
+which is a wrapped `@lovable.dev/vite-tanstack-config` config that warns against adding plugins to
+it manually) currently covers pure business logic only (`src/lib/time-utils.ts`,
+`src/lib/mock-data.ts`) — date/time math, day-splitting, schedule parsing, formatters. It does not
+touch the `SECURITY DEFINER` Postgres functions (`submit_timesheet`, `review_timesheet`,
+`stop_timer`, etc.), which need a real Postgres instance to test against and aren't covered by any
+automated suite yet; changes to those still rely on manual verification against a linked Supabase
+project. `bun.lock` and `bunfig.toml` are
 present alongside `package-lock.json`; `bunfig.toml` enforces a 24h supply-chain delay on new
 package versions (`minimumReleaseAge`), so check with the user before adding a dependency that
 needs to bypass it via `minimumReleaseAgeExcludes`.

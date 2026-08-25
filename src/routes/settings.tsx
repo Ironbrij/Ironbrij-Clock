@@ -11,7 +11,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -41,7 +41,7 @@ import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { currencies, timezones, useWorkspace, type Role } from "@/lib/workspace-store";
 import { toast } from "sonner";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ChangeEvent } from "react";
 
 export const Route = createFileRoute("/settings")({
   head: () => ({
@@ -97,6 +97,26 @@ function SettingsPage() {
         </TabsContent>
 
         <TabsContent value="notifications" className="mt-6">
+          {/* M29: the one real, working notification — deliberately not
+              folded into the mocked list below, so it doesn't read as
+              equally fake. No opt-out yet; every eligible reviewer
+              (admin, or a manager sharing a team) always gets this one. */}
+          <Card className="mb-4 max-w-2xl shadow-card">
+            <CardContent className="flex items-center justify-between gap-4 p-6">
+              <div className="min-w-0">
+                <p className="flex items-center gap-2 text-sm font-medium">
+                  Timesheet submitted for your review
+                  <Badge variant="secondary" className="text-[10px]">
+                    Live
+                  </Badge>
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  Reviewers get an email automatically when someone on their team submits a
+                  timesheet — not yet a preference you can turn off.
+                </p>
+              </div>
+            </CardContent>
+          </Card>
           <p className="mb-3 max-w-2xl text-xs text-muted-foreground">
             Coming soon — these preferences aren't saved yet, so changes here won't persist.
           </p>
@@ -146,11 +166,13 @@ function SettingsPage() {
 }
 
 function ProfileTab() {
-  const { currentUser, updateProfile } = useWorkspace();
+  const { currentUser, updateProfile, uploadAvatar } = useWorkspace();
   const [fullName, setFullName] = useState(currentUser.name);
   const [jobTitle, setJobTitle] = useState(currentUser.title);
   const [timezone, setTimezone] = useState(currentUser.timezone);
   const [saving, setSaving] = useState(false);
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
+  const avatarInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     setFullName(currentUser.name);
@@ -158,27 +180,47 @@ function ProfileTab() {
     setTimezone(currentUser.timezone);
   }, [currentUser]);
 
+  const pickAvatar = () => avatarInputRef.current?.click();
+
+  const onAvatarSelected = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    // Always clear the input's own value, success or failure, so choosing
+    // the exact same file again still fires a change event next time.
+    e.target.value = "";
+    if (!file) return;
+    setUploadingAvatar(true);
+    try {
+      await uploadAvatar(file);
+      toast.success("Avatar updated");
+    } catch (error) {
+      toast.error("Couldn't upload that", { description: (error as Error).message });
+    } finally {
+      setUploadingAvatar(false);
+    }
+  };
+
   return (
     <Card className="max-w-2xl shadow-card">
       <CardContent className="flex flex-col gap-6 p-6">
         <div className="flex items-center gap-4">
           <Avatar className="h-16 w-16">
+            <AvatarImage src={currentUser.avatarUrl ?? undefined} alt={currentUser.name} />
             <AvatarFallback className="bg-primary text-lg text-primary-foreground">
               {currentUser.initials}
             </AvatarFallback>
           </Avatar>
           <div>
-            <Button
-              variant="outline"
-              size="sm"
-              disabled
-              title="Avatar uploads aren't available yet."
-            >
-              Change avatar
+            <input
+              ref={avatarInputRef}
+              type="file"
+              accept="image/png,image/jpeg"
+              className="hidden"
+              onChange={(e) => void onAvatarSelected(e)}
+            />
+            <Button variant="outline" size="sm" disabled={uploadingAvatar} onClick={pickAvatar}>
+              {uploadingAvatar ? "Uploading…" : "Change avatar"}
             </Button>
-            <p className="mt-2 text-xs text-muted-foreground">
-              PNG or JPG, up to 2 MB. Coming soon.
-            </p>
+            <p className="mt-2 text-xs text-muted-foreground">PNG or JPG, up to 2 MB.</p>
           </div>
         </div>
         <div className="grid gap-4 sm:grid-cols-2">
@@ -450,6 +492,7 @@ function UsersTab() {
                     <tr key={m.id} className="hover:bg-accent/40 transition-colors">
                       <td className="px-3 py-2.5 font-medium flex items-center gap-2">
                         <Avatar className="h-7 w-7 shrink-0">
+                          <AvatarImage src={m.avatarUrl ?? undefined} alt={m.name} />
                           <AvatarFallback className="bg-secondary text-xs">
                             {m.initials}
                           </AvatarFallback>
@@ -573,6 +616,7 @@ function UsersTab() {
                         <tr key={m.id} className="hover:bg-accent/40 transition-colors">
                           <td className="px-3 py-2.5 font-medium flex items-center gap-2">
                             <Avatar className="h-7 w-7 shrink-0">
+                              <AvatarImage src={m.avatarUrl ?? undefined} alt={m.name} />
                               <AvatarFallback className="bg-secondary text-xs">
                                 {m.initials}
                               </AvatarFallback>

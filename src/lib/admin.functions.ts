@@ -48,6 +48,40 @@ export const inviteMembers = createServerFn({ method: "POST" })
         role: data.role,
         is_pending: true,
       });
+
+      // inviteUserByEmail() always mints a fresh auth user (and therefore a
+      // fresh profiles.id) even when this email was previously removed via
+      // removeUserAccess(), which deletes the auth user but deliberately
+      // keeps the old profiles row (as an inactive orphan) so its historical
+      // time entries/timesheets aren't lost. Without this, re-inviting the
+      // same address forks that history across two permanently-separate
+      // profile rows — fold any such orphan's data onto the new id here so
+      // re-invites never accumulate duplicates.
+      const { data: orphans } = await supabaseAdmin
+        .from("profiles")
+        .select("id")
+        .eq("email", email)
+        .eq("is_active", false)
+        .neq("id", userId);
+      for (const orphan of orphans ?? []) {
+        await supabaseAdmin.from("time_entries").update({ user_id: userId }).eq("user_id", orphan.id);
+        await supabaseAdmin.from("timesheets").update({ user_id: userId }).eq("user_id", orphan.id);
+        await supabaseAdmin
+          .from("timesheets")
+          .update({ reviewed_by: userId })
+          .eq("reviewed_by", orphan.id);
+        await supabaseAdmin
+          .from("member_employment")
+          .update({ user_id: userId })
+          .eq("user_id", orphan.id);
+        await supabaseAdmin.from("activity_log").update({ actor_id: userId }).eq("actor_id", orphan.id);
+        await supabaseAdmin
+          .from("activity_log")
+          .update({ target_user_id: userId })
+          .eq("target_user_id", orphan.id);
+        await supabaseAdmin.from("profiles").delete().eq("id", orphan.id);
+      }
+
       if (data.teamId) {
         await supabaseAdmin
           .from("team_members")

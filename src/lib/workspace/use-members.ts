@@ -24,6 +24,7 @@ const emptyUser: WorkspaceMember = {
   teamIds: [],
   active: true,
   timezone: "Australia/Sydney",
+  avatarUrl: null,
 };
 
 export function useMembersData(enabled: boolean, uid: string | null, session: Session | null) {
@@ -148,6 +149,7 @@ export function useMembersData(enabled: boolean, uid: string | null, session: Se
         pending: p.is_pending ?? false,
         active: p.is_active ?? true,
         timezone: p.timezone ?? "Australia/Sydney",
+        avatarUrl: p.avatar_url ?? null,
       };
     });
   }, [profilesQ.data, teamMembersQ.data]);
@@ -275,6 +277,45 @@ export function useMembersData(enabled: boolean, uid: string | null, session: Se
     [uid, qc],
   );
 
+  // L31: client-side check mirrors the "avatars" bucket's own
+  // file_size_limit/allowed_mime_types exactly (20260825080000_avatar_storage.sql)
+  // — a fast, friendly error here, with the bucket itself as the real
+  // backstop, same "client check + DB backstop" shape used everywhere else
+  // in this app.
+  const uploadAvatar = useCallback(
+    async (file: File) => {
+      if (!uid) return;
+      if (file.type !== "image/png" && file.type !== "image/jpeg") {
+        throw new Error("Please choose a PNG or JPG image.");
+      }
+      if (file.size > 2 * 1024 * 1024) {
+        throw new Error("That image is too large — please choose one under 2 MB.");
+      }
+      // Fixed path per person, no extension — every re-upload overwrites
+      // the same object in place (upsert) rather than leaving a stale
+      // avatar.png behind after switching to a .jpg, or vice versa.
+      const path = `${uid}/avatar`;
+      const { error: uploadError } = await supabase.storage
+        .from("avatars")
+        .upload(path, file, { upsert: true, contentType: file.type });
+      throwIf(uploadError);
+      const {
+        data: { publicUrl },
+      } = supabase.storage.from("avatars").getPublicUrl(path);
+      // The storage path never changes, so browsers happily cache the old
+      // image against that same URL forever — a query-string cache-buster
+      // on the *stored* URL is what makes a re-upload actually show up.
+      const avatarUrl = `${publicUrl}?v=${Date.now()}`;
+      const { error: updateError } = await supabase
+        .from("profiles")
+        .update({ avatar_url: avatarUrl })
+        .eq("id", uid);
+      throwIf(updateError);
+      qc.invalidateQueries({ queryKey: ["profiles"] });
+    },
+    [uid, qc],
+  );
+
   // Lets an admin set someone else's timezone from Manage > Schedule — e.g.
   // a VA who hasn't visited their own Settings yet. RLS's
   // "profiles_update_self_or_admin" policy is admin-only for anyone other
@@ -339,6 +380,7 @@ export function useMembersData(enabled: boolean, uid: string | null, session: Se
     removeMemberFromTeam,
     removeUser,
     updateProfile,
+    uploadAvatar,
     updateMemberTimezone,
     employeeHoursForRange,
     employeeBillableHoursForRange,

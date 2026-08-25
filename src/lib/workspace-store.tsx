@@ -220,6 +220,8 @@ type WorkspaceContextValue = {
     job_title?: string;
     timezone?: string;
   }) => Promise<void>;
+  /** L31: uploads to the "avatars" Storage bucket at a fixed per-person path (upsert, so a re-upload replaces in place), then writes the resulting public URL to profiles.avatar_url. Throws a friendly error for a non-PNG/JPG file or one over 2 MB, mirroring the bucket's own limits. */
+  uploadAvatar: (file: File) => Promise<void>;
   /** Admin-only (matches the profiles RLS policy exactly) — sets another member's timezone, e.g. from Manage > Schedule. */
   updateMemberTimezone: (memberId: string, timezone: string) => Promise<void>;
 
@@ -307,6 +309,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     removeMemberFromTeam,
     removeUser,
     updateProfile,
+    uploadAvatar,
     updateMemberTimezone,
     employeeHoursForRange,
     employeeBillableHoursForRange,
@@ -351,6 +354,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     projectsQ,
     projectMembersQ,
     projectTagsQ,
+    projectTaskCategoriesQ,
     projectHoursQ,
     projects,
     createProject,
@@ -487,6 +491,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       removeMemberFromTeam,
       removeUser,
       updateProfile,
+      uploadAvatar,
       updateMemberTimezone,
 
       startTimer,
@@ -519,6 +524,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     removeMemberFromTeam,
     removeUser,
     updateProfile,
+    uploadAvatar,
     updateMemberTimezone,
     employeeHoursForRange,
     employeeBillableHoursForRange,

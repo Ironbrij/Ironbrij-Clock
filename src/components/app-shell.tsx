@@ -15,7 +15,7 @@ import {
   Users,
 } from "lucide-react";
 import { ThemeToggle } from "@/components/theme-toggle";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
@@ -187,6 +187,7 @@ export function AppShell({
         </nav>
         <div className="mt-6 flex items-center gap-3 rounded-xl border border-sidebar-border bg-card p-3">
           <Avatar className="h-9 w-9 shrink-0">
+            <AvatarImage src={currentUser.avatarUrl ?? undefined} alt={currentUser.name} />
             <AvatarFallback className="bg-primary text-xs text-primary-foreground">
               {currentUser.initials}
             </AvatarFallback>

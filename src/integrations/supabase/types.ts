@@ -225,6 +225,39 @@ export type Database = {
           },
         ];
       };
+      project_task_categories: {
+        Row: {
+          id: string;
+          project_id: string;
+          task_category_id: string;
+        };
+        Insert: {
+          id?: string;
+          project_id: string;
+          task_category_id: string;
+        };
+        Update: {
+          id?: string;
+          project_id?: string;
+          task_category_id?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "project_task_categories_project_id_fkey";
+            columns: ["project_id"];
+            isOneToOne: false;
+            referencedRelation: "projects";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "project_task_categories_task_category_id_fkey";
+            columns: ["task_category_id"];
+            isOneToOne: false;
+            referencedRelation: "task_categories";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       projects: {
         Row: {
           budget_hours: number | null;
@@ -644,6 +677,15 @@ export type Database = {
         Returns: {
           entry_count: number;
           tag_id: string;
+        }[];
+      };
+      timesheet_submission_recipients: {
+        Args: { _timesheet_id: string };
+        Returns: {
+          email: string;
+          full_name: string | null;
+          submitter_name: string | null;
+          week_start: string;
         }[];
       };
       week_is_locked: {

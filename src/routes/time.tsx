@@ -129,8 +129,19 @@ function TimerBar() {
   const clientBudgets = useClientBudgets();
   const active = projects.filter((p) => !p.archived);
   const { recent: recentProjects, rest: otherProjects } = orderByRecency(active, entries);
-  const { recent: recentTasks, rest: otherTasks } = orderByRecencyName(taskCategories, entries);
   const [project, setProject] = useState("");
+  // M25: empty taskCategoryIds means unrestricted (today's exact default)
+  // — only a project deliberately scoped to specific categories narrows
+  // the picker.
+  const selectedProject = active.find((p) => p.id === project);
+  const scopedTaskCategories =
+    selectedProject && selectedProject.taskCategoryIds.length > 0
+      ? taskCategories.filter((t) => selectedProject.taskCategoryIds.includes(t.id))
+      : taskCategories;
+  const { recent: recentTasks, rest: otherTasks } = orderByRecencyName(
+    scopedTaskCategories,
+    entries,
+  );
   const [task, setTask] = useState("");
   const [description, setDescription] = useState("");
   const [seconds, setSeconds] = useState(0);
@@ -146,10 +157,12 @@ function TimerBar() {
   useEffect(() => {
     // M32: mirrors the project field's default just above — most recently
     // used first, falling back to the first category only when there's no
-    // entry history yet to derive a "recent" one from.
-    if (!task) setTask(recentTasks[0]?.name ?? taskCategories[0]?.name ?? "");
+    // entry history yet to derive a "recent" one from. Uses the
+    // project-scoped list (M25) so the default respects a scoped
+    // project's own task categories rather than the full global list.
+    if (!task) setTask(recentTasks[0]?.name ?? scopedTaskCategories[0]?.name ?? "");
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [taskCategories, task]);
+  }, [scopedTaskCategories, task]);
 
   useEffect(() => {
     if (!runningEntry) {

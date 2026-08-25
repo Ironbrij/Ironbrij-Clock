@@ -25,7 +25,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { AppShell, ProjectDot } from "@/components/app-shell";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -305,6 +305,7 @@ function WeekStatusPanel() {
             <li key={m.id} className="flex items-center justify-between gap-4 px-6 py-2.5">
               <div className="flex min-w-0 items-center gap-3">
                 <Avatar className="h-7 w-7 shrink-0">
+                  <AvatarImage src={m.avatarUrl ?? undefined} alt={m.name} />
                   <AvatarFallback className="bg-secondary text-xs">{m.initials}</AvatarFallback>
                 </Avatar>
                 <span className="truncate text-sm">{m.name}</span>
@@ -490,6 +491,7 @@ function ApprovalsPanel() {
                         aria-label={`Select ${member?.name ?? "this timesheet"} for bulk approval`}
                       />
                       <Avatar className="h-9 w-9 shrink-0">
+                        <AvatarImage src={member?.avatarUrl ?? undefined} alt={member?.name} />
                         <AvatarFallback className="bg-secondary text-xs">
                           {member?.initials ?? "—"}
                         </AvatarFallback>
@@ -968,7 +970,7 @@ function ScheduleRow({
   isAdmin,
   updateMemberTimezone,
 }: {
-  member: { id: string; name: string; initials: string; timezone: string };
+  member: { id: string; name: string; initials: string; timezone: string; avatarUrl: string | null };
   employment: WorkspaceEmployment | undefined;
   updateMemberEmployment: (
     userId: string,
@@ -1079,6 +1081,7 @@ function ScheduleRow({
       <td className="px-4 py-2.5">
         <div className="flex items-center gap-2">
           <Avatar className="h-7 w-7 shrink-0">
+            <AvatarImage src={member.avatarUrl ?? undefined} alt={member.name} />
             <AvatarFallback className="bg-secondary text-xs">{member.initials}</AvatarFallback>
           </Avatar>
           <span className="font-medium">{member.name}</span>
@@ -1558,6 +1561,7 @@ function ActiveTimersCard({
                 >
                   <span className="flex min-w-0 items-center gap-3">
                     <Avatar className="h-7 w-7 shrink-0">
+                      <AvatarImage src={member?.avatarUrl ?? undefined} alt={member?.name} />
                       <AvatarFallback className="bg-secondary text-xs">
                         {member?.initials ?? "—"}
                       </AvatarFallback>
