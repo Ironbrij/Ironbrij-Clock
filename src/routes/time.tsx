@@ -26,7 +26,6 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
 import {
   Select,
   SelectContent,
@@ -37,6 +36,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { DescriptionAutocomplete } from "@/components/description-autocomplete";
 import { EntryFormDialog } from "@/components/entry-form-dialog";
 import { TimesheetGrid } from "@/components/timesheet-grid";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -50,6 +50,7 @@ import {
   oldestLoadedWeekStart,
   orderByRecency,
   orderByRecencyName,
+  recentDescriptions,
   startOfWeek,
   toDateKey,
   weekdayNames,
@@ -295,10 +296,11 @@ function TimerBar() {
   return (
     <Card className="sticky top-20 z-10 shadow-card">
       <CardContent className="flex flex-col gap-4 p-5 lg:flex-row lg:items-center">
-        <Input
+        <DescriptionAutocomplete
           placeholder="What are you working on?"
           value={description}
-          onChange={(e) => setDescription(e.target.value)}
+          onChange={setDescription}
+          suggestions={recentDescriptions(entries)}
           className="lg:flex-1"
         />
         <div className="grid gap-3 sm:grid-cols-2 lg:w-[380px]">

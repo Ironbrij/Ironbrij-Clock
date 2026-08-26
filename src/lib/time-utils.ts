@@ -125,6 +125,30 @@ export function orderByRecencyName<T extends { id: string; name: string }>(
   return { recent, rest };
 }
 
+/**
+ * Unique, most-recently-used-first descriptions from entry history, for the
+ * description field's autocomplete (mirrors Clockify's "recent tasks"
+ * dropdown) — same recency-sort-then-dedupe shape as orderByRecency/
+ * orderByRecencyName above, just keyed on the free-text description instead
+ * of a project id or task name.
+ */
+export function recentDescriptions(
+  entries: { description: string; startTime: string }[],
+  max = 50,
+): string[] {
+  const sorted = [...entries].sort((a, b) => b.startTime.localeCompare(a.startTime));
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const e of sorted) {
+    const d = e.description.trim();
+    if (!d || seen.has(d)) continue;
+    seen.add(d);
+    result.push(d);
+    if (result.length >= max) break;
+  }
+  return result;
+}
+
 export function dayIndexOf(dateKey: string, weekStart: Date) {
   const [y, m, d] = dateKey.split("-").map(Number);
   const date = new Date(y, (m ?? 1) - 1, d ?? 1);
