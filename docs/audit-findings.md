@@ -562,7 +562,7 @@ all in this app.
 employee-side billable data already fetched for H17. Both Reports tabs now have a "Billable" column
 (hours + %), sortable, in both CSV exports.
 
-**M29. ⚠️ Improved 2026-08-25 — built and wired client-side, not yet configured or deployed.** Every switch in Settings →
+**M29. ✅ Fixed 2026-08-26 — configured, deployed, and confirmed delivering real email in production.** Every switch in Settings →
 Notifications (`src/routes/settings.tsx`) is `disabled`, backed by a hardcoded local array, with an
 explicit "Coming soon — these preferences aren't saved yet" disclaimer. Nothing in the app sends an
 email/push notification for anything — a submitted timesheet, an approval, a long-running timer —
@@ -594,6 +594,43 @@ as equally fake.
 (`supabase functions deploy notify-timesheet-submitted`). Until both happen, the function is a
 no-op by design (returns `{ sent: 0 }` rather than erroring) — nothing breaks, but no email goes out
 either, until someone with real project access configures and deploys it.
+
+**Updated 2026-08-26 — switched from Resend to SendGrid, per Louis's request to use Ironbrij's
+existing SendGrid account instead of standing up Resend.** `notify-timesheet-submitted/index.ts` now
+calls SendGrid's `v3/mail/send` API instead of Resend's, reading `SENDGRID_API_KEY` in place of
+`RESEND_API_KEY`. `timesheet_submission_recipients()` and every other line of the recommended scope
+are unchanged — this only touched the send call itself. One real difference from Resend surfaced
+while making this swap: Resend has a no-verification-needed test sender
+(`onboarding@resend.dev`) to fall back to when `NOTIFY_FROM_ADDRESS` isn't set; SendGrid has no
+equivalent — every send needs a Single Sender or authenticated domain already verified in the
+SendGrid account, or the API rejects it outright. Rather than hardcoding a guessed address that
+might not be verified and would just bounce, `NOTIFY_FROM_ADDRESS` stays a hard requirement with no
+default: the function no-ops (same `{ sent: 0, reason: "not configured" }` shape as a missing API
+key) until both secrets are set.
+**Still open, same shape as before:** `SENDGRID_API_KEY` and `NOTIFY_FROM_ADDRESS` (now required,
+not optional) need to be set as project secrets, and the function needs to be (re)deployed —
+`supabase functions deploy notify-timesheet-submitted`. Nothing in this environment can do either.
+`npx tsc --noEmit`, `npm run lint` (touched files only), and `npm run test` all clean after the
+change.
+
+**Closed 2026-08-26 — configured, deployed, tested live, and a real bug caught in the process.**
+Louis set `SENDGRID_API_KEY` and `NOTIFY_FROM_ADDRESS` as project secrets and deployed the function
+himself (this environment still has no service-role/dashboard access to do either). The first live
+test — submitting a timesheet as an admin — appeared to send nothing, and the function's logs showed
+only its own boot/shutdown lifecycle with no trace of ever having run, so logging was added
+(`console.log`/`console.error` around config state, the recipient list, and each SendGrid call's
+result) to make it observable at all. That surfaced the real bug: every invocation from the app was
+an `OPTIONS` preflight returning `405` — `supabase-js`'s `functions.invoke()` always sends
+`Authorization`/`Content-Type` headers cross-origin, which triggers a browser CORS preflight, and
+this function had only ever handled `POST`. The browser silently blocked the real request every
+time, and `submitTimesheet()`'s fire-and-forget `.catch(() => {})` swallowed the failure with no
+visible error anywhere — a bug that predates the SendGrid swap entirely (the original Resend build
+had the exact same gap) and was only findable by actually exercising the function end-to-end, which
+nothing in this document's history had done before now. Fixed by handling `OPTIONS` with a 204 and
+CORS headers, and adding those headers to every response. Redeployed, submitted a real timesheet as
+`MV Bartolay`, and confirmed the email landed in `Andre Pasumbal`'s inbox from
+`IronTrack <notifications@ironbrij.com.au>` — first real end-to-end confirmation that this
+notification path, and this app's edge-function delivery generally, actually works in production.
 
 ### 14. Lower-Priority / Polish
 
@@ -2630,3 +2667,27 @@ as two/three separate bars. Traced with the same live-database access used for t
 **Updated final remainder:** unchanged from above — M29, M24, L32, and the DB-dependent half of M43.
 M45 was found and fixed the same day it was introduced-by-discovery, so it never spent time on the
 open list.
+
+### Fifth round, next day (2026-08-26) — M29 closed, and a real production bug caught doing it
+
+Louis got the SendGrid secrets and deployment access this document couldn't provide and closed M29
+out live — see M29's own entry above for the full account, summarized here since it's the last item
+this "final remainder" had been carrying that was actually actionable (M24 and L32 are deliberate
+deferrals, not blocked tasks; the DB-dependent half of M43 still needs a live Postgres instance
+nothing here has). Swapped Resend for SendGrid in `notify-timesheet-submitted` per Louis's request,
+then walked through configuring and deploying it together. The first live test sent nothing and left
+no trace in the function's own logs (boot/shutdown only), so logging was added — that's what
+surfaced the actual bug: the function had never handled its own CORS preflight, so every real
+`supabase-js` invocation was silently blocked by the browser before the request even reached
+SendGrid. Fixed, redeployed, retested — confirmed by an actual email landing in the recipient's
+inbox, not just a `{ sent: 1 }` response. This is the first finding in this document's entire
+history confirmed working end-to-end in production by watching a real user actually receive
+something, rather than by a migration existing or a dry run's own reported numbers — worth noting
+given H23's standing point that this document usually can't verify that distinction on its own.
+
+**Updated final remainder:** M24 (product decision, still explicitly deferred) and L32 (skipped by
+explicit confirmation) — both unchanged, neither ever needed engineering access this environment
+lacked, they're deliberate deferrals — plus the DB-dependent half of M43 (still needs a live
+Postgres instance). **M29 is closed.** Every must-have and useful-improvement finding from the
+Clockify Feature Parity and Smart Automation audits (H16–H19, M24–M29) is now resolved one way or
+another, for the first time since this document's Clockify parity pass began.

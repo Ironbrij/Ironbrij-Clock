@@ -175,9 +175,9 @@ export function useTimesheetsData(enabled: boolean, uid: string | null) {
       qc.invalidateQueries({ queryKey: ["timesheets"] });
       // M29: best-effort notification to whoever can review this — a
       // failure here (network drop, the edge function not deployed yet,
-      // RESEND_API_KEY not configured) should never make the submit
-      // itself look like it failed. Fire-and-forget, not awaited by the
-      // caller of submitTimesheet().
+      // SENDGRID_API_KEY/NOTIFY_FROM_ADDRESS not configured) should never
+      // make the submit itself look like it failed. Fire-and-forget, not
+      // awaited by the caller of submitTimesheet().
       if (data) {
         supabase.functions
           .invoke("notify-timesheet-submitted", { body: { timesheet_id: data.id } })
