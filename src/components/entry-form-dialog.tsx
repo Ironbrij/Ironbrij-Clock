@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { ProjectDot } from "@/components/app-shell";
+import { DescriptionAutocomplete } from "@/components/description-autocomplete";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -29,6 +30,7 @@ import {
   fromDateKey,
   orderByRecency,
   orderByRecencyName,
+  recentDescriptions,
   toDateKey,
 } from "@/lib/time-utils";
 import { formatHours } from "@/lib/mock-data";
@@ -217,11 +219,12 @@ export function EntryFormDialog({
         <div className="grid gap-4 py-2">
           <div className="grid gap-2">
             <Label htmlFor="entry-description">Description</Label>
-            <Input
+            <DescriptionAutocomplete
               id="entry-description"
               placeholder="What did you work on?"
               value={values.description}
-              onChange={(e) => setValues((v) => ({ ...v, description: e.target.value }))}
+              onChange={(description) => setValues((v) => ({ ...v, description }))}
+              suggestions={recentDescriptions(entries)}
             />
           </div>
           <div className="grid gap-4 sm:grid-cols-2">
