@@ -36,6 +36,16 @@
 // (200, { sent: 0 }) rather than an error — matches this being an
 // acceptable v1 scope cut, not a hard requirement, per the audit's own
 // framing.
+//
+// CORS: supabase-js's functions.invoke() always sends Authorization and
+// Content-Type headers on a cross-origin request, which makes the browser
+// send a preflight OPTIONS request first. Discovered live 2026-08-26 —
+// every invocation from the app was a 405 on that OPTIONS preflight (this
+// function only ever handled POST), so the real POST never left the
+// browser and submitTimesheet()'s fire-and-forget .catch(() => {})
+// swallowed the failure with no visible error anywhere. Every response
+// below, including the OPTIONS short-circuit, carries corsHeaders for
+// this reason.
 
 // @ts-expect-error Deno-only global, not available in this repo's Node/tsc typecheck
 import { createClient } from "npm:@supabase/supabase-js@2";
@@ -48,6 +58,19 @@ const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
 const SENDGRID_API_KEY = Deno.env.get("SENDGRID_API_KEY");
 // @ts-expect-error Deno global
 const FROM_ADDRESS_RAW = Deno.env.get("NOTIFY_FROM_ADDRESS");
+
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+};
+
+function json(body: unknown, status: number) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
+}
 
 type Recipient = {
   email: string;
@@ -77,15 +100,16 @@ function parseFromAddress(raw: string): { name?: string; email: string } | null 
 
 // @ts-expect-error Deno global
 Deno.serve(async (req: Request) => {
+  if (req.method === "OPTIONS") {
+    return new Response(null, { status: 204, headers: corsHeaders });
+  }
   if (req.method !== "POST") {
-    return new Response(JSON.stringify({ error: "Method not allowed" }), { status: 405 });
+    return json({ error: "Method not allowed" }, 405);
   }
 
   const authHeader = req.headers.get("Authorization");
   if (!authHeader) {
-    return new Response(JSON.stringify({ error: "Missing Authorization header" }), {
-      status: 401,
-    });
+    return json({ error: "Missing Authorization header" }, 401);
   }
 
   let timesheetId: string | undefined;
@@ -96,7 +120,7 @@ Deno.serve(async (req: Request) => {
     // handled by the check below
   }
   if (!timesheetId) {
-    return new Response(JSON.stringify({ error: "timesheet_id is required" }), { status: 400 });
+    return json({ error: "timesheet_id is required" }, 400);
   }
 
   const from = FROM_ADDRESS_RAW ? parseFromAddress(FROM_ADDRESS_RAW) : null;
@@ -104,7 +128,7 @@ Deno.serve(async (req: Request) => {
     console.log(
       `notify-timesheet-submitted: not configured (SENDGRID_API_KEY ${SENDGRID_API_KEY ? "set" : "MISSING"}, NOTIFY_FROM_ADDRESS ${from ? "set" : "MISSING or unparseable"})`,
     );
-    return new Response(JSON.stringify({ sent: 0, reason: "not configured" }), { status: 200 });
+    return json({ sent: 0, reason: "not configured" }, 200);
   }
 
   const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
@@ -119,13 +143,13 @@ Deno.serve(async (req: Request) => {
       `notify-timesheet-submitted: RPC error for timesheet ${timesheetId}:`,
       error.message,
     );
-    return new Response(JSON.stringify({ error: error.message }), { status: 400 });
+    return json({ error: error.message }, 400);
   }
   if (!recipients || recipients.length === 0) {
     console.log(
       `notify-timesheet-submitted: 0 recipients for timesheet ${timesheetId} (no other admin/manager to notify)`,
     );
-    return new Response(JSON.stringify({ sent: 0 }), { status: 200 });
+    return json({ sent: 0 }, 200);
   }
   console.log(
     `notify-timesheet-submitted: ${recipients.length} recipient(s) for timesheet ${timesheetId}: ${(recipients as Recipient[]).map((r) => r.email).join(", ")}`,
@@ -179,5 +203,5 @@ Deno.serve(async (req: Request) => {
   console.log(
     `notify-timesheet-submitted: done, ${sent}/${(recipients as Recipient[]).length} sent`,
   );
-  return new Response(JSON.stringify({ sent }), { status: 200 });
+  return json({ sent }, 200);
 });
