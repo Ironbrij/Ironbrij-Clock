@@ -101,6 +101,9 @@ Deno.serve(async (req: Request) => {
 
   const from = FROM_ADDRESS_RAW ? parseFromAddress(FROM_ADDRESS_RAW) : null;
   if (!SENDGRID_API_KEY || !from) {
+    console.log(
+      `notify-timesheet-submitted: not configured (SENDGRID_API_KEY ${SENDGRID_API_KEY ? "set" : "MISSING"}, NOTIFY_FROM_ADDRESS ${from ? "set" : "MISSING or unparseable"})`,
+    );
     return new Response(JSON.stringify({ sent: 0, reason: "not configured" }), { status: 200 });
   }
 
@@ -112,11 +115,21 @@ Deno.serve(async (req: Request) => {
     _timesheet_id: timesheetId,
   });
   if (error) {
+    console.error(
+      `notify-timesheet-submitted: RPC error for timesheet ${timesheetId}:`,
+      error.message,
+    );
     return new Response(JSON.stringify({ error: error.message }), { status: 400 });
   }
   if (!recipients || recipients.length === 0) {
+    console.log(
+      `notify-timesheet-submitted: 0 recipients for timesheet ${timesheetId} (no other admin/manager to notify)`,
+    );
     return new Response(JSON.stringify({ sent: 0 }), { status: 200 });
   }
+  console.log(
+    `notify-timesheet-submitted: ${recipients.length} recipient(s) for timesheet ${timesheetId}: ${(recipients as Recipient[]).map((r) => r.email).join(", ")}`,
+  );
 
   const first = recipients[0] as Recipient;
   const who = first.submitter_name || "Someone";
@@ -148,11 +161,23 @@ Deno.serve(async (req: Request) => {
         }),
       });
       // SendGrid returns 202 Accepted with an empty body on success.
-      if (res.ok) sent++;
-    } catch {
+      if (res.ok) {
+        sent++;
+        console.log(`notify-timesheet-submitted: sent to ${r.email} (${res.status})`);
+      } else {
+        const body = await res.text().catch(() => "");
+        console.error(
+          `notify-timesheet-submitted: SendGrid rejected ${r.email} (${res.status}): ${body}`,
+        );
+      }
+    } catch (err) {
       // Best-effort per recipient — one failed send shouldn't stop the rest.
+      console.error(`notify-timesheet-submitted: fetch to SendGrid failed for ${r.email}:`, err);
     }
   }
 
+  console.log(
+    `notify-timesheet-submitted: done, ${sent}/${(recipients as Recipient[]).length} sent`,
+  );
   return new Response(JSON.stringify({ sent }), { status: 200 });
 });
