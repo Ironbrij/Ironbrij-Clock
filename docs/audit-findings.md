@@ -595,6 +595,24 @@ as equally fake.
 no-op by design (returns `{ sent: 0 }` rather than erroring) — nothing breaks, but no email goes out
 either, until someone with real project access configures and deploys it.
 
+**Updated 2026-08-26 — switched from Resend to SendGrid, per Louis's request to use Ironbrij's
+existing SendGrid account instead of standing up Resend.** `notify-timesheet-submitted/index.ts` now
+calls SendGrid's `v3/mail/send` API instead of Resend's, reading `SENDGRID_API_KEY` in place of
+`RESEND_API_KEY`. `timesheet_submission_recipients()` and every other line of the recommended scope
+are unchanged — this only touched the send call itself. One real difference from Resend surfaced
+while making this swap: Resend has a no-verification-needed test sender
+(`onboarding@resend.dev`) to fall back to when `NOTIFY_FROM_ADDRESS` isn't set; SendGrid has no
+equivalent — every send needs a Single Sender or authenticated domain already verified in the
+SendGrid account, or the API rejects it outright. Rather than hardcoding a guessed address that
+might not be verified and would just bounce, `NOTIFY_FROM_ADDRESS` stays a hard requirement with no
+default: the function no-ops (same `{ sent: 0, reason: "not configured" }` shape as a missing API
+key) until both secrets are set.
+**Still open, same shape as before:** `SENDGRID_API_KEY` and `NOTIFY_FROM_ADDRESS` (now required,
+not optional) need to be set as project secrets, and the function needs to be (re)deployed —
+`supabase functions deploy notify-timesheet-submitted`. Nothing in this environment can do either.
+`npx tsc --noEmit`, `npm run lint` (touched files only), and `npm run test` all clean after the
+change.
+
 ### 14. Lower-Priority / Polish
 
 **L30. ✅ Fixed (superseded by M33 below).** No "copy previous day" or duplicate-entry shortcut.

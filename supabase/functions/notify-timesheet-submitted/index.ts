@@ -17,20 +17,25 @@
 // (20260825090000_timesheet_submission_recipients.sql) for the full
 // reasoning.
 //
-// Requires two secrets set on the project — NOT set by this commit, since
-// this environment has no way to configure them:
-//   supabase secrets set RESEND_API_KEY=<your Resend API key>
+// Sends via Ironbrij's own SendGrid account (switched from an initial
+// Resend build 2026-08-26, before Resend was ever deployed — Louis wanted
+// the existing SendGrid account used instead of standing up a new
+// provider). Requires two secrets set on the project — NOT set by this
+// commit, since this environment has no way to configure them:
+//   supabase secrets set SENDGRID_API_KEY=<your SendGrid API key>
 //   supabase secrets set NOTIFY_FROM_ADDRESS='IronTrack <notifications@yourdomain>'
-// NOTIFY_FROM_ADDRESS is optional — without it, this falls back to
-// Resend's own onboarding@resend.dev test sender, which works with no
-// domain verification but is rate-limited and only deliverable to the
-// Resend account's own verified email during testing. A real launch needs
-// a verified sending domain and NOTIFY_FROM_ADDRESS set to an address on
-// it. Deploy with: supabase functions deploy notify-timesheet-submitted
+// Unlike Resend, SendGrid has no free unverified-domain test sender to
+// fall back to — NOTIFY_FROM_ADDRESS must be an address covered by a
+// verified Single Sender or authenticated domain in the SendGrid account,
+// or every send will be rejected. With no default to silently fall back
+// on, this is a hard requirement: this function no-ops (rather than
+// sending from an address that will just bounce) until it's set. Deploy
+// with: supabase functions deploy notify-timesheet-submitted
 //
-// Without RESEND_API_KEY set, this is a no-op (200, { sent: 0 }) rather
-// than an error — matches this being an acceptable v1 scope cut, not a
-// hard requirement, per the audit's own framing.
+// Without SENDGRID_API_KEY or NOTIFY_FROM_ADDRESS set, this is a no-op
+// (200, { sent: 0 }) rather than an error — matches this being an
+// acceptable v1 scope cut, not a hard requirement, per the audit's own
+// framing.
 
 // @ts-expect-error Deno-only global, not available in this repo's Node/tsc typecheck
 import { createClient } from "npm:@supabase/supabase-js@2";
@@ -40,10 +45,9 @@ const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 // @ts-expect-error Deno global
 const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
 // @ts-expect-error Deno global
-const RESEND_API_KEY = Deno.env.get("RESEND_API_KEY");
-const FROM_ADDRESS =
-  // @ts-expect-error Deno global
-  Deno.env.get("NOTIFY_FROM_ADDRESS") ?? "IronTrack <onboarding@resend.dev>";
+const SENDGRID_API_KEY = Deno.env.get("SENDGRID_API_KEY");
+// @ts-expect-error Deno global
+const FROM_ADDRESS_RAW = Deno.env.get("NOTIFY_FROM_ADDRESS");
 
 type Recipient = {
   email: string;
@@ -58,6 +62,17 @@ function formatWeekLabel(weekStart: string) {
     day: "numeric",
     year: "numeric",
   });
+}
+
+/** Parses "Name <email@domain>" (or a bare "email@domain") into SendGrid's separate name/email fields. */
+function parseFromAddress(raw: string): { name?: string; email: string } | null {
+  const match = /^\s*(?:"?([^"<]*)"?\s*)?<([^<>]+)>\s*$/.exec(raw);
+  if (match) {
+    const name = match[1]?.trim();
+    return { name: name || undefined, email: match[2].trim() };
+  }
+  const email = raw.trim();
+  return email ? { email } : null;
 }
 
 // @ts-expect-error Deno global
@@ -84,7 +99,8 @@ Deno.serve(async (req: Request) => {
     return new Response(JSON.stringify({ error: "timesheet_id is required" }), { status: 400 });
   }
 
-  if (!RESEND_API_KEY) {
+  const from = FROM_ADDRESS_RAW ? parseFromAddress(FROM_ADDRESS_RAW) : null;
+  if (!SENDGRID_API_KEY || !from) {
     return new Response(JSON.stringify({ sent: 0, reason: "not configured" }), { status: 200 });
   }
 
@@ -109,19 +125,29 @@ Deno.serve(async (req: Request) => {
   let sent = 0;
   for (const r of recipients as Recipient[]) {
     try {
-      const res = await fetch("https://api.resend.com/emails", {
+      const res = await fetch("https://api.sendgrid.com/v3/mail/send", {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${RESEND_API_KEY}`,
+          Authorization: `Bearer ${SENDGRID_API_KEY}`,
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          from: FROM_ADDRESS,
-          to: [r.email],
-          subject: `${who} submitted their timesheet for review`,
-          html: `<p>Hi ${r.full_name || "there"},</p><p><strong>${who}</strong> just submitted their timesheet for the week of ${weekLabel}. It's waiting on your review in IronTrack.</p>`,
+          personalizations: [
+            {
+              to: [{ email: r.email, name: r.full_name || undefined }],
+              subject: `${who} submitted their timesheet for review`,
+            },
+          ],
+          from,
+          content: [
+            {
+              type: "text/html",
+              value: `<p>Hi ${r.full_name || "there"},</p><p><strong>${who}</strong> just submitted their timesheet for the week of ${weekLabel}. It's waiting on your review in IronTrack.</p>`,
+            },
+          ],
         }),
       });
+      // SendGrid returns 202 Accepted with an empty body on success.
       if (res.ok) sent++;
     } catch {
       // Best-effort per recipient — one failed send shouldn't stop the rest.
