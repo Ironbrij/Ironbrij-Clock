@@ -147,6 +147,17 @@ export type DetailedEntry = {
   startTime: string;
 };
 
+/** One posted announcement — `teamIds` is empty for an 'everyone' post, non-empty for a team-scoped one. */
+export type WorkspaceAnnouncement = {
+  id: string;
+  authorId: string;
+  title: string;
+  body: string;
+  audience: "everyone" | "teams";
+  teamIds: string[];
+  createdAt: string;
+};
+
 export const dotColors = [
   "oklch(0.62 0.15 256)",
   "oklch(0.65 0.16 320)",

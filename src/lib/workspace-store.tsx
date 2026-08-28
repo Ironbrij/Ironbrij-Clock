@@ -21,6 +21,7 @@ import {
   type Role,
   type Team,
   type TimesheetStatus,
+  type WorkspaceAnnouncement,
   type WorkspaceClient,
   type WorkspaceEmployment,
   type WorkspaceEntry,
@@ -31,6 +32,7 @@ import {
   type WorkspaceTaskCategory,
   type WorkspaceTimesheet,
 } from "@/lib/workspace/types";
+import { useAnnouncementsData } from "@/lib/workspace/use-announcements";
 import { useClientsData } from "@/lib/workspace/use-clients";
 import { useEmploymentData } from "@/lib/workspace/use-employment";
 import { useMembersData } from "@/lib/workspace/use-members";
@@ -75,6 +77,7 @@ export {
   type WorkspaceMember,
   type WorkspaceProject,
   type WorkspaceSettings,
+  type WorkspaceAnnouncement,
   type WorkspaceTag,
   type WorkspaceTaskCategory,
   type WorkspaceTimesheet,
@@ -133,6 +136,19 @@ type WorkspaceContextValue = {
   /** How many activity events happened since the person last opened the Activity tab. */
   unseenActivityCount: number;
   markActivitySeen: () => void;
+  /** Announcements visible to this member — RLS already scopes this to 'everyone' posts plus any team-targeted post they're on the receiving team for. */
+  announcements: WorkspaceAnnouncement[];
+  /** How many announcements were posted since the person last opened the Announcements page. */
+  unseenAnnouncementCount: number;
+  markAnnouncementsSeen: () => void;
+  /** Admins can target 'everyone' or any team(s); managers are restricted server-side to team(s) they belong to. */
+  createAnnouncement: (input: {
+    title: string;
+    body: string;
+    audience: "everyone" | "teams";
+    teamIds: string[];
+  }) => Promise<void>;
+  deleteAnnouncement: (id: string) => Promise<void>;
   /** Rate/schedule/employment-type per member, for Manage → Schedule — empty for anyone who isn't a manager/admin. */
   employmentByUser: Map<string, WorkspaceEmployment>;
   updateMemberEmployment: (
@@ -321,6 +337,15 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     canManage,
   );
 
+  const {
+    announcementsQ,
+    announcements,
+    unseenAnnouncementCount,
+    markAnnouncementsSeen,
+    createAnnouncement,
+    deleteAnnouncement,
+  } = useAnnouncementsData(enabled);
+
   const { employmentQ, employmentByUser, updateMemberEmployment } = useEmploymentData(
     enabled,
     canManage,
@@ -471,6 +496,11 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       activityLog,
       unseenActivityCount,
       markActivitySeen,
+      announcements,
+      unseenAnnouncementCount,
+      markAnnouncementsSeen,
+      createAnnouncement,
+      deleteAnnouncement,
       employmentByUser,
       updateMemberEmployment,
       timesheetForWeek,
@@ -572,6 +602,11 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     activityLog,
     unseenActivityCount,
     markActivitySeen,
+    announcements,
+    unseenAnnouncementCount,
+    markAnnouncementsSeen,
+    createAnnouncement,
+    deleteAnnouncement,
     employmentByUser,
     updateMemberEmployment,
     timesheetForWeek,
@@ -650,8 +685,7 @@ export function useClientBudgets() {
         remainingHours,
         isOver: remainingHours <= 0,
         isNearLimit:
-          remainingHours > 0 &&
-          renderedHours >= c.subscriptionHours * BUDGET_WARNING_THRESHOLD,
+          remainingHours > 0 && renderedHours >= c.subscriptionHours * BUDGET_WARNING_THRESHOLD,
       });
     }
     return map;
@@ -689,8 +723,7 @@ export function useProjectBudgets() {
         renderedHours: p.hours,
         remainingHours,
         isOver: remainingHours <= 0,
-        isNearLimit:
-          remainingHours > 0 && p.hours >= p.budgetHours * BUDGET_WARNING_THRESHOLD,
+        isNearLimit: remainingHours > 0 && p.hours >= p.budgetHours * BUDGET_WARNING_THRESHOLD,
       });
     }
     return map;

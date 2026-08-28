@@ -1,6 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useState } from "react";
-import { ArrowRight, CheckCheck, Clock, Info, Users, X } from "lucide-react";
+import { ArrowRight, CheckCheck, Clock, Info, Megaphone, Users, X } from "lucide-react";
 import { AppShell, ProjectDot } from "@/components/app-shell";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -76,6 +76,7 @@ function Dashboard() {
     timesheetForWeek,
     canManage,
     pendingApprovals,
+    unseenAnnouncementCount,
   } = useWorkspace();
   const weekStart = useThisWeekStart();
   const dailyGoal = settings.weeklyHours / 5;
@@ -203,6 +204,28 @@ function Dashboard() {
               <Link to="/manage" search={{ tab: "approvals" }}>
                 Review
               </Link>
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+
+      {unseenAnnouncementCount > 0 && (
+        <Card className="border-amber-500/30 bg-amber-50/50 shadow-card dark:bg-amber-950/20">
+          <CardContent className="flex items-center gap-4 p-4">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-amber-500/10">
+              <Megaphone className="h-5 w-5 text-amber-600 dark:text-amber-400" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-semibold">
+                {unseenAnnouncementCount} new{" "}
+                {unseenAnnouncementCount === 1 ? "announcement" : "announcements"}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                Something's been shared with the team.
+              </p>
+            </div>
+            <Button asChild size="sm" variant="outline">
+              <Link to="/announcements">Read</Link>
             </Button>
           </CardContent>
         </Card>

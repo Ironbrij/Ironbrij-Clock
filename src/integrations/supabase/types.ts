@@ -4,7 +4,7 @@ export type Database = {
   // Allows to automatically instantiate createClient with right options
   // instead of createClient<Database, { PostgrestVersion: 'XX' }>(URL, KEY)
   __InternalSupabase: {
-    PostgrestVersion: "14.15";
+    PostgrestVersion: "14.17";
   };
   graphql_public: {
     Tables: {
@@ -58,7 +58,90 @@ export type Database = {
           metadata?: Json;
           target_user_id?: string | null;
         };
-        Relationships: [];
+        Relationships: [
+          {
+            foreignKeyName: "activity_log_actor_id_fkey";
+            columns: ["actor_id"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "activity_log_target_user_id_fkey";
+            columns: ["target_user_id"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      announcement_teams: {
+        Row: {
+          announcement_id: string;
+          id: string;
+          team_id: string;
+        };
+        Insert: {
+          announcement_id: string;
+          id?: string;
+          team_id: string;
+        };
+        Update: {
+          announcement_id?: string;
+          id?: string;
+          team_id?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "announcement_teams_announcement_id_fkey";
+            columns: ["announcement_id"];
+            isOneToOne: false;
+            referencedRelation: "announcements";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "announcement_teams_team_id_fkey";
+            columns: ["team_id"];
+            isOneToOne: false;
+            referencedRelation: "teams";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      announcements: {
+        Row: {
+          audience: string;
+          author_id: string;
+          body: string;
+          created_at: string;
+          id: string;
+          title: string;
+        };
+        Insert: {
+          audience: string;
+          author_id: string;
+          body: string;
+          created_at?: string;
+          id?: string;
+          title: string;
+        };
+        Update: {
+          audience?: string;
+          author_id?: string;
+          body?: string;
+          created_at?: string;
+          id?: string;
+          title?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "announcements_author_id_fkey";
+            columns: ["author_id"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+        ];
       };
       clients: {
         Row: {
@@ -118,7 +201,22 @@ export type Database = {
           user_id?: string;
           weekly_schedule?: string | null;
         };
-        Relationships: [];
+        Relationships: [
+          {
+            foreignKeyName: "member_employment_updated_by_fkey";
+            columns: ["updated_by"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "member_employment_user_id_fkey";
+            columns: ["user_id"];
+            isOneToOne: true;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+        ];
       };
       profiles: {
         Row: {
@@ -330,6 +428,24 @@ export type Database = {
         };
         Relationships: [];
       };
+      task_categories: {
+        Row: {
+          created_at: string;
+          id: string;
+          name: string;
+        };
+        Insert: {
+          created_at?: string;
+          id?: string;
+          name: string;
+        };
+        Update: {
+          created_at?: string;
+          id?: string;
+          name?: string;
+        };
+        Relationships: [];
+      };
       team_members: {
         Row: {
           created_at: string;
@@ -365,24 +481,6 @@ export type Database = {
             referencedColumns: ["id"];
           },
         ];
-      };
-      task_categories: {
-        Row: {
-          created_at: string;
-          id: string;
-          name: string;
-        };
-        Insert: {
-          created_at?: string;
-          id?: string;
-          name: string;
-        };
-        Update: {
-          created_at?: string;
-          id?: string;
-          name?: string;
-        };
-        Relationships: [];
       };
       teams: {
         Row: {
@@ -560,16 +658,29 @@ export type Database = {
       [_ in never]: never;
     };
     Functions: {
-      approve_member: { Args: { _user_id: string }; Returns: undefined };
-      can_manage: { Args: { _user_id: string }; Returns: boolean };
-      delete_tag: { Args: { _tag_id: string }; Returns: undefined };
-      employee_hours_range: {
-        Args: { _from: string; _to: string };
+      announcement_recipients: {
+        Args: { _announcement_id: string };
         Returns: {
-          minutes: number;
-          user_id: string;
+          author_name: string;
+          body: string;
+          email: string;
+          full_name: string;
+          title: string;
         }[];
       };
+      approve_member: { Args: { _user_id: string }; Returns: undefined };
+      can_manage: { Args: { _user_id: string }; Returns: boolean };
+      create_announcement: {
+        Args: {
+          _audience: string;
+          _body: string;
+          _team_ids: string[];
+          _title: string;
+        };
+        Returns: string;
+      };
+      delete_tag: { Args: { _tag_id: string }; Returns: undefined };
+      description_required: { Args: never; Returns: boolean };
       employee_billable_hours_range: {
         Args: { _from: string; _to: string };
         Returns: {
@@ -580,7 +691,14 @@ export type Database = {
       employee_client_hours_range: {
         Args: { _from: string; _to: string };
         Returns: {
-          client_id: string | null;
+          client_id: string;
+          minutes: number;
+          user_id: string;
+        }[];
+      };
+      employee_hours_range: {
+        Args: { _from: string; _to: string };
+        Returns: {
           minutes: number;
           user_id: string;
         }[];
@@ -592,19 +710,23 @@ export type Database = {
         };
         Returns: boolean;
       };
+      hook_restrict_signup_to_invited: { Args: { event: Json }; Returns: Json };
+      is_active_user: { Args: { _user_id: string }; Returns: boolean };
+      is_approved: { Args: { _user_id: string }; Returns: boolean };
+      manual_entry_allowed: { Args: never; Returns: boolean };
+      project_billable_hours_range: {
+        Args: { _from: string; _to: string };
+        Returns: {
+          billable_minutes: number;
+          project_id: string;
+        }[];
+      };
       project_hours: {
         Args: never;
         Returns: {
           project_id: string;
           total_minutes: number;
           week_minutes: number;
-        }[];
-      };
-      project_billable_hours_range: {
-        Args: { _from: string; _to: string };
-        Returns: {
-          billable_minutes: number;
-          project_id: string;
         }[];
       };
       project_hours_range: {
@@ -683,8 +805,8 @@ export type Database = {
         Args: { _timesheet_id: string };
         Returns: {
           email: string;
-          full_name: string | null;
-          submitter_name: string | null;
+          full_name: string;
+          submitter_name: string;
           week_start: string;
         }[];
       };
