@@ -295,13 +295,13 @@ function TimerBar() {
 
   return (
     <Card className="sticky top-20 z-10 shadow-card">
-      <CardContent className="flex flex-col gap-4 p-5 lg:flex-row lg:items-center">
+      <CardContent className="flex flex-col gap-4 p-5 lg:flex-row lg:flex-wrap lg:items-center">
         <DescriptionAutocomplete
           placeholder="What are you working on?"
           value={description}
           onChange={setDescription}
           suggestions={recentDescriptions(entries)}
-          className="lg:flex-1"
+          className="lg:min-w-[220px] lg:flex-1"
         />
         <div className="grid gap-3 sm:grid-cols-2 lg:w-[380px]">
           <div>
