@@ -8,6 +8,7 @@ import {
   LayoutDashboard,
   Loader2,
   LogOut,
+  Megaphone,
   MoreHorizontal,
   Plane,
   Settings,
@@ -25,6 +26,7 @@ const nav = [
   { to: "/time", label: "Time", icon: Clock },
   { to: "/timesheet", label: "Timesheet", icon: ClipboardList },
   { to: "/", label: "Dashboard", icon: LayoutDashboard },
+  { to: "/announcements", label: "Announcements", icon: Megaphone },
   { to: "/reports", label: "Reports", icon: BarChart3 },
   { to: "/projects", label: "Projects", icon: FolderKanban },
   { to: "/teams", label: "Team", icon: Users },
@@ -62,6 +64,7 @@ export function AppShell({
     isAdmin,
     activeMembers,
     unseenActivityCount,
+    unseenAnnouncementCount,
     pendingApprovals,
     signOut,
     refreshAll,
@@ -164,7 +167,13 @@ export function AppShell({
           {nav.map((item) => {
             const active = pathname === item.to;
             const badgeCount =
-              item.to === "/settings" ? pendingCount : item.to === "/manage" ? manageBadgeCount : 0;
+              item.to === "/settings"
+                ? pendingCount
+                : item.to === "/manage"
+                  ? manageBadgeCount
+                  : item.to === "/announcements"
+                    ? unseenAnnouncementCount
+                    : 0;
             return (
               <Link
                 key={item.to}
@@ -249,7 +258,7 @@ export function AppShell({
           >
             <MoreHorizontal className="h-4 w-4" />
             More
-            {(pendingCount > 0 || manageBadgeCount > 0) && (
+            {(pendingCount > 0 || manageBadgeCount > 0 || unseenAnnouncementCount > 0) && (
               <span className="absolute right-1 top-0 h-2 w-2 rounded-full bg-destructive" />
             )}
           </button>
@@ -267,7 +276,9 @@ export function AppShell({
                     ? pendingCount
                     : item.to === "/manage"
                       ? manageBadgeCount
-                      : 0;
+                      : item.to === "/announcements"
+                        ? unseenAnnouncementCount
+                        : 0;
                 return (
                   <Link
                     key={item.to}
