@@ -74,12 +74,17 @@ export type WorkspaceClient = {
   contactEmail: string | null;
   subscriptionHours: number | null;
 };
+import type { WeeklyScheduleDays } from "@/lib/time-utils";
+
 export type EmploymentType = "full_time" | "part_time";
+export type { DaySchedule, WeeklyScheduleDays } from "@/lib/time-utils";
 export type WorkspaceEmployment = {
   userId: string;
   employmentType: EmploymentType;
   hourlyRate: number | null;
+  /** Legacy single free-text note — superseded by weeklyScheduleDays, kept only as a fallback to seed it. */
   weeklySchedule: string | null;
+  weeklyScheduleDays: WeeklyScheduleDays | null;
 };
 
 export type WorkspaceTaskCategory = { id: string; name: string };

@@ -12,6 +12,7 @@ import {
   timezones,
   toDbReviewStatus,
   toTimesheetStatus,
+  type DaySchedule,
   type DbTimesheetStatus,
   type DetailedEntry,
   type EmploymentType,
@@ -31,6 +32,7 @@ import {
   type WorkspaceTag,
   type WorkspaceTaskCategory,
   type WorkspaceTimesheet,
+  type WeeklyScheduleDays,
 } from "@/lib/workspace/types";
 import { useAnnouncementsData } from "@/lib/workspace/use-announcements";
 import { useClientsData } from "@/lib/workspace/use-clients";
@@ -62,6 +64,7 @@ export {
   NO_CLIENT,
   timezones,
   type ActiveTimer,
+  type DaySchedule,
   type DetailedEntry,
   type EmploymentType,
   type PendingApproval,
@@ -81,6 +84,7 @@ export {
   type WorkspaceTag,
   type WorkspaceTaskCategory,
   type WorkspaceTimesheet,
+  type WeeklyScheduleDays,
 };
 
 type WorkspaceContextValue = {
@@ -157,6 +161,7 @@ type WorkspaceContextValue = {
       employmentType?: EmploymentType;
       hourlyRate?: number | null;
       weeklySchedule?: string | null;
+      weeklyScheduleDays?: WeeklyScheduleDays | null;
     },
   ) => Promise<void>;
   timesheetForWeek: (weekStart: Date) => WorkspaceTimesheet | undefined;

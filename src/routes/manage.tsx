@@ -58,12 +58,13 @@ import { Textarea } from "@/components/ui/textarea";
 import { formatHours, formatMinutes } from "@/lib/mock-data";
 import {
   addDays,
-  composeWeeklySchedule,
   convertTimeRange,
+  expandWeeklyScheduleToDays,
   formatClock,
   formatDayLong,
   formatWeekRange,
   fromDateKey,
+  isEmptyWeeklyScheduleDays,
   listTimezones,
   parseWeeklySchedule,
   startOfWeek,
@@ -78,6 +79,7 @@ import {
   type ActiveTimer,
   type EmploymentType,
   type PendingApproval,
+  type WeeklyScheduleDays,
   type WorkspaceActivityEvent,
   type WorkspaceEmployment,
   type WorkspaceEntry,
@@ -962,6 +964,13 @@ function ScheduleTab() {
 /** Full IANA list, built once per module load rather than per row — it doesn't depend on props and Intl.supportedValuesOf/offset formatting isn't free at ~400 entries. */
 const timezoneOptions = listTimezones();
 
+/** Seeds the per-day picker: the new structured column if it's ever been saved, otherwise a best-effort expansion of whatever's in the legacy free-text column (same hours across every day it recognized), so an old plain-text schedule still shows up instead of looking empty. */
+function initialScheduleDays(employment: WorkspaceEmployment | undefined): WeeklyScheduleDays {
+  if (employment?.weeklyScheduleDays) return employment.weeklyScheduleDays;
+  const { days, start, end } = parseWeeklySchedule(employment?.weeklySchedule ?? "");
+  return expandWeeklyScheduleToDays(days, start, end);
+}
+
 function ScheduleRow({
   member,
   employment,
@@ -977,16 +986,14 @@ function ScheduleRow({
     patch: {
       employmentType?: EmploymentType;
       hourlyRate?: number | null;
-      weeklySchedule?: string | null;
+      weeklyScheduleDays?: WeeklyScheduleDays | null;
     },
   ) => Promise<void>;
   orgTimezone: string;
   isAdmin: boolean;
   updateMemberTimezone: (memberId: string, timezone: string) => Promise<void>;
 }) {
-  const [schedule, setSchedule] = useState(() =>
-    parseWeeklySchedule(employment?.weeklySchedule ?? ""),
-  );
+  const [days, setDays] = useState<WeeklyScheduleDays>(() => initialScheduleDays(employment));
   const [rate, setRate] = useState(
     employment?.hourlyRate != null ? String(employment.hourlyRate) : "",
   );
@@ -995,9 +1002,10 @@ function ScheduleRow({
   const [savingSchedule, setSavingSchedule] = useState(false);
 
   useEffect(() => {
-    setSchedule(parseWeeklySchedule(employment?.weeklySchedule ?? ""));
+    setDays(initialScheduleDays(employment));
     setRate(employment?.hourlyRate != null ? String(employment.hourlyRate) : "");
-  }, [employment?.weeklySchedule, employment?.hourlyRate]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [employment?.weeklyScheduleDays, employment?.weeklySchedule, employment?.hourlyRate]);
 
   const employmentType = employment?.employmentType ?? "full_time";
 
@@ -1013,31 +1021,36 @@ function ScheduleRow({
     }
   };
 
-  const savedSchedule = employment?.weeklySchedule ?? "";
+  const savedDays = employment?.weeklyScheduleDays ?? null;
 
-  const saveSchedule = async (next: { days: boolean[]; start: string; end: string }) => {
-    const composed = composeWeeklySchedule(next.days, next.start, next.end);
-    if (composed === savedSchedule) return;
+  const saveSchedule = async (next: WeeklyScheduleDays) => {
+    if (savedDays && JSON.stringify(next) === JSON.stringify(savedDays)) return;
     setSavingSchedule(true);
     try {
-      await updateMemberEmployment(member.id, { weeklySchedule: composed || null });
+      await updateMemberEmployment(member.id, { weeklyScheduleDays: next });
     } catch (error) {
       toast.error("Couldn't save schedule", { description: (error as Error).message });
-      setSchedule(parseWeeklySchedule(savedSchedule));
+      setDays(initialScheduleDays(employment));
     } finally {
       setSavingSchedule(false);
     }
   };
 
+  // Turning a day on reuses another already-set day's hours as a starting
+  // point (falling back to a plain 9–5) — the common case is the same hours
+  // most days with one or two exceptions, so this avoids re-typing times for
+  // every day when only a handful actually differ.
   const toggleDay = (index: number) => {
-    const next = { ...schedule, days: schedule.days.map((d, i) => (i === index ? !d : d)) };
-    setSchedule(next);
+    const template = days.find((d) => d != null) ?? { start: "09:00", end: "17:00" };
+    const next = days.map((d, i) => (i === index ? (d ? null : { ...template }) : d));
+    setDays(next);
     void saveSchedule(next);
   };
 
-  const setStart = (value: string) => setSchedule((prev) => ({ ...prev, start: value }));
-  const setEnd = (value: string) => setSchedule((prev) => ({ ...prev, end: value }));
-  const commitSchedule = () => void saveSchedule(schedule);
+  const setDayTime = (index: number, field: "start" | "end", value: string) => {
+    setDays((prev) => prev.map((d, i) => (i === index && d ? { ...d, [field]: value } : d)));
+  };
+  const commitSchedule = () => void saveSchedule(days);
 
   const saveTimezone = async (timezone: string) => {
     setSavingTz(true);
@@ -1050,13 +1063,22 @@ function ScheduleRow({
     }
   };
 
-  const auSchedule = convertTimeRange(schedule.start, schedule.end, member.timezone, orgTimezone);
-  const phSchedule = convertTimeRange(schedule.start, schedule.end, member.timezone, PH_TIMEZONE);
-  // The parser found no recognizable weekday in whatever's currently saved
-  // (a legacy hand-typed note, most likely) — flagged so an admin doesn't
-  // mistake the all-unselected picker for "no schedule set" and silently
-  // clobber it the moment they touch a day.
-  const unrecognizedSchedule = savedSchedule && !schedule.days.some(Boolean);
+  const convertedFor = (d: (typeof days)[number]) => {
+    if (!d) return null;
+    const au = convertTimeRange(d.start, d.end, member.timezone, orgTimezone);
+    const ph = convertTimeRange(d.start, d.end, member.timezone, PH_TIMEZONE);
+    if (!au && !ph) return null;
+    return `${au ? `AU ${au}` : ""}${au && ph ? " · " : ""}${ph ? `PH ${ph}` : ""}`;
+  };
+
+  // The legacy free-text column had something in it, but neither it nor the
+  // new structured column has a recognizable day selected yet — flagged so
+  // an admin doesn't mistake the all-off picker for "no schedule set" and
+  // silently clobber a note the parser just couldn't read.
+  const unrecognizedSchedule =
+    !employment?.weeklyScheduleDays &&
+    employment?.weeklySchedule &&
+    isEmptyWeeklyScheduleDays(days);
 
   const saveRate = async () => {
     const original = employment?.hourlyRate != null ? String(employment.hourlyRate) : "";
@@ -1118,56 +1140,63 @@ function ScheduleRow({
         )}
       </td>
       <td className="px-4 py-2.5 align-top">
-        <div className="flex w-64 flex-col gap-1.5">
-          <div className="flex gap-1">
-            {WEEKDAY_ABBR.map((label, i) => (
-              <button
-                key={label}
-                type="button"
-                disabled={savingSchedule}
-                onClick={() => toggleDay(i)}
-                aria-pressed={schedule.days[i]}
-                title={label}
-                className={
-                  "flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[11px] font-medium transition-colors " +
-                  (schedule.days[i]
-                    ? "bg-primary text-primary-foreground"
-                    : "bg-muted text-muted-foreground hover:bg-accent")
-                }
-              >
-                {label[0]}
-              </button>
-            ))}
-          </div>
-          <div className="flex items-center gap-1.5">
-            <Input
-              type="time"
-              aria-label="Start time"
-              value={schedule.start}
-              onChange={(e) => setStart(e.target.value)}
-              onBlur={commitSchedule}
-              className="h-7 min-w-0 flex-1 pl-2 pr-1 text-xs"
-            />
-            <span className="shrink-0 text-xs text-muted-foreground">–</span>
-            <Input
-              type="time"
-              aria-label="End time"
-              value={schedule.end}
-              onChange={(e) => setEnd(e.target.value)}
-              onBlur={commitSchedule}
-              className="h-7 min-w-0 flex-1 pl-2 pr-1 text-xs"
-            />
-          </div>
-          {(auSchedule || phSchedule) && (
-            <p className="truncate text-xs text-muted-foreground">
-              {auSchedule && `AU ${auSchedule}`}
-              {auSchedule && phSchedule && " · "}
-              {phSchedule && `PH ${phSchedule}`}
-            </p>
-          )}
+        <div className="flex w-72 flex-col gap-1">
+          {WEEKDAY_ABBR.map((label, i) => {
+            const d = days[i];
+            const converted = convertedFor(d);
+            return (
+              <div key={label} className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  disabled={savingSchedule}
+                  onClick={() => toggleDay(i)}
+                  aria-pressed={!!d}
+                  title={label}
+                  className={
+                    "flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[11px] font-medium transition-colors " +
+                    (d
+                      ? "bg-primary text-primary-foreground"
+                      : "bg-muted text-muted-foreground hover:bg-accent")
+                  }
+                >
+                  {label[0]}
+                </button>
+                {d ? (
+                  <>
+                    <Input
+                      type="time"
+                      aria-label={`${label} start time`}
+                      value={d.start}
+                      onChange={(e) => setDayTime(i, "start", e.target.value)}
+                      onBlur={commitSchedule}
+                      disabled={savingSchedule}
+                      className="h-7 w-[5.5rem] min-w-0 px-1.5 text-xs"
+                    />
+                    <span className="shrink-0 text-xs text-muted-foreground">–</span>
+                    <Input
+                      type="time"
+                      aria-label={`${label} end time`}
+                      value={d.end}
+                      onChange={(e) => setDayTime(i, "end", e.target.value)}
+                      onBlur={commitSchedule}
+                      disabled={savingSchedule}
+                      className="h-7 w-[5.5rem] min-w-0 px-1.5 text-xs"
+                    />
+                    {converted && (
+                      <span className="truncate text-[10px] text-muted-foreground">
+                        {converted}
+                      </span>
+                    )}
+                  </>
+                ) : (
+                  <span className="text-xs text-muted-foreground">Off</span>
+                )}
+              </div>
+            );
+          })}
           {unrecognizedSchedule && (
             <p className="text-xs text-amber-600 dark:text-amber-400">
-              Couldn't read "{savedSchedule}" as days — pick above to replace it.
+              Couldn't read "{employment?.weeklySchedule}" as days — pick above to replace it.
             </p>
           )}
         </div>

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { throwIf } from "./utils";
-import type { EmploymentType, WorkspaceEmployment } from "./types";
+import type { EmploymentType, WeeklyScheduleDays, WorkspaceEmployment } from "./types";
 
 export function useEmploymentData(enabled: boolean, canManage: boolean, uid: string | null) {
   const qc = useQueryClient();
@@ -32,7 +32,7 @@ export function useEmploymentData(enabled: boolean, canManage: boolean, uid: str
     queryFn: async () => {
       const { data, error } = await supabase
         .from("member_employment")
-        .select("user_id, employment_type, hourly_rate, weekly_schedule");
+        .select("user_id, employment_type, hourly_rate, weekly_schedule, weekly_schedule_days");
       if (error) throw error;
       return data;
     },
@@ -46,6 +46,7 @@ export function useEmploymentData(enabled: boolean, canManage: boolean, uid: str
         employmentType: row.employment_type as EmploymentType,
         hourlyRate: row.hourly_rate,
         weeklySchedule: row.weekly_schedule,
+        weeklyScheduleDays: (row.weekly_schedule_days as WeeklyScheduleDays | null) ?? null,
       });
     }
     return map;
@@ -58,6 +59,7 @@ export function useEmploymentData(enabled: boolean, canManage: boolean, uid: str
         employmentType?: EmploymentType;
         hourlyRate?: number | null;
         weeklySchedule?: string | null;
+        weeklyScheduleDays?: WeeklyScheduleDays | null;
       },
     ) => {
       const existing = employmentByUser.get(userId);
@@ -70,6 +72,10 @@ export function useEmploymentData(enabled: boolean, canManage: boolean, uid: str
           patch.weeklySchedule !== undefined
             ? patch.weeklySchedule
             : (existing?.weeklySchedule ?? null),
+        weekly_schedule_days:
+          patch.weeklyScheduleDays !== undefined
+            ? patch.weeklyScheduleDays
+            : (existing?.weeklyScheduleDays ?? null),
         updated_at: new Date().toISOString(),
         updated_by: uid,
       });

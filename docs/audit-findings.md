@@ -667,13 +667,34 @@ uploaded avatar is actually visible to teammates, not just on the uploader's own
 piece added this session; this environment only has anon-key access, no way to actually exercise an
 upload against a real bucket.
 
-**L32. ⏳ Open. Weekly schedule is a free-text note, not structured data.** `member_employment
+**L32. ✅ Fixed 2026-09-02. Weekly schedule is a free-text note, not structured data.** `member_employment
 .weekly_schedule` (Manage → Schedule tab) is a single text field ("e.g. Mon–Fri, 9am–5pm") with no
 per-day start/end times — fine for display, but nothing can compute against it (e.g., "is this
 person rostered right now").
 **Priority:** Low. **Complexity:** Low-Medium if structured (per-weekday start/end columns) — not
 worth it unless something downstream actually needs to compute against a schedule rather than just
 display it.
+
+**Fixed:** Louis confirmed the actual trigger this time — some employees genuinely keep different
+hours on different days (e.g. a shorter Friday), which the old single shared start/end pair
+couldn't express at all, regardless of whether anything downstream computes against it yet. Added a
+new nullable `weekly_schedule_days jsonb` column on `member_employment`
+(`20260902000000_weekly_schedule_per_day.sql`) — a 7-element Mon…Sun array, each element `null`
+(day off) or `{"start","end"}`, with a `is_valid_weekly_schedule_days()` CHECK constraint validating
+the shape and each time string. Additive, not a rewrite: the legacy `weekly_schedule` text column is
+left untouched; `ScheduleRow` (`manage.tsx`) now renders one row per weekday with its own start/end
+time inputs (toggle a day on and it seeds from another already-set day's hours, or a plain 9–5, so
+the common "same hours most days" case still doesn't mean retyping seven times), and a new
+`expandWeeklyScheduleToDays()` (`time-utils.ts`) seeds the picker from whatever `parseWeeklySchedule`
+recovers out of the legacy text for anyone not yet saved under the new column — so an old plain-text
+schedule still shows up instead of looking empty, and the first edit to any day is what actually
+migrates that person onto the structured column. The AU/Manila timezone conversion line now renders
+per day instead of once for a single shared range. `tsc --noEmit`, `npm run lint` (touched files
+only — this repo's line endings trip `prettier/prettier` file-wide on Windows, unrelated to this
+change), and `npm run test` (31 tests) all clean.
+**Not done:** nothing downstream computes against the schedule yet (e.g. "is this person rostered
+right now") — same scope call as before, this finding was specifically about the data no longer
+being structured, not about building a consumer for it.
 
 ### 15. Unnecessary — Considered and Rejected
 
@@ -2691,3 +2712,20 @@ lacked, they're deliberate deferrals — plus the DB-dependent half of M43 (stil
 Postgres instance). **M29 is closed.** Every must-have and useful-improvement finding from the
 Clockify Feature Parity and Smart Automation audits (H16–H19, M24–M29) is now resolved one way or
 another, for the first time since this document's Clockify parity pass began.
+
+### Sixth round, next week (2026-09-02) — L32 reopened and closed for real
+
+The "not worth it unless something downstream needs it" deferral on L32 held until Louis gave the
+actual reason he wanted it: some employees genuinely keep different hours on different days (a
+shorter Friday, for instance), which the single shared start/end pair applied across every selected
+day couldn't express at all — a real gap independent of whether anything computes against the
+schedule yet. See L32's own entry above (section 14) for the full account: a new
+`weekly_schedule_days jsonb` column, additive alongside the untouched legacy text column, a
+CHECK-constrained 7-element Mon…Sun shape, and `ScheduleRow` (`manage.tsx`) rebuilt to show one
+start/end pair per weekday instead of one shared pair for every selected day — seeded from the
+legacy text via `parseWeeklySchedule`/`expandWeeklyScheduleToDays` for anyone not yet migrated, so no
+existing schedule data was lost or required a live-database backfill to move over.
+
+**Updated final remainder:** M24 (product decision, still explicitly deferred) and the DB-dependent
+half of M43 (still needs a live Postgres instance) — the only two items this document has been
+carrying that are still actually open. **L32 is closed.**
