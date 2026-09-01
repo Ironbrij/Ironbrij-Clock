@@ -37,6 +37,7 @@ import {
   filterMembersBySearchAndTeam,
   MemberSearchFilter,
 } from "@/components/member-search-filter";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   Select,
   SelectContent,
@@ -68,6 +69,7 @@ import {
   listTimezones,
   parseWeeklySchedule,
   startOfWeek,
+  summarizeWeeklyScheduleDays,
   toDateKey,
   WEEKDAY_ABBR,
 } from "@/lib/time-utils";
@@ -1139,67 +1141,86 @@ function ScheduleRow({
           <span className="text-xs text-muted-foreground">{member.timezone}</span>
         )}
       </td>
-      <td className="px-4 py-2.5 align-top">
-        <div className="flex w-72 flex-col gap-1">
-          {WEEKDAY_ABBR.map((label, i) => {
-            const d = days[i];
-            const converted = convertedFor(d);
-            return (
-              <div key={label} className="flex items-center gap-1.5">
-                <button
-                  type="button"
-                  disabled={savingSchedule}
-                  onClick={() => toggleDay(i)}
-                  aria-pressed={!!d}
-                  title={label}
-                  className={
-                    "flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[11px] font-medium transition-colors " +
-                    (d
-                      ? "bg-primary text-primary-foreground"
-                      : "bg-muted text-muted-foreground hover:bg-accent")
-                  }
-                >
-                  {label[0]}
-                </button>
-                {d ? (
-                  <>
-                    <Input
-                      type="time"
-                      aria-label={`${label} start time`}
-                      value={d.start}
-                      onChange={(e) => setDayTime(i, "start", e.target.value)}
-                      onBlur={commitSchedule}
+      <td className="px-4 py-2.5">
+        <Popover>
+          <PopoverTrigger asChild>
+            <button
+              type="button"
+              className="flex w-56 items-center gap-1.5 rounded-md border border-transparent px-2 py-1 text-left text-xs hover:border-border hover:bg-accent/40"
+            >
+              <Pencil className="h-3 w-3 shrink-0 text-muted-foreground" />
+              <span className="truncate">{summarizeWeeklyScheduleDays(days)}</span>
+              {unrecognizedSchedule && (
+                <span
+                  className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500"
+                  title="Couldn't read the old saved schedule as days"
+                />
+              )}
+            </button>
+          </PopoverTrigger>
+          <PopoverContent align="start" className="w-auto p-3">
+            <div className="flex flex-col gap-1">
+              {WEEKDAY_ABBR.map((label, i) => {
+                const d = days[i];
+                const converted = convertedFor(d);
+                return (
+                  <div key={label} className="flex items-center gap-1.5">
+                    <button
+                      type="button"
                       disabled={savingSchedule}
-                      className="h-7 w-[5.5rem] min-w-0 px-1.5 text-xs"
-                    />
-                    <span className="shrink-0 text-xs text-muted-foreground">–</span>
-                    <Input
-                      type="time"
-                      aria-label={`${label} end time`}
-                      value={d.end}
-                      onChange={(e) => setDayTime(i, "end", e.target.value)}
-                      onBlur={commitSchedule}
-                      disabled={savingSchedule}
-                      className="h-7 w-[5.5rem] min-w-0 px-1.5 text-xs"
-                    />
-                    {converted && (
-                      <span className="truncate text-[10px] text-muted-foreground">
-                        {converted}
-                      </span>
+                      onClick={() => toggleDay(i)}
+                      aria-pressed={!!d}
+                      title={label}
+                      className={
+                        "flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[11px] font-medium transition-colors " +
+                        (d
+                          ? "bg-primary text-primary-foreground"
+                          : "bg-muted text-muted-foreground hover:bg-accent")
+                      }
+                    >
+                      {label[0]}
+                    </button>
+                    {d ? (
+                      <>
+                        <Input
+                          type="time"
+                          aria-label={`${label} start time`}
+                          value={d.start}
+                          onChange={(e) => setDayTime(i, "start", e.target.value)}
+                          onBlur={commitSchedule}
+                          disabled={savingSchedule}
+                          className="h-7 w-[5.5rem] min-w-0 px-1.5 text-xs"
+                        />
+                        <span className="shrink-0 text-xs text-muted-foreground">–</span>
+                        <Input
+                          type="time"
+                          aria-label={`${label} end time`}
+                          value={d.end}
+                          onChange={(e) => setDayTime(i, "end", e.target.value)}
+                          onBlur={commitSchedule}
+                          disabled={savingSchedule}
+                          className="h-7 w-[5.5rem] min-w-0 px-1.5 text-xs"
+                        />
+                        {converted && (
+                          <span className="truncate text-[10px] text-muted-foreground">
+                            {converted}
+                          </span>
+                        )}
+                      </>
+                    ) : (
+                      <span className="w-24 text-xs text-muted-foreground">Off</span>
                     )}
-                  </>
-                ) : (
-                  <span className="text-xs text-muted-foreground">Off</span>
-                )}
-              </div>
-            );
-          })}
-          {unrecognizedSchedule && (
-            <p className="text-xs text-amber-600 dark:text-amber-400">
-              Couldn't read "{employment?.weeklySchedule}" as days — pick above to replace it.
-            </p>
-          )}
-        </div>
+                  </div>
+                );
+              })}
+              {unrecognizedSchedule && (
+                <p className="max-w-64 text-xs text-amber-600 dark:text-amber-400">
+                  Couldn't read "{employment?.weeklySchedule}" as days — pick above to replace it.
+                </p>
+              )}
+            </div>
+          </PopoverContent>
+        </Popover>
       </td>
       <td className="px-4 py-2.5">
         <Input
