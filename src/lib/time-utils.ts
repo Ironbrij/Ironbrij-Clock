@@ -405,6 +405,43 @@ export function isEmptyWeeklyScheduleDays(days: WeeklyScheduleDays | null | unde
   return !days || days.every((d) => d == null);
 }
 
+/**
+ * Collapses a per-day schedule into one compact line for a collapsed/summary
+ * view (e.g. "Mon–Fri 9am–5pm, Sat 10am–2pm") — groups consecutive days that
+ * share the exact same start/end, the same way the old single-range picker's
+ * day-range grouping worked, but per distinct time range rather than for the
+ * whole week at once.
+ */
+export function summarizeWeeklyScheduleDays(days: WeeklyScheduleDays | null | undefined): string {
+  if (isEmptyWeeklyScheduleDays(days)) return "Not set";
+  const parts: string[] = [];
+  let i = 0;
+  while (i < 7) {
+    const d = days![i];
+    if (!d) {
+      i++;
+      continue;
+    }
+    let j = i;
+    while (j + 1 < 7 && sameDaySchedule(days![j + 1], d)) j++;
+    const dayLabel = j > i ? `${WEEKDAY_ABBR[i]}–${WEEKDAY_ABBR[j]}` : WEEKDAY_ABBR[i];
+    const startMin = timeInputToMinutes(d.start);
+    const endMin = timeInputToMinutes(d.end);
+    const timeLabel =
+      startMin != null && endMin != null
+        ? `${formatClockMinutes(startMin)}–${formatClockMinutes(endMin)}`
+        : "";
+    parts.push(timeLabel ? `${dayLabel} ${timeLabel}` : dayLabel);
+    i = j + 1;
+  }
+  return parts.join(", ");
+}
+
+function sameDaySchedule(a: DaySchedule, b: DaySchedule): boolean {
+  if (!a || !b) return false;
+  return a.start === b.start && a.end === b.end;
+}
+
 const FALLBACK_TIMEZONES = [
   "Australia/Sydney",
   "Australia/Melbourne",

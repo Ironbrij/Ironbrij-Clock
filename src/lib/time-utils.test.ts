@@ -14,13 +14,16 @@ import {
   composeWeeklySchedule,
   convertTimeRange,
   dayIndexOf,
+  expandWeeklyScheduleToDays,
   fromDateKey,
+  isEmptyWeeklyScheduleDays,
   oldestLoadedWeekStart,
   orderByRecency,
   orderByRecencyName,
   parseWeeklySchedule,
   splitByDay,
   startOfWeek,
+  summarizeWeeklyScheduleDays,
   toDateKey,
 } from "./time-utils";
 
@@ -212,6 +215,48 @@ describe("composeWeeklySchedule / parseWeeklySchedule round-trip", () => {
     expect(() => parseWeeklySchedule("¯\\_(ツ)_/¯")).not.toThrow();
     const parsed = parseWeeklySchedule("¯\\_(ツ)_/¯");
     expect(parsed.days).toEqual([false, false, false, false, false, false, false]);
+  });
+});
+
+describe("expandWeeklyScheduleToDays / summarizeWeeklyScheduleDays (L32)", () => {
+  it("expands a shared day/start/end selection into one entry per selected day", () => {
+    const days = [true, true, true, true, true, false, false];
+    expect(expandWeeklyScheduleToDays(days, "09:00", "17:00")).toEqual([
+      { start: "09:00", end: "17:00" },
+      { start: "09:00", end: "17:00" },
+      { start: "09:00", end: "17:00" },
+      { start: "09:00", end: "17:00" },
+      { start: "09:00", end: "17:00" },
+      null,
+      null,
+    ]);
+  });
+
+  it("treats an empty selection, or missing times, as entirely off", () => {
+    expect(isEmptyWeeklyScheduleDays(null)).toBe(true);
+    const allOff = [false, false, false, false, false, false, false];
+    expect(isEmptyWeeklyScheduleDays(expandWeeklyScheduleToDays(allOff, "09:00", "17:00"))).toBe(
+      true,
+    );
+    expect(isEmptyWeeklyScheduleDays(expandWeeklyScheduleToDays([true], "", ""))).toBe(true);
+  });
+
+  it("groups consecutive days sharing identical hours into one range", () => {
+    const weekdays = [true, true, true, true, true, false, false];
+    const days = expandWeeklyScheduleToDays(weekdays, "09:00", "17:00");
+    expect(summarizeWeeklyScheduleDays(days)).toBe("Mon–Fri 9am–5pm");
+  });
+
+  it("keeps a day with different hours as its own segment", () => {
+    const weekdays = [true, true, true, true, true, false, false];
+    const days = expandWeeklyScheduleToDays(weekdays, "09:00", "17:00");
+    days[4] = { start: "09:00", end: "13:00" }; // shorter Friday
+    expect(summarizeWeeklyScheduleDays(days)).toBe("Mon–Thu 9am–5pm, Fri 9am–1pm");
+  });
+
+  it("reports 'Not set' for a fully-off week", () => {
+    expect(summarizeWeeklyScheduleDays(null)).toBe("Not set");
+    expect(summarizeWeeklyScheduleDays([null, null, null, null, null, null, null])).toBe("Not set");
   });
 });
 
