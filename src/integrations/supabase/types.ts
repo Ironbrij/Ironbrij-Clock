@@ -184,6 +184,7 @@ export type Database = {
           updated_by: string | null;
           user_id: string;
           weekly_schedule: string | null;
+          weekly_schedule_days: Json | null;
         };
         Insert: {
           employment_type?: string;
@@ -192,6 +193,7 @@ export type Database = {
           updated_by?: string | null;
           user_id: string;
           weekly_schedule?: string | null;
+          weekly_schedule_days?: Json | null;
         };
         Update: {
           employment_type?: string;
@@ -200,6 +202,7 @@ export type Database = {
           updated_by?: string | null;
           user_id?: string;
           weekly_schedule?: string | null;
+          weekly_schedule_days?: Json | null;
         };
         Relationships: [
           {

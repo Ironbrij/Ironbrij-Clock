@@ -268,6 +268,10 @@ export function convertTimeRange(
 /** Mon(0)…Sun(6) — the order the structured schedule editor and its parser/composer agree on. */
 export const WEEKDAY_ABBR = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
+/** One day's hours, or null for a day off. Mon(0)…Sun(6), matching WEEKDAY_ABBR. */
+export type DaySchedule = { start: string; end: string } | null;
+export type WeeklyScheduleDays = DaySchedule[];
+
 const WEEKDAY_ALIASES: [string, number][] = [
   ["monday", 0],
   ["mon", 0],
@@ -376,6 +380,29 @@ export function parseWeeklySchedule(text: string): { days: boolean[]; start: str
   const end = timeMatches[1] ? minutesToTimeInputValue(toMinutes(timeMatches[1])) : "";
 
   return { days, start, end };
+}
+
+/**
+ * Seeds a per-day schedule from the legacy single-range shape (a set of
+ * selected days sharing one start/end) — used once, client-side, to
+ * initialize the structured per-day editor for anyone whose row hasn't been
+ * saved under `weekly_schedule_days` yet, from whatever `parseWeeklySchedule`
+ * recovered out of the old free-text column. Reproduces the old behavior
+ * exactly (every selected day gets the same hours) as a starting point; per-
+ * day edits diverge from there.
+ */
+export function expandWeeklyScheduleToDays(
+  days: boolean[],
+  start: string,
+  end: string,
+): WeeklyScheduleDays {
+  const hasTimes = start !== "" && end !== "";
+  return days.map((selected) => (selected && hasTimes ? { start, end } : null));
+}
+
+/** True when every day is off (nothing to display/convert). */
+export function isEmptyWeeklyScheduleDays(days: WeeklyScheduleDays | null | undefined): boolean {
+  return !days || days.every((d) => d == null);
 }
 
 const FALLBACK_TIMEZONES = [

@@ -16,6 +16,13 @@ dist-ssr
 .nitro
 *.local
 
+# Env files — .env only ever held the public anon key/URL historically, but
+# nothing should stop that from changing; keep secrets out of git going
+# forward and let .env.example carry the shape for onboarding instead.
+.env
+.env.*
+!.env.example
+
 # Wrangler / Cloudflare
 .wrangler/
 .dev.vars
