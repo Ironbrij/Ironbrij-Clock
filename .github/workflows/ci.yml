@@ -18,7 +18,12 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          # @supabase/supabase-js's Realtime client needs native WebSocket
+          # support (Node 22+) even though this test file never actually
+          # uses Realtime — the client constructor initializes it
+          # unconditionally. Node 20 threw "Node.js detected but native
+          # WebSocket not found" the first time this test file actually ran.
+          node-version: 22
           cache: npm
 
       - name: Install dependencies
