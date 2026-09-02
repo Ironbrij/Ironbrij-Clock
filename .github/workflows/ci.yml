@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Set up Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      # M43: spins up a throwaway local Postgres + Auth + Storage stack
+      # (Docker is already preinstalled on this runner) and applies every
+      # migration under supabase/migrations/ — exactly what
+      # src/lib/workspace/rpc.integration.test.ts needs to actually exercise
+      # submit_timesheet()/review_timesheet()/set_member_role() instead of
+      # skipping itself, which is what happens with no database reachable.
+      - name: Start local Supabase
+        run: supabase start
+
+      # `-o env` variable names are matched by substring (case-insensitive)
+      # rather than assumed exact, since this hasn't been run end-to-end
+      # against a real CLI output yet — the `cat` below makes the raw output
+      # visible in the log so a naming mismatch is easy to diagnose and fix
+      # rather than failing silently. None of this is a secret: `supabase
+      # start` generates a fresh, disposable local dev instance every run.
+      - name: Export local Supabase connection info
+        run: |
+          supabase status -o env > /tmp/supabase-status.env
+          cat /tmp/supabase-status.env
+          {
+            echo "TEST_SUPABASE_URL=$(grep -iE '_?API_URL=' /tmp/supabase-status.env | head -1 | cut -d= -f2-)"
+            echo "TEST_SUPABASE_ANON_KEY=$(grep -iE '_?ANON_KEY=' /tmp/supabase-status.env | head -1 | cut -d= -f2-)"
+            echo "TEST_SUPABASE_SERVICE_ROLE_KEY=$(grep -iE '_?SERVICE_ROLE_KEY=' /tmp/supabase-status.env | head -1 | cut -d= -f2-)"
+          } >> "$GITHUB_ENV"
+
+      - name: Run tests (unit + M43 RPC integration)
+        run: npm run test
+
+      - name: Stop local Supabase
+        if: always()
+        run: supabase stop

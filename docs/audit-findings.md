@@ -2016,6 +2016,36 @@ instance to test against, which this environment doesn't have, and still rely en
 verification. **Still open:** the CI wiring, and the actual integration tests against those
 functions once a real database is reachable from wherever this runs next.
 
+**Further improved 2026-09-02 — CI wiring and the integration tests themselves now exist, but
+neither has actually been run yet.** This machine has the Supabase CLI but no Docker (`supabase
+start` needs it), so the local half of this finding's own blocker is still unresolved here — the
+new pieces are built the same way H18's import script was built-and-validated-before-cutover: ready,
+reasoned through, but not yet exercised for real.
+- `.github/workflows/ci.yml` — new, this repo had no CI at all before this (nothing ran
+  `lint`/`typecheck`/`test` automatically on push). Installs deps, lints, typechecks, then uses
+  `supabase/setup-cli` and `supabase start` — GitHub's own Ubuntu runners ship Docker preinstalled,
+  which sidesteps this machine's exact blocker entirely — to bring up a throwaway local
+  Postgres+Auth+Storage stack with every migration under `supabase/migrations/` applied, before
+  running `npm run test`.
+- `src/lib/workspace/rpc.integration.test.ts` — the actual integration tests this finding's
+  "Recommended action" named: `submit_timesheet` (empty-week block, running-timer block, happy path,
+  re-submit block), `review_timesheet` (self-review block, no-shared-team block, happy-path approve,
+  reviewing-twice block), and `set_member_role` (non-admin block, happy-path change, last-admin
+  protection, and demoting an admin once a second one exists). Fixture users/team/entries are created
+  and torn down per run via the service-role client; the RPCs under test are always called through a
+  per-persona signed-in client (real `auth.uid()`, not a service-role bypass), matching how the app
+  itself calls them. Guarded to no-op (one visibly-skipped test, not a failure) unless
+  `TEST_SUPABASE_URL`/`TEST_SUPABASE_ANON_KEY`/`TEST_SUPABASE_SERVICE_ROLE_KEY` are set, so a
+  contributor without Docker still gets a clean `npm run test`.
+- `tsc --noEmit`, `npm run lint`, and `npm run test` (37 tests: 36 passing, this new file's one
+  placeholder correctly skipped) are all clean in this environment — but that only proves the
+  no-database skip path works. **What's still unverified:** the workflow has never actually run
+  against a live `supabase start` (the `-o env` key-name matching it depends on is written
+  defensively — case-insensitive substring match, with the raw output logged for debugging — for
+  exactly this reason), and none of the nine RPC assertions above have executed against a real
+  Postgres instance yet. First real verification happens on this branch's first push once CI picks
+  it up, or from a machine with Docker.
+
 **M44. ✅ Fixed — already resolved before this document was updated to say so.** The Projects tab has no search, filter, or pagination — the busiest list in the app
 has less findability than the Clients tab one click away in the same file.**
 - **Current behavior:** `projects.tsx:198-294` renders every project as an unconditional
@@ -2729,3 +2759,28 @@ existing schedule data was lost or required a live-database backfill to move ove
 **Updated final remainder:** M24 (product decision, still explicitly deferred) and the DB-dependent
 half of M43 (still needs a live Postgres instance) — the only two items this document has been
 carrying that are still actually open. **L32 is closed.**
+
+### Seventh round, same day (2026-09-02) — M43's CI wiring and RPC integration tests built, not yet run
+
+The DB-dependent half of M43 (integration tests against `submit_timesheet`/`review_timesheet`/
+`set_member_role`) has been carried as "needs a live Postgres instance this environment doesn't
+have" since 2026-08-25. That's still true of this machine specifically — checked directly this
+round: Supabase CLI is present, Docker is not — but GitHub's own Ubuntu Actions runners ship Docker
+preinstalled, which sidesteps the blocker without needing anything installed here. Built accordingly
+— see M43's own entry above (section 17) for the full account:
+- `.github/workflows/ci.yml` — this repo had no CI at all before this. Lints, typechecks, then
+  `supabase start`s a throwaway local stack and runs `npm run test` against it.
+- `src/lib/workspace/rpc.integration.test.ts` — the actual RPC tests, one happy path plus the named
+  business rule for each of the three functions, guarded to skip cleanly (not fail) with no database
+  configured.
+
+**What this round could not do:** actually run any of it. No Docker here means `supabase start`
+has never executed in this environment, so the CI workflow's `-o env` key-name assumptions and all
+nine new RPC assertions are unverified — reasoned through and internally consistent, but not proven
+against a real Postgres instance the way, say, H18's cutover eventually was against production. First
+real signal arrives whenever this branch's CI actually runs, or from a machine with Docker.
+
+**Updated final remainder:** M24 (product decision, still explicitly deferred) — the only item left
+that isn't purely "waiting to actually execute for the first time." M43's DB-dependent half is now
+built rather than unstarted, but stays open until a real CI run (or a Docker-equipped machine)
+confirms it actually passes.
