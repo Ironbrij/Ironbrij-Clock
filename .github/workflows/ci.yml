@@ -51,14 +51,38 @@ jobs:
       # visible in the log so a naming mismatch is easy to diagnose and fix
       # rather than failing silently. None of this is a secret: `supabase
       # start` generates a fresh, disposable local dev instance every run.
+      #
+      # `extract` also strips wrapping quotes (single or double) and
+      # surrounding whitespace from the value — `-o env` output isn't
+      # guaranteed to be bare `KEY=value` with no quoting, and a stray quote
+      # character is exactly the kind of thing that turns a real URL into
+      # "Invalid supabaseUrl: Must be a valid HTTP or HTTPS URL" downstream.
       - name: Export local Supabase connection info
         run: |
           supabase status -o env > /tmp/supabase-status.env
           cat /tmp/supabase-status.env
+
+          extract() {
+            grep -iE "_?$1=" /tmp/supabase-status.env | head -1 | cut -d= -f2- \
+              | sed -e 's/^[[:space:]"'"'"']*//' -e 's/[[:space:]"'"'"']*$//'
+          }
+
+          TEST_SUPABASE_URL="$(extract API_URL)"
+          TEST_SUPABASE_ANON_KEY="$(extract ANON_KEY)"
+          TEST_SUPABASE_SERVICE_ROLE_KEY="$(extract SERVICE_ROLE_KEY)"
+
+          # Visible, safe debug — the URL is not sensitive, and the keys are
+          # local-only throwaway values regenerated every run, but only
+          # their presence/length is printed rather than the full value,
+          # just to keep the log tidy.
+          echo "Parsed TEST_SUPABASE_URL: $TEST_SUPABASE_URL"
+          echo "Parsed TEST_SUPABASE_ANON_KEY length: ${#TEST_SUPABASE_ANON_KEY}"
+          echo "Parsed TEST_SUPABASE_SERVICE_ROLE_KEY length: ${#TEST_SUPABASE_SERVICE_ROLE_KEY}"
+
           {
-            echo "TEST_SUPABASE_URL=$(grep -iE '_?API_URL=' /tmp/supabase-status.env | head -1 | cut -d= -f2-)"
-            echo "TEST_SUPABASE_ANON_KEY=$(grep -iE '_?ANON_KEY=' /tmp/supabase-status.env | head -1 | cut -d= -f2-)"
-            echo "TEST_SUPABASE_SERVICE_ROLE_KEY=$(grep -iE '_?SERVICE_ROLE_KEY=' /tmp/supabase-status.env | head -1 | cut -d= -f2-)"
+            echo "TEST_SUPABASE_URL=$TEST_SUPABASE_URL"
+            echo "TEST_SUPABASE_ANON_KEY=$TEST_SUPABASE_ANON_KEY"
+            echo "TEST_SUPABASE_SERVICE_ROLE_KEY=$TEST_SUPABASE_SERVICE_ROLE_KEY"
           } >> "$GITHUB_ENV"
 
       - name: Run tests (unit + M43 RPC integration)
