@@ -2825,3 +2825,39 @@ real signal arrives whenever this branch's CI actually runs, or from a machine w
 that isn't purely "waiting to actually execute for the first time." M43's DB-dependent half is now
 built rather than unstarted, but stays open until a real CI run (or a Docker-equipped machine)
 confirms it actually passes.
+
+### Eighth round, same day (2026-09-02) — CI's first real run found a genuine, previously-unknown migration bug
+
+PR #35's CI actually ran against a live Postgres instance for the first time (Docker preinstalled on
+GitHub's Ubuntu runners, exactly as planned). Two real bugs surfaced, neither related to M43 or L32
+directly — this is the first time in this document's history anyone has replayed every migration
+from an empty database in one continuous run, and both bugs only exist in that specific path:
+
+1. **A real backlog of pre-existing Prettier drift** across ~15 hand-maintained files, invisible
+   until now because this repo never had CI running `lint` before. Fixed via `npm run format` (every
+   diff hand-verified as whitespace/wrapping only). The 5 Lovable/Supabase-generated files under
+   `src/integrations/` were deliberately left unformatted and added to `.prettierignore` instead —
+   reformatting them would just get overwritten with their own style on Lovable's next sync,
+   permanently re-breaking this same check.
+2. **A genuine migration-replay bug**, found on the very next CI run after fixing (1):
+   `20260804000910_5a7605fb-...sql`'s demo seed data anchors its `time_entries` rows to
+   `date_trunc('week', now())` — "start of whatever calendar week the migration happens to run in."
+   Eight days later, `20260812040000_reject_far_future_entries.sql` adds a `CHECK (start_time <= now()
+   + interval '1 day')` constraint. Against the real, already-migrated production database this was
+   never a problem — those two migrations ran eight real days apart, so the seed data was already
+   safely in the past by the time the constraint arrived. But replayed back-to-back from empty (what
+   `supabase start` does), the seed's Monday-through-Friday spread can land several days ahead of
+   "now" depending purely on which day of the week the replay happens to execute — a real,
+   day-of-week-dependent flakiness bug that could never have been found without actually doing a
+   from-scratch replay, which nothing before this CI run had ever done. Fixed by anchoring the seed to
+   `date_trunc('day', now()) - interval '7 days'` instead — always 3-7 days in the past regardless of
+   which day it's replayed on. Edited the original migration file directly rather than adding a
+   corrective one: it's pure demo data with no schema impact, and editing it has zero effect on the
+   one production database that already applied it under the old definition — migrations aren't
+   re-run against an already-migrated project, so this only changes what a *fresh* replay (CI, a new
+   dev machine) produces, which is exactly the bug.
+
+**Still unverified:** whether the RPC integration tests themselves (the actual point of this work)
+pass against a real instance — this round's CI failure happened during migration replay, before the
+test suite ever got to run. First real signal on that specific question is still pending the next CI
+run.

@@ -331,6 +331,16 @@ INSERT INTO public.project_tags (project_id, tag_id) VALUES
  ('e0000000-0000-4000-8000-000000000005','d0000000-0000-4000-8000-000000000002'),
  ('e0000000-0000-4000-8000-000000000006','d0000000-0000-4000-8000-000000000002');
 
+-- Anchored 7 days back from whenever this migration actually runs (not
+-- "start of this calendar week") so day_index 0-4 always lands safely in
+-- the past no matter which day of the week a fresh replay happens to hit —
+-- a later migration (20260812040000) adds a "no more than 1 day in the
+-- future" CHECK constraint on start_time, and the original "start of this
+-- week" anchor could put a Thursday/Friday seed row several days ahead of
+-- "now" if replayed early in the week, violating that constraint on a
+-- from-scratch apply (exactly what a CI run doing `supabase start` does;
+-- never an issue against the one already-migrated production database,
+-- where this only ever ran once, back when it was written).
 INSERT INTO public.time_entries (user_id, project_id, task, description, tag_ids, start_time, end_time, entry_date, duration_minutes, is_billable)
 SELECT
   v.user_id::uuid,
@@ -338,9 +348,9 @@ SELECT
   v.task,
   v.description,
   ARRAY[v.tag_id::uuid],
-  (date_trunc('week', now()) + (v.day_index || ' days')::interval + (v.start_hour || ' minutes')::interval),
-  (date_trunc('week', now()) + (v.day_index || ' days')::interval + (v.start_hour || ' minutes')::interval + (v.minutes || ' minutes')::interval),
-  (date_trunc('week', now()) + (v.day_index || ' days')::interval)::date,
+  (date_trunc('day', now()) - interval '7 days' + (v.day_index || ' days')::interval + (v.start_hour || ' minutes')::interval),
+  (date_trunc('day', now()) - interval '7 days' + (v.day_index || ' days')::interval + (v.start_hour || ' minutes')::interval + (v.minutes || ' minutes')::interval),
+  (date_trunc('day', now()) - interval '7 days' + (v.day_index || ' days')::interval)::date,
   v.minutes,
   v.billable
 FROM (VALUES
