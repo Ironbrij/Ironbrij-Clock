@@ -42,6 +42,7 @@ jobs:
       # submit_timesheet()/review_timesheet()/set_member_role() instead of
       # skipping itself, which is what happens with no database reachable.
       - name: Start local Supabase
+        id: supabase_start
         run: supabase start
 
       # `-o env` variable names are matched by substring (case-insensitive)
@@ -64,5 +65,8 @@ jobs:
         run: npm run test
 
       - name: Stop local Supabase
-        if: always()
+        # Only if it actually started — `if: always()` alone would also run
+        # this after an earlier failure that skipped "Start local Supabase"
+        # entirely, and the Supabase CLI wouldn't even be installed yet.
+        if: always() && steps.supabase_start.outcome == 'success'
         run: supabase stop

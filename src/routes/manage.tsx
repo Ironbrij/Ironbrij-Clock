@@ -981,7 +981,13 @@ function ScheduleRow({
   isAdmin,
   updateMemberTimezone,
 }: {
-  member: { id: string; name: string; initials: string; timezone: string; avatarUrl: string | null };
+  member: {
+    id: string;
+    name: string;
+    initials: string;
+    timezone: string;
+    avatarUrl: string | null;
+  };
   employment: WorkspaceEmployment | undefined;
   updateMemberEmployment: (
     userId: string,

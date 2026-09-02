@@ -18,9 +18,7 @@ export function TimesheetGrid({ weekStart }: { weekStart: Date }) {
   // zero — is sometimes exactly the point (a checklist of what's expected).
   const [hideEmpty, setHideEmpty] = useState(false);
   const allRows = projects.filter((p) => (grid[p.id] ?? []).some((h) => h > 0) || !p.archived);
-  const rows = hideEmpty
-    ? allRows.filter((p) => (grid[p.id] ?? []).some((h) => h > 0))
-    : allRows;
+  const rows = hideEmpty ? allRows.filter((p) => (grid[p.id] ?? []).some((h) => h > 0)) : allRows;
   const dayTotals = weekdayNames.map((_, i) =>
     rows.reduce((sum, p) => sum + (grid[p.id]?.[i] ?? 0), 0),
   );
@@ -49,7 +47,9 @@ export function TimesheetGrid({ weekStart }: { weekStart: Date }) {
             <tr className="border-b border-border text-xs uppercase tracking-wide text-muted-foreground">
               <th className="px-5 py-3 text-left font-medium">Project</th>
               {weekdayNames.map((d) => (
-                <th key={d} className="px-3 py-3 text-center font-medium">{d}</th>
+                <th key={d} className="px-3 py-3 text-center font-medium">
+                  {d}
+                </th>
               ))}
               <th className="px-5 py-3 text-right font-medium">Total</th>
             </tr>
@@ -86,7 +86,9 @@ export function TimesheetGrid({ weekStart }: { weekStart: Date }) {
             <tr className="bg-muted/50 text-sm font-medium">
               <td className="px-5 py-3">Daily total</td>
               {dayTotals.map((t, i) => (
-                <td key={i} className="px-3 py-3 text-center tabular-nums">{t.toFixed(2)}</td>
+                <td key={i} className="px-3 py-3 text-center tabular-nums">
+                  {t.toFixed(2)}
+                </td>
               ))}
               <td className="px-5 py-3 text-right tabular-nums">{formatHours(weekTotal)}</td>
             </tr>

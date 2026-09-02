@@ -177,9 +177,7 @@ Deno.serve(async (req: Request) => {
       // SendGrid returns 202 Accepted with an empty body on success.
       if (res.ok) {
         sent += chunk.length;
-        console.log(
-          `notify-announcement-posted: sent chunk of ${chunk.length} (${res.status})`,
-        );
+        console.log(`notify-announcement-posted: sent chunk of ${chunk.length} (${res.status})`);
       } else {
         const body = await res.text().catch(() => "");
         console.error(

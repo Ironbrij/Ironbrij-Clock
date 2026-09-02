@@ -606,7 +606,9 @@ function Reports() {
           {loading
             ? "Loading…"
             : `Total ${formatHours(total)}` +
-              (totalAmount != null ? ` · ${formatCurrency(totalAmount, settings.currency)} billable` : "")}
+              (totalAmount != null
+                ? ` · ${formatCurrency(totalAmount, settings.currency)} billable`
+                : "")}
         </span>
       </div>
 
@@ -931,7 +933,10 @@ function Reports() {
                       <td className="px-5 py-3">
                         <span className="flex items-center gap-2">
                           <Avatar className="h-6 w-6 shrink-0">
-                            <AvatarImage src={r.employeeAvatarUrl ?? undefined} alt={r.employeeName} />
+                            <AvatarImage
+                              src={r.employeeAvatarUrl ?? undefined}
+                              alt={r.employeeName}
+                            />
                             <AvatarFallback className="bg-secondary text-[10px]">
                               {r.employeeInitials}
                             </AvatarFallback>
@@ -979,7 +984,8 @@ function Reports() {
             <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
               <p className="text-sm text-muted-foreground">
                 {filteredDetailed.length} {filteredDetailed.length === 1 ? "entry" : "entries"}
-                {totalDetailedPages > 1 && ` · page ${currentDetailedPage} of ${totalDetailedPages}`}
+                {totalDetailedPages > 1 &&
+                  ` · page ${currentDetailedPage} of ${totalDetailedPages}`}
               </p>
               {totalDetailedPages > 1 && (
                 <Pagination className="mx-0 w-auto">

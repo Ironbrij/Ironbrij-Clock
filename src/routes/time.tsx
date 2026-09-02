@@ -699,9 +699,10 @@ function CopyYesterdayButton() {
             <AlertDialogDescription asChild>
               <div className="space-y-2">
                 <p>
-                  Adds {yesterdayEntries.length} {yesterdayEntries.length === 1 ? "entry" : "entries"}{" "}
-                  to today with the same project, task, description and duration. Anything that
-                  overlaps something already logged today is skipped, not overwritten.
+                  Adds {yesterdayEntries.length}{" "}
+                  {yesterdayEntries.length === 1 ? "entry" : "entries"} to today with the same
+                  project, task, description and duration. Anything that overlaps something already
+                  logged today is skipped, not overwritten.
                 </p>
                 <ul className="max-h-40 space-y-1 overflow-y-auto rounded-md border border-border p-2 text-xs">
                   {yesterdayEntries.map((e) => (
@@ -777,10 +778,7 @@ function CalendarView() {
     () => new Date(today.getFullYear(), today.getMonth() + monthOffset, 1),
     [today, monthOffset],
   );
-  const weekStart = useMemo(
-    () => addDays(startOfWeek(today), weekOffset * 7),
-    [today, weekOffset],
-  );
+  const weekStart = useMemo(() => addDays(startOfWeek(today), weekOffset * 7), [today, weekOffset]);
 
   const monthDays = useMemo(() => {
     const lead = (viewMonth.getDay() + 6) % 7;

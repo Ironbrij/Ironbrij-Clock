@@ -64,7 +64,10 @@ export const inviteMembers = createServerFn({ method: "POST" })
         .eq("is_active", false)
         .neq("id", userId);
       for (const orphan of orphans ?? []) {
-        await supabaseAdmin.from("time_entries").update({ user_id: userId }).eq("user_id", orphan.id);
+        await supabaseAdmin
+          .from("time_entries")
+          .update({ user_id: userId })
+          .eq("user_id", orphan.id);
         await supabaseAdmin.from("timesheets").update({ user_id: userId }).eq("user_id", orphan.id);
         await supabaseAdmin
           .from("timesheets")
@@ -74,7 +77,10 @@ export const inviteMembers = createServerFn({ method: "POST" })
           .from("member_employment")
           .update({ user_id: userId })
           .eq("user_id", orphan.id);
-        await supabaseAdmin.from("activity_log").update({ actor_id: userId }).eq("actor_id", orphan.id);
+        await supabaseAdmin
+          .from("activity_log")
+          .update({ actor_id: userId })
+          .eq("actor_id", orphan.id);
         await supabaseAdmin
           .from("activity_log")
           .update({ target_user_id: userId })

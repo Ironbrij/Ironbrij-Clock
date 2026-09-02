@@ -721,11 +721,13 @@ function ProjectFormDialog({
               onChange={(e) => setBudgetHours(e.target.value)}
             />
             {budgetHoursInvalid && (
-              <p className="text-xs text-destructive">Enter a positive number, or leave it blank.</p>
+              <p className="text-xs text-destructive">
+                Enter a positive number, or leave it blank.
+              </p>
             )}
             <p className="text-xs text-muted-foreground">
-              For fixed-scope or capped-hours work — flags the project once logged hours reach
-              this. Leave blank for open-ended work like an ongoing retainer.
+              For fixed-scope or capped-hours work — flags the project once logged hours reach this.
+              Leave blank for open-ended work like an ongoing retainer.
             </p>
           </div>
           <div className="grid gap-4 sm:grid-cols-2">
@@ -759,8 +761,8 @@ function ProjectFormDialog({
                 onToggle={toggle(setTaskCategoryIds)}
               />
               <p className="text-xs text-muted-foreground">
-                Leave none selected to offer every task category, same as today. Pick specific
-                ones to scope this project's task picker to just those.
+                Leave none selected to offer every task category, same as today. Pick specific ones
+                to scope this project's task picker to just those.
               </p>
             </div>
           )}

@@ -6,3 +6,13 @@ pnpm-lock.yaml
 package-lock.json
 bun.lock
 routeTree.gen.ts
+
+# Lovable/Supabase integration codegen — regenerated with their own style
+# (single quotes, different wrapping) whenever synced, so reformatting these
+# to match this repo's prettier config would just get overwritten and drift
+# right back on the next sync.
+src/integrations/lovable/index.ts
+src/integrations/supabase/auth-attacher.ts
+src/integrations/supabase/auth-middleware.ts
+src/integrations/supabase/client.server.ts
+src/integrations/supabase/client.ts

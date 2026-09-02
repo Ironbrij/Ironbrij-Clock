@@ -397,35 +397,36 @@ export function useTimeEntriesData(
   // this doesn't need a SECURITY DEFINER RPC, since time_entries' own
   // per-row RLS already implements exactly this visibility rule for a
   // plain SELECT.
-  const detailedEntriesForRange = useCallback(async (from: string, to: string): Promise<
-    DetailedEntry[]
-  > => {
-    const { data, error } = await supabase
-      .from("time_entries")
-      .select(
-        "id, user_id, project_id, task, description, start_time, entry_date, duration_minutes, is_billable",
-      )
-      .gte("entry_date", from)
-      .lte("entry_date", to)
-      .order("entry_date", { ascending: false })
-      .order("start_time", { ascending: false })
-      // Same reasoning as H25's cap on the personal entries fetch — an
-      // explicit bound so a wide range across many people fails loudly
-      // (a real bug to raise) instead of silently truncating.
-      .limit(5000);
-    throwIf(error);
-    return (data ?? []).map((e) => ({
-      id: e.id,
-      userId: e.user_id,
-      projectId: e.project_id,
-      task: e.task ?? "",
-      description: e.description,
-      date: e.entry_date,
-      minutes: e.duration_minutes ?? 0,
-      billable: e.is_billable,
-      startTime: e.start_time,
-    }));
-  }, []);
+  const detailedEntriesForRange = useCallback(
+    async (from: string, to: string): Promise<DetailedEntry[]> => {
+      const { data, error } = await supabase
+        .from("time_entries")
+        .select(
+          "id, user_id, project_id, task, description, start_time, entry_date, duration_minutes, is_billable",
+        )
+        .gte("entry_date", from)
+        .lte("entry_date", to)
+        .order("entry_date", { ascending: false })
+        .order("start_time", { ascending: false })
+        // Same reasoning as H25's cap on the personal entries fetch — an
+        // explicit bound so a wide range across many people fails loudly
+        // (a real bug to raise) instead of silently truncating.
+        .limit(5000);
+      throwIf(error);
+      return (data ?? []).map((e) => ({
+        id: e.id,
+        userId: e.user_id,
+        projectId: e.project_id,
+        task: e.task ?? "",
+        description: e.description,
+        date: e.entry_date,
+        minutes: e.duration_minutes ?? 0,
+        billable: e.is_billable,
+        startTime: e.start_time,
+      }));
+    },
+    [],
+  );
 
   const entriesForTag = useCallback(async (tagId: string) => {
     const { data, error } = await supabase
