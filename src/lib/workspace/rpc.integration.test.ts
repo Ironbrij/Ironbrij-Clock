@@ -266,6 +266,48 @@ if (hasLocalSupabase) {
     });
 
     describe("set_member_role", () => {
+      // "blocks demoting the last remaining admin" below only means what it
+      // says if adminUser genuinely *is* the last one — but a fresh
+      // migration replay always seeds a permanent demo admin
+      // (maya@ironbrij.com, 20260804000910_...sql), so without this,
+      // set_member_role correctly sees a second active admin and doesn't
+      // block, which then cascades into the next test failing too (it
+      // assumes adminUser is still an admin). Deactivating every
+      // *other* active admin for the duration of this describe block
+      // (never our own fixtures) makes the premise true regardless of
+      // what demo/seed data exists, and restores it afterward — safe even
+      // against a persistent local `supabase start`, not just CI's
+      // throwaway instance.
+      let deactivatedOtherAdminIds: string[] = [];
+
+      beforeAll(async () => {
+        const { data: otherAdmins, error } = await admin
+          .from("profiles")
+          .select("id")
+          .eq("role", "admin")
+          .eq("is_active", true)
+          .not("id", "in", `(${createdUserIds.join(",")})`);
+        if (error) throw new Error(`fetching other admins failed: ${error.message}`);
+        deactivatedOtherAdminIds = (otherAdmins ?? []).map((p) => p.id);
+        if (deactivatedOtherAdminIds.length > 0) {
+          const { error: deactivateError } = await admin
+            .from("profiles")
+            .update({ is_active: false })
+            .in("id", deactivatedOtherAdminIds);
+          if (deactivateError)
+            throw new Error(`deactivating other admins failed: ${deactivateError.message}`);
+        }
+      }, RPC_TIMEOUT);
+
+      afterAll(async () => {
+        if (deactivatedOtherAdminIds.length > 0) {
+          await admin
+            .from("profiles")
+            .update({ is_active: true })
+            .in("id", deactivatedOtherAdminIds);
+        }
+      }, RPC_TIMEOUT);
+
       it(
         "blocks a non-admin from changing anyone's role",
         async () => {
