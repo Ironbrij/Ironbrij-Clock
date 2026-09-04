@@ -35,9 +35,13 @@ import {
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { billableHoursForCasualEntry } from "@/lib/casual-billing";
 import { formatHours, formatMinutes } from "@/lib/mock-data";
-import { addDays, fromDateKey, startOfWeek, toDateKey } from "@/lib/time-utils";
+import { addDays, formatWeekRange, fromDateKey, startOfWeek, toDateKey } from "@/lib/time-utils";
 import { useWorkspace, type DetailedEntry } from "@/lib/workspace-store";
-import { CASUAL_SERVICE_CATEGORY_LABELS, type CasualServiceCategory } from "@/lib/workspace/types";
+import {
+  CASUAL_SERVICE_CATEGORY_LABELS,
+  dotColors,
+  type CasualServiceCategory,
+} from "@/lib/workspace/types";
 
 export const Route = createFileRoute("/reports")({
   head: () => ({
@@ -68,6 +72,13 @@ const presetLabels: Record<RangePreset, string> = {
   this_quarter: "This quarter",
   this_year: "This year",
   custom: "Custom range",
+};
+
+const casualGroupByLabels: Record<"client" | "va" | "day" | "week", string> = {
+  client: "Client",
+  va: "VA",
+  day: "Day",
+  week: "Week",
 };
 
 // M38: only ever called for the fixed presets — "custom" is resolved
@@ -170,6 +181,16 @@ function Reports() {
   // derived from `detailedEntries` below, not fetched separately.
   const [casualLastService, setCasualLastService] = useState<Map<string, string | null>>(new Map());
   const [loadingCasual, setLoadingCasual] = useState(true);
+  const [casualGroupBy, setCasualGroupBy] = useState<"client" | "va" | "day" | "week">("client");
+  const [casualCategoryFilter, setCasualCategoryFilter] = useState<"all" | CasualServiceCategory>(
+    "all",
+  );
+  // Dashboard's own "vs last week" indicator — only meaningful for the
+  // this_week preset (see pctChange's own comment), not a generic
+  // period-over-period comparison invented for every preset.
+  const [lastWeekDetailedEntries, setLastWeekDetailedEntries] = useState<DetailedEntry[] | null>(
+    null,
+  );
 
   const {
     projects,
@@ -324,6 +345,31 @@ function Reports() {
     };
   }, [canManage, casualClientLastServiceForAll]);
 
+  // M46: "vs last week" for the casual-service KPI row — only fetched when
+  // that comparison is actually shown (this_week preset), not on every
+  // range change. Full prior calendar week (Mon-Sun), same as index.tsx's
+  // own "Last week" card pattern, not just "7 days before `from`."
+  useEffect(() => {
+    if (!canManage || preset !== "this_week") {
+      setLastWeekDetailedEntries(null);
+      return;
+    }
+    let cancelled = false;
+    const lastWeekFrom = toDateKey(addDays(fromDateKey(from), -7));
+    const lastWeekTo = toDateKey(addDays(fromDateKey(from), -1));
+    detailedEntriesForRange(lastWeekFrom, lastWeekTo)
+      .then((rows) => {
+        if (!cancelled) setLastWeekDetailedEntries(rows);
+      })
+      .catch(() => {
+        // Non-critical — the delta indicators just won't show if this fails.
+        if (!cancelled) setLastWeekDetailedEntries(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [canManage, preset, from, detailedEntriesForRange]);
+
   // Any filter/range change invalidates whatever page the table was
   // scrolled to — resetting avoids landing on a now out-of-range page.
   useEffect(() => {
@@ -463,24 +509,75 @@ function Reports() {
     .sort((a, b) => b.date.localeCompare(a.date) || b.startTime.localeCompare(a.startTime));
 
   // M46: casual-service rollup — same team/client filters as the other
-  // tabs, grouped by client x category. Rounding is applied per entry
-  // (via billableHoursForCasualEntry) before summing, since rounding a
-  // pre-summed total would give a different, wrong number — see
-  // casual-billing.ts's own comment.
-  const casualEntries = detailedRows
-    .filter((r) => r.serviceCategory !== null)
-    .filter((r) => teamFilter === "all" || r.teamId === teamFilter || !r.teamId)
-    .filter((r) => {
-      if (clientFilter === "all") return true;
-      if (clientFilter === "none") return r.clientId === null;
-      return r.clientId === clientFilter;
-    });
+  // tabs, plus a category filter of its own (see casualGroupBy below).
+  // Rounding is applied per entry (via billableHoursForCasualEntry) before
+  // summing, since rounding a pre-summed total would give a different,
+  // wrong number — see casual-billing.ts's own comment. Factored as a
+  // plain function (not derived from `detailedRows`, which is specific to
+  // the Detailed tab's own `detailedEntries` state) so the exact same
+  // join+filter logic applies to the "vs last week" comparison's
+  // separately-fetched entries too.
+  function joinAndFilterCasualEntries(entries: DetailedEntry[]) {
+    return entries
+      .map((e) => {
+        const project = projects.find((p) => p.id === e.projectId);
+        return { ...e, teamId: project?.teamId ?? "", clientId: project?.clientId ?? null };
+      })
+      .filter((r) => r.serviceCategory !== null)
+      .filter((r) => teamFilter === "all" || r.teamId === teamFilter || !r.teamId)
+      .filter((r) => {
+        if (clientFilter === "all") return true;
+        if (clientFilter === "none") return r.clientId === null;
+        return r.clientId === clientFilter;
+      })
+      .filter((r) => casualCategoryFilter === "all" || r.serviceCategory === casualCategoryFilter);
+  }
 
+  const casualEntries = joinAndFilterCasualEntries(detailedEntries ?? []);
+  const lastWeekCasualEntries = joinAndFilterCasualEntries(lastWeekDetailedEntries ?? []);
+
+  const casualBillableTotal = (entries: typeof casualEntries) =>
+    entries.reduce(
+      (s, e) =>
+        s + billableHoursForCasualEntry(e, e.serviceCategory, settings.casualBillingIncrementHours),
+      0,
+    );
+
+  // M46: KPI row — Active Clients/VAs always reflect the real distinct
+  // count regardless of which Group by dimension is selected below (a
+  // "VA" grouping still means "3 clients had casual work this period").
+  const casualActiveClients = new Set(casualEntries.map((e) => e.clientId ?? "none")).size;
+  const casualActiveVAs = new Set(casualEntries.map((e) => e.userId)).size;
+  const casualTotalBillableHours = casualBillableTotal(casualEntries);
+  const casualHasLastWeekData = preset === "this_week" && lastWeekDetailedEntries !== null;
+  const lastWeekCasualActiveClients = new Set(
+    lastWeekCasualEntries.map((e) => e.clientId ?? "none"),
+  ).size;
+  const lastWeekCasualActiveVAs = new Set(lastWeekCasualEntries.map((e) => e.userId)).size;
+  const lastWeekCasualTotalBillableHours = casualBillableTotal(lastWeekCasualEntries);
+
+  // M46: one bar chart — billable hours per category, the single most
+  // useful "shape of the casual-service business" visual (not all ~10
+  // pivot charts the original workbook had — see the plan's own scope
+  // note on this).
+  const casualCategoryChartData = (
+    Object.keys(CASUAL_SERVICE_CATEGORY_LABELS) as CasualServiceCategory[]
+  ).map((category, i) => ({
+    category,
+    label: CASUAL_SERVICE_CATEGORY_LABELS[category],
+    hours: casualBillableTotal(casualEntries.filter((e) => e.serviceCategory === category)),
+    color: dotColors[i % dotColors.length],
+  }));
+
+  // M46: "Group by" — Client (default), VA, Day, or Week. All four reuse
+  // this exact same aggregation, only the grouping key changes; category
+  // stays a secondary breakdown dimension within each group (matches the
+  // original Client behavior, extended the same way to VA/Day/Week).
   const casualRows = (() => {
     const groups = new Map<
       string,
       {
-        clientId: string | null;
+        groupKey: string;
         serviceCategory: CasualServiceCategory;
         entryCount: number;
         rawHours: number;
@@ -490,9 +587,17 @@ function Reports() {
     >();
     for (const e of casualEntries) {
       const category = e.serviceCategory!;
-      const key = `${e.clientId ?? "none"}::${category}`;
+      const groupKey =
+        casualGroupBy === "va"
+          ? e.userId
+          : casualGroupBy === "day"
+            ? e.date
+            : casualGroupBy === "week"
+              ? toDateKey(startOfWeek(fromDateKey(e.date)))
+              : (e.clientId ?? "none");
+      const key = `${groupKey}::${category}`;
       const existing = groups.get(key) ?? {
-        clientId: e.clientId,
+        groupKey,
         serviceCategory: category,
         entryCount: 0,
         rawHours: 0,
@@ -510,17 +615,35 @@ function Reports() {
       groups.set(key, existing);
     }
     return Array.from(groups.values())
-      .map((g) => ({
-        ...g,
-        clientName:
-          g.clientId == null
-            ? "No client"
-            : (clients.find((c) => c.id === g.clientId)?.name ?? "Unknown client"),
-        lastServiceDate: g.clientId ? (casualLastService.get(g.clientId) ?? null) : null,
-      }))
+      .map((g) => {
+        const groupLabel =
+          casualGroupBy === "va"
+            ? (members.find((m) => m.id === g.groupKey)?.name ?? "Former member")
+            : casualGroupBy === "day"
+              ? fromDateKey(g.groupKey).toLocaleDateString(undefined, {
+                  month: "short",
+                  day: "numeric",
+                  year: "numeric",
+                })
+              : casualGroupBy === "week"
+                ? formatWeekRange(fromDateKey(g.groupKey))
+                : g.groupKey === "none"
+                  ? "No client"
+                  : (clients.find((c) => c.id === g.groupKey)?.name ?? "Unknown client");
+        return {
+          ...g,
+          groupLabel,
+          // Only a meaningful signal for Client grouping — a VA/day/week
+          // row isn't "a client," so there's no health status to show.
+          lastServiceDate:
+            casualGroupBy === "client" && g.groupKey !== "none"
+              ? (casualLastService.get(g.groupKey) ?? null)
+              : null,
+        };
+      })
       .sort(
         (a, b) =>
-          a.clientName.localeCompare(b.clientName) ||
+          a.groupLabel.localeCompare(b.groupLabel) ||
           a.serviceCategory.localeCompare(b.serviceCategory),
       );
   })();
@@ -547,7 +670,7 @@ function Reports() {
       : view === "employee"
         ? employeeRows.reduce((s, r) => s + r.hours, 0)
         : view === "casual"
-          ? casualRows.reduce((s, r) => s + r.billableHours, 0)
+          ? casualTotalBillableHours
           : filteredDetailed.reduce((s, r) => s + r.hours, 0);
   // H17: only meaningful on the employee view — a project or a raw entry
   // list has no single per-row rate to sum against.
@@ -624,28 +747,31 @@ function Reports() {
         ]),
       ]);
     } else {
-      downloadCsv(`ironbrij-casual-service_${clientLabel}_${from}_to_${to}.csv`, [
+      downloadCsv(
+        `ironbrij-casual-service-by-${casualGroupBy}_${clientLabel}_${from}_to_${to}.csv`,
         [
-          "Client",
-          "Category",
-          "Entries",
-          "Raw Hours",
-          "Billable Hours (rounded)",
-          "Paid",
-          "Unpaid",
-          "Date range",
+          [
+            casualGroupByLabels[casualGroupBy],
+            "Category",
+            "Entries",
+            "Raw Hours",
+            "Billable Hours (rounded)",
+            "Paid",
+            "Unpaid",
+            "Date range",
+          ],
+          ...casualRows.map((r) => [
+            r.groupLabel,
+            CASUAL_SERVICE_CATEGORY_LABELS[r.serviceCategory],
+            r.entryCount,
+            r.rawHours.toFixed(2),
+            r.billableHours.toFixed(2),
+            r.paidCount,
+            r.entryCount - r.paidCount,
+            `${from} to ${to}`,
+          ]),
         ],
-        ...casualRows.map((r) => [
-          r.clientName,
-          CASUAL_SERVICE_CATEGORY_LABELS[r.serviceCategory],
-          r.entryCount,
-          r.rawHours.toFixed(2),
-          r.billableHours.toFixed(2),
-          r.paidCount,
-          r.entryCount - r.paidCount,
-          `${from} to ${to}`,
-        ]),
-      ]);
+      );
     }
   };
 
@@ -773,6 +899,44 @@ function Reports() {
             searchPlaceholder="Search employees…"
             triggerClassName="w-48"
           />
+        </div>
+      )}
+
+      {/* M46: Group by + category filter only apply to the Casual Service
+          view, same reasoning the Detailed-only row above already
+          establishes for keeping tab-specific filters off the shared row. */}
+      {view === "casual" && (
+        <div className="mb-6 flex flex-wrap items-center gap-3">
+          <Select
+            value={casualGroupBy}
+            onValueChange={(v) => setCasualGroupBy(v as "client" | "va" | "day" | "week")}
+          >
+            <SelectTrigger className="w-40">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="client">Group by client</SelectItem>
+              <SelectItem value="va">Group by VA</SelectItem>
+              <SelectItem value="day">Group by day</SelectItem>
+              <SelectItem value="week">Group by week</SelectItem>
+            </SelectContent>
+          </Select>
+          <Select
+            value={casualCategoryFilter}
+            onValueChange={(v) => setCasualCategoryFilter(v as "all" | CasualServiceCategory)}
+          >
+            <SelectTrigger className="w-48">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All categories</SelectItem>
+              {(Object.keys(CASUAL_SERVICE_CATEGORY_LABELS) as CasualServiceCategory[]).map((c) => (
+                <SelectItem key={c} value={c}>
+                  {CASUAL_SERVICE_CATEGORY_LABELS[c]}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
       )}
 
@@ -1152,72 +1316,208 @@ function Reports() {
           )}
         </>
       ) : (
-        <Card className="shadow-card">
-          <CardHeader>
-            <CardTitle className="text-base">Casual Service · {rangeLabel}</CardTitle>
-            <p className="text-xs text-muted-foreground">
-              Ad-hoc work billed outside the standard subscription retainer. "Billable Hours" is
-              rounded up to the workspace's casual-billing increment for every category except
-              Ironbrij (internal, never billed) — raw tracked hours are shown alongside for
-              reference and are never overwritten.
-            </p>
-          </CardHeader>
-          <CardContent className="overflow-x-auto p-0">
-            <table className="w-full min-w-[760px] text-sm">
-              <thead>
-                <tr className="border-b border-border text-xs uppercase tracking-wide text-muted-foreground">
-                  <th className="px-5 py-3 text-left font-medium">Client</th>
-                  <th className="px-5 py-3 text-left font-medium">Category</th>
-                  <th className="px-5 py-3 text-right font-medium">Entries</th>
-                  <th className="px-5 py-3 text-right font-medium">Raw Hours</th>
-                  <th className="px-5 py-3 text-right font-medium">Billable Hours</th>
-                  <th className="px-5 py-3 text-right font-medium">Paid</th>
-                  <th className="px-5 py-3 text-left font-medium">Last Service</th>
-                </tr>
-              </thead>
-              <tbody>
-                {casualRows.map((r) => (
-                  <tr
-                    key={`${r.clientId ?? "none"}::${r.serviceCategory}`}
-                    className="border-b border-border last:border-0 hover:bg-muted/40"
-                  >
-                    <td className="px-5 py-3 font-medium">{r.clientName}</td>
-                    <td className="px-5 py-3 text-muted-foreground">
-                      {CASUAL_SERVICE_CATEGORY_LABELS[r.serviceCategory]}
-                    </td>
-                    <td className="px-5 py-3 text-right tabular-nums">{r.entryCount}</td>
-                    <td className="px-5 py-3 text-right tabular-nums text-muted-foreground">
-                      {formatHours(r.rawHours)}
-                    </td>
-                    <td className="px-5 py-3 text-right tabular-nums font-medium">
-                      {formatHours(r.billableHours)}
-                    </td>
-                    <td className="px-5 py-3 text-right tabular-nums text-muted-foreground">
-                      {r.paidCount}/{r.entryCount}
-                    </td>
-                    <td className="px-5 py-3 text-muted-foreground">
-                      {r.lastServiceDate
-                        ? fromDateKey(r.lastServiceDate).toLocaleDateString(undefined, {
-                            month: "short",
-                            day: "numeric",
-                            year: "numeric",
-                          })
-                        : "—"}
-                    </td>
+        <>
+          {/* M46: KPI row — the workbook's Dashboard KPI cards. Delta vs
+              last week only renders for the this_week preset (see
+              casualHasLastWeekData's own comment) — every other range has
+              no well-defined "previous period" to compare against here. */}
+          <div className="mb-6 grid gap-4 sm:grid-cols-3">
+            <CasualKpiCard
+              label="Active clients"
+              value={String(casualActiveClients)}
+              delta={
+                casualHasLastWeekData
+                  ? pctChange(casualActiveClients, lastWeekCasualActiveClients)
+                  : null
+              }
+            />
+            <CasualKpiCard
+              label="Active VAs"
+              value={String(casualActiveVAs)}
+              delta={
+                casualHasLastWeekData ? pctChange(casualActiveVAs, lastWeekCasualActiveVAs) : null
+              }
+            />
+            <CasualKpiCard
+              label="Billable hours"
+              value={formatHours(casualTotalBillableHours)}
+              delta={
+                casualHasLastWeekData
+                  ? pctChange(casualTotalBillableHours, lastWeekCasualTotalBillableHours)
+                  : null
+              }
+            />
+          </div>
+
+          <Card className="mb-6 shadow-card">
+            <CardHeader>
+              <CardTitle className="text-base">Billable hours by category · {rangeLabel}</CardTitle>
+            </CardHeader>
+            <CardContent className="h-64 pl-0">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart
+                  data={casualCategoryChartData}
+                  margin={{ top: 8, right: 16, bottom: 8, left: 8 }}
+                >
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)" />
+                  <XAxis
+                    dataKey="label"
+                    tickFormatter={(v: string) => v.split(" ")[0]}
+                    tickLine={false}
+                    axisLine={false}
+                    fontSize={12}
+                    stroke="var(--muted-foreground)"
+                  />
+                  <YAxis
+                    tickLine={false}
+                    axisLine={false}
+                    fontSize={12}
+                    stroke="var(--muted-foreground)"
+                  />
+                  <Tooltip
+                    cursor={{ fill: "var(--muted)" }}
+                    contentStyle={{
+                      background: "var(--popover)",
+                      border: "1px solid var(--border)",
+                      borderRadius: 12,
+                      color: "var(--popover-foreground)",
+                      fontSize: 12,
+                    }}
+                    formatter={(value) => [`${(value as number).toFixed(1)} h`, "Billable"]}
+                  />
+                  <Bar dataKey="hours" radius={[6, 6, 0, 0]}>
+                    {casualCategoryChartData.map((d) => (
+                      <Cell key={d.category} fill={d.color} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </CardContent>
+          </Card>
+
+          <Card className="shadow-card">
+            <CardHeader>
+              <CardTitle className="text-base">Casual Service · {rangeLabel}</CardTitle>
+              <p className="text-xs text-muted-foreground">
+                Ad-hoc work billed outside the standard subscription retainer. "Billable Hours" is
+                rounded up to the workspace's casual-billing increment for every category except
+                Ironbrij (internal, never billed) — raw tracked hours are shown alongside for
+                reference and are never overwritten.
+              </p>
+            </CardHeader>
+            <CardContent className="overflow-x-auto p-0">
+              <table className="w-full min-w-[760px] text-sm">
+                <thead>
+                  <tr className="border-b border-border text-xs uppercase tracking-wide text-muted-foreground">
+                    <th className="px-5 py-3 text-left font-medium">
+                      {casualGroupByLabels[casualGroupBy]}
+                    </th>
+                    <th className="px-5 py-3 text-left font-medium">Category</th>
+                    <th className="px-5 py-3 text-right font-medium">Entries</th>
+                    <th className="px-5 py-3 text-right font-medium">Raw Hours</th>
+                    <th className="px-5 py-3 text-right font-medium">Billable Hours</th>
+                    <th className="px-5 py-3 text-right font-medium">Paid</th>
+                    {casualGroupBy === "client" && (
+                      <th className="px-5 py-3 text-left font-medium">Last Service</th>
+                    )}
                   </tr>
-                ))}
-                {casualRows.length === 0 && (
-                  <tr>
-                    <td colSpan={7} className="px-5 py-8 text-center text-sm text-muted-foreground">
-                      No casual-service entries in this filter.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </CardContent>
-        </Card>
+                </thead>
+                <tbody>
+                  {casualRows.map((r) => (
+                    <tr
+                      key={`${r.groupKey}::${r.serviceCategory}`}
+                      className="border-b border-border last:border-0 hover:bg-muted/40"
+                    >
+                      <td className="px-5 py-3 font-medium">{r.groupLabel}</td>
+                      <td className="px-5 py-3 text-muted-foreground">
+                        {CASUAL_SERVICE_CATEGORY_LABELS[r.serviceCategory]}
+                      </td>
+                      <td className="px-5 py-3 text-right tabular-nums">{r.entryCount}</td>
+                      <td className="px-5 py-3 text-right tabular-nums text-muted-foreground">
+                        {formatHours(r.rawHours)}
+                      </td>
+                      <td className="px-5 py-3 text-right tabular-nums font-medium">
+                        {formatHours(r.billableHours)}
+                      </td>
+                      <td className="px-5 py-3 text-right tabular-nums text-muted-foreground">
+                        {r.paidCount}/{r.entryCount}
+                      </td>
+                      {casualGroupBy === "client" && (
+                        <td className="px-5 py-3 text-muted-foreground">
+                          {r.lastServiceDate
+                            ? fromDateKey(r.lastServiceDate).toLocaleDateString(undefined, {
+                                month: "short",
+                                day: "numeric",
+                                year: "numeric",
+                              })
+                            : "—"}
+                        </td>
+                      )}
+                    </tr>
+                  ))}
+                  {casualRows.length === 0 && (
+                    <tr>
+                      <td
+                        colSpan={casualGroupBy === "client" ? 7 : 6}
+                        className="px-5 py-8 text-center text-sm text-muted-foreground"
+                      >
+                        No casual-service entries in this filter.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </CardContent>
+          </Card>
+        </>
       )}
     </AppShell>
+  );
+}
+
+/** M46: a percentage-change indicator, scoped to the this_week preset only — see reports.tsx's own comment on why this doesn't generalize to every date range. */
+function pctChange(
+  current: number,
+  previous: number,
+): { pct: number; direction: "up" | "down" | "flat" } {
+  if (previous === 0)
+    return { pct: current === 0 ? 0 : 100, direction: current > 0 ? "up" : "flat" };
+  const pct = ((current - previous) / previous) * 100;
+  return { pct: Math.abs(pct), direction: pct > 0.05 ? "up" : pct < -0.05 ? "down" : "flat" };
+}
+
+function CasualKpiCard({
+  label,
+  value,
+  delta,
+}: {
+  label: string;
+  value: string;
+  delta: { pct: number; direction: "up" | "down" | "flat" } | null;
+}) {
+  return (
+    <Card className="shadow-card">
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm font-medium text-muted-foreground">{label}</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <p className="text-3xl font-semibold tabular-nums">{value}</p>
+        {delta && (
+          <p
+            className={
+              "mt-1 text-sm " +
+              (delta.direction === "up"
+                ? "text-emerald-600 dark:text-emerald-400"
+                : delta.direction === "down"
+                  ? "text-destructive"
+                  : "text-muted-foreground")
+            }
+          >
+            {delta.direction === "up" ? "▲" : delta.direction === "down" ? "▼" : "—"}{" "}
+            {delta.pct.toFixed(1)}% vs last week
+          </p>
+        )}
+      </CardContent>
+    </Card>
   );
 }

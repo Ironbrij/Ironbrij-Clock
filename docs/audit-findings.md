@@ -2866,9 +2866,9 @@ run.
 
 ## Casual Service Monitoring
 
-**M46. ⚠️ Improved 2026-09-04 — built and tested where this environment can reach; the actual
-historical cutover has not run.** Ironbrij's accounts team maintains "Casual Service Monitoring.xlsx"
-entirely by hand: a 22,276-row Excel log of ad-hoc/casual billable work VAs do for clients outside
+**M46. ✅ Fixed 2026-09-04 — the actual historical cutover has run against production.** Ironbrij's
+accounts team maintains "Casual Service Monitoring.xlsx" entirely by hand: a 22,276-row Excel log of
+ad-hoc/casual billable work VAs do for clients outside
 the standard subscription retainer, feeding a KPI dashboard and five pivot-table "Summary Report"
 sheets. Reverse-engineered from the workbook itself (no prior spec existed): each row carries a
 **Service Category** (`Ironbrij` — internal/no-charge, `Paid Casual Service`, `VIP Client`,
@@ -2922,27 +2922,58 @@ with casual-service recency).
   shown only for a client that has appeared in the casual log at least once (absent from the map
   otherwise, same "absent means not tracked" convention `useClientBudgets` uses for a client with no
   `subscriptionHours` cap — a retainer-only client with zero casual history isn't a churn signal).
-- `scripts/import-casual-service-history.mjs` — the one-time historical import, built following
-  H18's exact template (dry-run default, `--commit` required, service-role key, `--mapping` file for
-  unresolved names, nothing ever guessed or auto-created). Its pure helper functions (Excel-serial and
-  locale date parsing, IANA-timezone-aware wall-clock-to-UTC conversion, the CSV parser) were verified
-  by hand against real values pulled from the actual workbook during reverse-engineering (e.g. serial
-  `45166` → `2023-08-28`, matching that row's own "Aug 28 – Sep 03, 2023" week label) — this
-  environment has no way to run the script itself against a live database.
+- `scripts/import-casual-service-history.mjs` (now deleted, per its own header comment — see
+  "Cutover run" below) — the one-time historical import, built following H18's exact template
+  (dry-run default, `--commit` required, service-role key, `--mapping` file for unresolved names,
+  nothing ever guessed or auto-created). Its pure helper functions (Excel-serial and locale date
+  parsing, IANA-timezone-aware wall-clock-to-UTC conversion, the CSV parser) were unit-verified by
+  hand against real values pulled from the actual workbook during reverse-engineering (e.g. serial
+  `45166` → `2023-08-28`, matching that row's own "Aug 28 – Sep 03, 2023" week label) before ever
+  touching a live database.
+
+**Cutover run 2026-09-04.** Ran against production with the real service-role key and the full
+21,728-row export of the "Subscription" sheet. One real bug surfaced immediately on the first dry
+run — the script queried `projects.archived`, but the real column is `is_archived` — fixed before
+any write. **18,448 of 21,728 rows imported** (2023-09-20 through 2026-09-03, 18,213.6 total hours),
+verified directly against the live database afterward (`SELECT count(*) FROM time_entries WHERE
+service_category IS NOT NULL` → exactly 18,448, matching the script's own reported count with zero
+drift), not just trusting the script's own summary — same discipline H18's cutover used.
+
+Along the way this surfaced the same category of real data-quality decisions H18's cutover did:
+
+- **"Louis Swart" (8,840 rows) turned out to be internal/Ironbrij work misfiled under a person's
+  name**, not a real client — confirmed with the product owner and resolved by adding a
+  `"__internal__"` mapping sentinel to the script (inserts with `project_id: null`, IronTrack's
+  existing convention for unattached work), rather than forcing a match against a `clients` row that
+  shouldn't exist. Distinct from the Service Category `Ironbrij` enum value on the same rows, which
+  is unrelated and already handled on its own.
+- **A second real script gap**: ~34 clients matched by name but had zero *active* projects (their
+  only project had been archived at some point) — rather than asking for 34 individual
+  `clientProjects` mapping entries, the script was changed to fall back to a client's one-and-only
+  project regardless of archived status (still asking for a mapping when a client has 2+ projects,
+  or genuinely zero). Recovered 989 rows this way.
+- **5 VA-name matches confirmed with the product owner**: `Vellih`→Vellih Paniterce, `Rocky`→Rocky
+  Cauilan, `Andre`→Andre Pasumbal, `MV`→MV Bartolay, `Mark`→Mark Bartolay (all exact first-token
+  suggestions the script's own dry run proposed), plus `Carlo`→Janncarlo Ironbrij and
+  `Jose`→josepaulo ironbrij (not proposed by the dry run — informal nicknames the product owner
+  recognized directly). The `Jose` mapping alone recovered 4,874 rows, the single largest chunk in
+  the whole import.
+- **~3,280 rows deliberately left out**, confirmed with the product owner rather than guessed:
+  `Vida` (569 rows), `Angel` (460), and `Marichu` (226) are former staff no longer with Ironbrij;
+  `Alvina` (326) is an external VA not yet invited into IronTrack — inviting her mid-cutover (the way
+  H18 invited "Mitch") was considered and explicitly declined for now, since that's a real action
+  with a real consequence (a live invite email) that shouldn't happen as a side effect of a data
+  import. The remaining ~1,700 rows are a long tail of ~27 more unmatched VA names and ~70 more
+  unmatched-or-project-less clients, each under ~80 rows, not worth chasing individually — same
+  "long tail... weren't worth creating permanent projects for" call H18's own cutover made.
+- 2 rows had garbage hours values (`"0.0"`, `"0..22"`) in the source sheet itself — skipped, not
+  worth investigating.
+
+`scripts/import-casual-service-history.mjs` has been deleted per its own header comment, now that
+the cutover is done and verified — same as `import-clockify-history.mjs` was after H18.
 
 **What's still open:**
 
-- **The actual cutover import hasn't run.** Same shape as H18 before its own cutover: the tool exists
-  and its logic is verified in isolation, but running it with `--commit` against the real 22,276-row
-  export — plus the `--mapping` iteration H18's own history shows this kind of name-matching always
-  needs — hasn't happened. VA names in the source are informal first names (`Vellih`, `Rocky`,
-  `Andre`), so a `--mapping` file is all but certain to be needed, not just a fallback.
-- **Nothing in this pass has been verified against a real Postgres instance** — the `SECURITY
-  DEFINER` RPC, the RLS-adjacent admin-only write path, and the trigger-driven `duration_minutes`
-  interaction the import script relies on are reasoned through and internally consistent, but
-  unproven the way this document's own M43 initiative is still tracking for the rest of this
-  codebase's RPCs. First real signal arrives whenever this branch's CI (or a linked Supabase project)
-  actually exercises them.
 - **The historical-hours compromise.** The workbook only ever recorded the already-*rounded* hours
   per casual line — there's no way to recover true raw tracked time for old rows. Confirmed acceptable
   with the product owner: imported rows will show `duration_minutes` equal to that historical rounded
