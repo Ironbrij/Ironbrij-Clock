@@ -516,10 +516,12 @@ export type Database = {
           id: string;
           is_billable: boolean;
           project_id: string | null;
+          service_category: Database["public"]["Enums"]["casual_service_category"] | null;
           start_time: string;
           tag_ids: string[];
           task: string | null;
           user_id: string;
+          va_paid_at: string | null;
         };
         Insert: {
           created_at?: string;
@@ -530,10 +532,12 @@ export type Database = {
           id?: string;
           is_billable?: boolean;
           project_id?: string | null;
+          service_category?: Database["public"]["Enums"]["casual_service_category"] | null;
           start_time?: string;
           tag_ids?: string[];
           task?: string | null;
           user_id: string;
+          va_paid_at?: string | null;
         };
         Update: {
           created_at?: string;
@@ -544,10 +548,12 @@ export type Database = {
           id?: string;
           is_billable?: boolean;
           project_id?: string | null;
+          service_category?: Database["public"]["Enums"]["casual_service_category"] | null;
           start_time?: string;
           tag_ids?: string[];
           task?: string | null;
           user_id?: string;
+          va_paid_at?: string | null;
         };
         Relationships: [
           {
@@ -623,6 +629,7 @@ export type Database = {
       workspace_settings: {
         Row: {
           allow_manual_entry: boolean;
+          casual_billing_increment_hours: number;
           company_name: string;
           currency: string;
           id: boolean;
@@ -634,6 +641,7 @@ export type Database = {
         };
         Insert: {
           allow_manual_entry?: boolean;
+          casual_billing_increment_hours?: number;
           company_name?: string;
           currency?: string;
           id?: boolean;
@@ -645,6 +653,7 @@ export type Database = {
         };
         Update: {
           allow_manual_entry?: boolean;
+          casual_billing_increment_hours?: number;
           company_name?: string;
           currency?: string;
           id?: boolean;
@@ -673,6 +682,13 @@ export type Database = {
       };
       approve_member: { Args: { _user_id: string }; Returns: undefined };
       can_manage: { Args: { _user_id: string }; Returns: boolean };
+      casual_client_last_service: {
+        Args: never;
+        Returns: {
+          client_id: string;
+          last_service_date: string;
+        }[];
+      };
       create_announcement: {
         Args: {
           _audience: string;
@@ -820,6 +836,7 @@ export type Database = {
     };
     Enums: {
       app_role: "admin" | "manager" | "member";
+      casual_service_category: "ironbrij" | "paid_casual" | "vip_client" | "promotional";
       timesheet_status: "draft" | "submitted" | "approved" | "rejected";
     };
     CompositeTypes: {

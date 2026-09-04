@@ -64,6 +64,7 @@ import {
   dotColors,
   NO_CLIENT,
   useClientBudgets,
+  useClientHealth,
   useProjectBudgets,
   useWorkspace,
   useWorkspaceClients,
@@ -124,6 +125,7 @@ function ProjectsPage() {
     updateTag,
     deleteTag,
     taskCategories,
+    casualClientLastServiceForAll,
   } = useWorkspace();
   // Archived projects are only relevant to the people who manage them —
   // everyone else just sees the active roster, not a dimmed-out history.
@@ -134,6 +136,28 @@ function ProjectsPage() {
   const clientGroups = useWorkspaceClients();
   const clientBudgets = useClientBudgets();
   const projectBudgets = useProjectBudgets();
+  // M46: client-health (casual-service recency) badge — fetched once on
+  // mount, same "not part of eagerly-loaded workspace state" reasoning as
+  // detailedEntriesForRange elsewhere; this page is the one place a
+  // per-client health signal is surfaced (see useClientHealth's own
+  // comment for why it's computed, not stored).
+  const [lastServiceByClient, setLastServiceByClient] = useState<Map<string, string | null>>(
+    new Map(),
+  );
+  useEffect(() => {
+    let cancelled = false;
+    casualClientLastServiceForAll()
+      .then((map) => {
+        if (!cancelled) setLastServiceByClient(map);
+      })
+      .catch(() => {
+        // Non-critical — the badge just won't show if this fails.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [casualClientLastServiceForAll]);
+  const clientHealth = useClientHealth(lastServiceByClient);
   const tags = useWorkspaceTags();
   const clientNames = useMemo(() => {
     const names = realClients.map((c) => c.name).filter((n) => n !== NO_CLIENT);
@@ -200,6 +224,7 @@ function ProjectsPage() {
       {tab === "clients" && (
         <ClientsTab
           clientBudgets={clientBudgets}
+          clientHealth={clientHealth}
           clients={realClients.map((rc) => {
             const group = clientGroups.find((g) => g.name === rc.name);
             return {
@@ -359,6 +384,18 @@ function ProjectsPage() {
                             title={`${formatHours(projectBudget.renderedHours)} logged against a ${formatHours(projectBudget.budgetHours)} budget`}
                           >
                             <AlertTriangle className="h-3 w-3" /> Near budget
+                          </Badge>
+                        )}
+                        {/* M46: casual-service recency, not the client-relationship
+                            is_active flag above — a client can be actively retained
+                            while going quiet on casual/ad-hoc work specifically. */}
+                        {p.clientId && clientHealth.get(p.clientId)?.inactive && (
+                          <Badge
+                            variant="outline"
+                            className="gap-1 text-[10px] text-amber-600 dark:text-amber-400"
+                            title={`No casual-service work logged for ${p.client} since ${clientHealth.get(p.clientId)!.lastServiceDate}`}
+                          >
+                            <AlertTriangle className="h-3 w-3" /> Casual service inactive
                           </Badge>
                         )}
                       </div>
@@ -819,6 +856,7 @@ const CLIENTS_PAGE_SIZE = 10;
 function ClientsTab({
   clients,
   clientBudgets,
+  clientHealth,
   createClient,
   updateClient,
   setClientActive,
@@ -838,6 +876,7 @@ function ClientsTab({
     hours: number;
   }[];
   clientBudgets: ReturnType<typeof useClientBudgets>;
+  clientHealth: ReturnType<typeof useClientHealth>;
   createClient: (name: string) => Promise<void>;
   updateClient: (id: string, name: string) => Promise<void>;
   setClientActive: (id: string, active: boolean) => Promise<void>;
@@ -1039,6 +1078,15 @@ function ClientsTab({
                         }
                         return null;
                       })()}
+                      {clientHealth.get(c.id)?.inactive && (
+                        <Badge
+                          variant="outline"
+                          className="shrink-0 gap-1 text-[10px] text-amber-600 dark:text-amber-400"
+                          title={`No casual-service work logged since ${clientHealth.get(c.id)!.lastServiceDate}`}
+                        >
+                          <AlertTriangle className="h-3 w-3" /> Casual service inactive
+                        </Badge>
+                      )}
                     </div>
                     {c.projects.length > 0 && (
                       <div className="mt-1.5 flex flex-wrap gap-1.5">

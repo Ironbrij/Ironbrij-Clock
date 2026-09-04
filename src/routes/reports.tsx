@@ -33,9 +33,11 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { billableHoursForCasualEntry } from "@/lib/casual-billing";
 import { formatHours, formatMinutes } from "@/lib/mock-data";
 import { addDays, fromDateKey, startOfWeek, toDateKey } from "@/lib/time-utils";
 import { useWorkspace, type DetailedEntry } from "@/lib/workspace-store";
+import { CASUAL_SERVICE_CATEGORY_LABELS, type CasualServiceCategory } from "@/lib/workspace/types";
 
 export const Route = createFileRoute("/reports")({
   head: () => ({
@@ -121,7 +123,7 @@ function downloadCsv(filename: string, rows: (string | number)[][]) {
 }
 
 function Reports() {
-  const [view, setView] = useState<"project" | "employee" | "detailed">("project");
+  const [view, setView] = useState<"project" | "employee" | "detailed" | "casual">("project");
   const [preset, setPreset] = useState<RangePreset>("this_month");
   const todayKey = toDateKey(new Date());
   const [customFrom, setCustomFrom] = useState(todayKey);
@@ -162,6 +164,13 @@ function Reports() {
   const [detailedSearch, setDetailedSearch] = useState("");
   const [detailedPage, setDetailedPage] = useState(1);
 
+  // M46: casual-service rollup — its own tab, since it's a different
+  // dimension (client x category) over the same time_entries, not just
+  // another filter on the existing three tabs. The rows themselves are
+  // derived from `detailedEntries` below, not fetched separately.
+  const [casualLastService, setCasualLastService] = useState<Map<string, string | null>>(new Map());
+  const [loadingCasual, setLoadingCasual] = useState(true);
+
   const {
     projects,
     teams,
@@ -176,6 +185,7 @@ function Reports() {
     employeeBillableHoursForRange,
     employeeClientHoursForRange,
     detailedEntriesForRange,
+    casualClientLastServiceForAll,
   } = useWorkspace();
 
   const { from, to } = useMemo(() => {
@@ -288,6 +298,31 @@ function Reports() {
       cancelled = true;
     };
   }, [from, to, canManage, detailedEntriesForRange]);
+
+  // M46: client-health data (all-time, company-wide) — the casual-service
+  // rollup itself is derived below from `detailedEntries` (already fetched
+  // for the Detailed tab above), not a separate per-range fetch, so the
+  // billing-increment rounding rule can be applied per task line before
+  // summing rather than after (see casual-billing.ts).
+  useEffect(() => {
+    if (!canManage) {
+      setLoadingCasual(false);
+      return;
+    }
+    let cancelled = false;
+    setLoadingCasual(true);
+    casualClientLastServiceForAll()
+      .then((lastService) => {
+        if (!cancelled) setCasualLastService(lastService);
+      })
+      .catch((error: Error) => toast.error("Couldn't load report", { description: error.message }))
+      .finally(() => {
+        if (!cancelled) setLoadingCasual(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [canManage, casualClientLastServiceForAll]);
 
   // Any filter/range change invalidates whatever page the table was
   // scrolled to — resetting avoids landing on a now out-of-range page.
@@ -427,6 +462,69 @@ function Reports() {
     })
     .sort((a, b) => b.date.localeCompare(a.date) || b.startTime.localeCompare(a.startTime));
 
+  // M46: casual-service rollup — same team/client filters as the other
+  // tabs, grouped by client x category. Rounding is applied per entry
+  // (via billableHoursForCasualEntry) before summing, since rounding a
+  // pre-summed total would give a different, wrong number — see
+  // casual-billing.ts's own comment.
+  const casualEntries = detailedRows
+    .filter((r) => r.serviceCategory !== null)
+    .filter((r) => teamFilter === "all" || r.teamId === teamFilter || !r.teamId)
+    .filter((r) => {
+      if (clientFilter === "all") return true;
+      if (clientFilter === "none") return r.clientId === null;
+      return r.clientId === clientFilter;
+    });
+
+  const casualRows = (() => {
+    const groups = new Map<
+      string,
+      {
+        clientId: string | null;
+        serviceCategory: CasualServiceCategory;
+        entryCount: number;
+        rawHours: number;
+        billableHours: number;
+        paidCount: number;
+      }
+    >();
+    for (const e of casualEntries) {
+      const category = e.serviceCategory!;
+      const key = `${e.clientId ?? "none"}::${category}`;
+      const existing = groups.get(key) ?? {
+        clientId: e.clientId,
+        serviceCategory: category,
+        entryCount: 0,
+        rawHours: 0,
+        billableHours: 0,
+        paidCount: 0,
+      };
+      existing.entryCount += 1;
+      existing.rawHours += e.minutes / 60;
+      existing.billableHours += billableHoursForCasualEntry(
+        e,
+        category,
+        settings.casualBillingIncrementHours,
+      );
+      if (e.vaPaidAt) existing.paidCount += 1;
+      groups.set(key, existing);
+    }
+    return Array.from(groups.values())
+      .map((g) => ({
+        ...g,
+        clientName:
+          g.clientId == null
+            ? "No client"
+            : (clients.find((c) => c.id === g.clientId)?.name ?? "Unknown client"),
+        lastServiceDate: g.clientId ? (casualLastService.get(g.clientId) ?? null) : null,
+      }))
+      .sort(
+        (a, b) =>
+          a.clientName.localeCompare(b.clientName) ||
+          a.serviceCategory.localeCompare(b.serviceCategory),
+      );
+  })();
+
   const totalDetailedPages = Math.max(1, Math.ceil(filteredDetailed.length / DETAILED_PAGE_SIZE));
   const currentDetailedPage = Math.min(detailedPage, totalDetailedPages);
   const pagedDetailed = filteredDetailed.slice(
@@ -436,13 +534,21 @@ function Reports() {
 
   const rangeLabel = preset === "custom" ? `${from} to ${to}` : presetLabels[preset];
   const loading =
-    view === "project" ? loadingProject : view === "employee" ? loadingEmployee : loadingDetailed;
+    view === "project"
+      ? loadingProject
+      : view === "employee"
+        ? loadingEmployee
+        : view === "casual"
+          ? loadingDetailed || loadingCasual
+          : loadingDetailed;
   const total =
     view === "project"
       ? projectRows.reduce((s, r) => s + r.hours, 0)
       : view === "employee"
         ? employeeRows.reduce((s, r) => s + r.hours, 0)
-        : filteredDetailed.reduce((s, r) => s + r.hours, 0);
+        : view === "casual"
+          ? casualRows.reduce((s, r) => s + r.billableHours, 0)
+          : filteredDetailed.reduce((s, r) => s + r.hours, 0);
   // H17: only meaningful on the employee view — a project or a raw entry
   // list has no single per-row rate to sum against.
   const totalAmount =
@@ -502,7 +608,7 @@ function Reports() {
           `${from} to ${to}`,
         ]),
       ]);
-    } else {
+    } else if (view === "detailed") {
       // The full filtered set, not just the current page — pagination is a
       // display convenience, not a limit on what the export should contain.
       downloadCsv(`ironbrij-detailed-entries_${clientLabel}_${from}_to_${to}.csv`, [
@@ -515,6 +621,29 @@ function Reports() {
           r.description || "",
           r.hours.toFixed(2),
           r.billable ? "Yes" : "No",
+        ]),
+      ]);
+    } else {
+      downloadCsv(`ironbrij-casual-service_${clientLabel}_${from}_to_${to}.csv`, [
+        [
+          "Client",
+          "Category",
+          "Entries",
+          "Raw Hours",
+          "Billable Hours (rounded)",
+          "Paid",
+          "Unpaid",
+          "Date range",
+        ],
+        ...casualRows.map((r) => [
+          r.clientName,
+          CASUAL_SERVICE_CATEGORY_LABELS[r.serviceCategory],
+          r.entryCount,
+          r.rawHours.toFixed(2),
+          r.billableHours.toFixed(2),
+          r.paidCount,
+          r.entryCount - r.paidCount,
+          `${from} to ${to}`,
         ]),
       ]);
     }
@@ -593,12 +722,13 @@ function Reports() {
         {canManage && (
           <Tabs
             value={view}
-            onValueChange={(v) => setView(v as "project" | "employee" | "detailed")}
+            onValueChange={(v) => setView(v as "project" | "employee" | "detailed" | "casual")}
           >
             <TabsList>
               <TabsTrigger value="project">By project</TabsTrigger>
               <TabsTrigger value="employee">By employee</TabsTrigger>
               <TabsTrigger value="detailed">Detailed</TabsTrigger>
+              <TabsTrigger value="casual">Casual Service</TabsTrigger>
             </TabsList>
           </Tabs>
         )}
@@ -901,7 +1031,7 @@ function Reports() {
             </CardContent>
           </Card>
         </>
-      ) : (
+      ) : view === "detailed" ? (
         <>
           <Card className="shadow-card">
             <CardContent className="overflow-x-auto p-0">
@@ -1021,6 +1151,72 @@ function Reports() {
             </div>
           )}
         </>
+      ) : (
+        <Card className="shadow-card">
+          <CardHeader>
+            <CardTitle className="text-base">Casual Service · {rangeLabel}</CardTitle>
+            <p className="text-xs text-muted-foreground">
+              Ad-hoc work billed outside the standard subscription retainer. "Billable Hours" is
+              rounded up to the workspace's casual-billing increment for every category except
+              Ironbrij (internal, never billed) — raw tracked hours are shown alongside for
+              reference and are never overwritten.
+            </p>
+          </CardHeader>
+          <CardContent className="overflow-x-auto p-0">
+            <table className="w-full min-w-[760px] text-sm">
+              <thead>
+                <tr className="border-b border-border text-xs uppercase tracking-wide text-muted-foreground">
+                  <th className="px-5 py-3 text-left font-medium">Client</th>
+                  <th className="px-5 py-3 text-left font-medium">Category</th>
+                  <th className="px-5 py-3 text-right font-medium">Entries</th>
+                  <th className="px-5 py-3 text-right font-medium">Raw Hours</th>
+                  <th className="px-5 py-3 text-right font-medium">Billable Hours</th>
+                  <th className="px-5 py-3 text-right font-medium">Paid</th>
+                  <th className="px-5 py-3 text-left font-medium">Last Service</th>
+                </tr>
+              </thead>
+              <tbody>
+                {casualRows.map((r) => (
+                  <tr
+                    key={`${r.clientId ?? "none"}::${r.serviceCategory}`}
+                    className="border-b border-border last:border-0 hover:bg-muted/40"
+                  >
+                    <td className="px-5 py-3 font-medium">{r.clientName}</td>
+                    <td className="px-5 py-3 text-muted-foreground">
+                      {CASUAL_SERVICE_CATEGORY_LABELS[r.serviceCategory]}
+                    </td>
+                    <td className="px-5 py-3 text-right tabular-nums">{r.entryCount}</td>
+                    <td className="px-5 py-3 text-right tabular-nums text-muted-foreground">
+                      {formatHours(r.rawHours)}
+                    </td>
+                    <td className="px-5 py-3 text-right tabular-nums font-medium">
+                      {formatHours(r.billableHours)}
+                    </td>
+                    <td className="px-5 py-3 text-right tabular-nums text-muted-foreground">
+                      {r.paidCount}/{r.entryCount}
+                    </td>
+                    <td className="px-5 py-3 text-muted-foreground">
+                      {r.lastServiceDate
+                        ? fromDateKey(r.lastServiceDate).toLocaleDateString(undefined, {
+                            month: "short",
+                            day: "numeric",
+                            year: "numeric",
+                          })
+                        : "—"}
+                    </td>
+                  </tr>
+                ))}
+                {casualRows.length === 0 && (
+                  <tr>
+                    <td colSpan={7} className="px-5 py-8 text-center text-sm text-muted-foreground">
+                      No casual-service entries in this filter.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </CardContent>
+        </Card>
       )}
     </AppShell>
   );

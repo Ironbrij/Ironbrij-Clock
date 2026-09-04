@@ -201,3 +201,41 @@ export const resendInvite = createServerFn({ method: "POST" })
 
     return { sent: true };
   });
+
+// M46: admin-only, via supabaseAdmin (bypasses RLS) rather than a plain
+// client .update() — time_entries_update lets a row's own owner write to
+// their own row (needed for everyday self-edits), and RLS is row-scoped,
+// not column-scoped, so there's no policy shape that lets a VA edit their
+// own entry's description but not its va_paid_at. Routing this through a
+// privileged server function, same as inviteMembers/removeUserAccess
+// above, is what actually keeps "who was paid and when" admin-only.
+const markVaPaidSchema = z.object({
+  entryIds: z.array(z.string().uuid()).min(1).max(500),
+  paidDate: z.string().date().nullable(),
+});
+
+export const markCasualEntriesPaid = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) => markVaPaidSchema.parse(input))
+  .handler(async ({ data, context }) => {
+    const { data: isAdmin, error: roleError } = await context.supabase.rpc("has_role", {
+      _user_id: context.userId,
+      _role: "admin",
+    });
+    if (roleError) throw new Error(roleError.message);
+    if (!isAdmin) throw new Error("Only admins can mark casual service entries as paid.");
+
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    // The DB's own time_entries_va_paid_requires_category CHECK is the
+    // real backstop against a paid-date on a non-casual row; this
+    // .not(...) just keeps a plainly-wrong bulk selection from erroring
+    // the whole batch out on that constraint.
+    const { error: updateError } = await supabaseAdmin
+      .from("time_entries")
+      .update({ va_paid_at: data.paidDate })
+      .in("id", data.entryIds)
+      .not("service_category", "is", null);
+    if (updateError) throw new Error(updateError.message);
+
+    return { updated: data.entryIds.length };
+  });

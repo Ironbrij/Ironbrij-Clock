@@ -14,7 +14,7 @@ export function useSettingsData(enabled: boolean) {
       const { data, error } = await supabase
         .from("workspace_settings")
         .select(
-          "company_name, logo_url, timezone, weekly_hours, currency, require_descriptions, allow_manual_entry",
+          "company_name, logo_url, timezone, weekly_hours, currency, require_descriptions, allow_manual_entry, casual_billing_increment_hours",
         )
         .maybeSingle();
       if (error) throw error;
@@ -32,6 +32,7 @@ export function useSettingsData(enabled: boolean) {
       currency: s?.currency ?? "AUD",
       requireDescriptions: s?.require_descriptions ?? false,
       allowManualEntry: s?.allow_manual_entry ?? true,
+      casualBillingIncrementHours: Number(s?.casual_billing_increment_hours ?? 0.25),
     };
   }, [settingsQ.data]);
 
@@ -46,6 +47,8 @@ export function useSettingsData(enabled: boolean) {
       if (patch.requireDescriptions !== undefined)
         row["require_descriptions"] = patch.requireDescriptions;
       if (patch.allowManualEntry !== undefined) row["allow_manual_entry"] = patch.allowManualEntry;
+      if (patch.casualBillingIncrementHours !== undefined)
+        row["casual_billing_increment_hours"] = patch.casualBillingIncrementHours;
       const { error } = await supabase.from("workspace_settings").upsert(row as never);
       throwIf(error);
       qc.invalidateQueries({ queryKey: ["workspace_settings"] });

@@ -10,7 +10,13 @@ import {
   toDateKey,
 } from "@/lib/time-utils";
 import { throwIf } from "./utils";
-import type { DetailedEntry, WorkspaceEntry, WorkspaceProject, WorkspaceSettings } from "./types";
+import type {
+  CasualServiceCategory,
+  DetailedEntry,
+  WorkspaceEntry,
+  WorkspaceProject,
+  WorkspaceSettings,
+} from "./types";
 
 type TimeEntryUpdate = Database["public"]["Tables"]["time_entries"]["Update"];
 type TimeEntryRow = {
@@ -23,7 +29,12 @@ type TimeEntryRow = {
   entry_date: string;
   duration_minutes: number | null;
   is_billable: boolean;
+  service_category: CasualServiceCategory | null;
+  va_paid_at: string | null;
 };
+
+const ENTRY_COLUMNS =
+  "id, project_id, task, description, start_time, end_time, entry_date, duration_minutes, is_billable, service_category, va_paid_at";
 
 function mapEntryRow(e: TimeEntryRow): WorkspaceEntry {
   return {
@@ -37,6 +48,8 @@ function mapEntryRow(e: TimeEntryRow): WorkspaceEntry {
     date: e.entry_date,
     running: !e.end_time,
     billable: e.is_billable,
+    serviceCategory: e.service_category,
+    vaPaidAt: e.va_paid_at,
   };
 }
 
@@ -73,9 +86,7 @@ export function useTimeEntriesData(
       from.setDate(from.getDate() - ENTRIES_HISTORY_DAYS);
       const { data, error } = await supabase
         .from("time_entries")
-        .select(
-          "id, project_id, task, description, start_time, end_time, entry_date, duration_minutes, is_billable",
-        )
+        .select(ENTRY_COLUMNS)
         .eq("user_id", uid!)
         .gte("entry_date", toDateKey(from))
         .order("start_time", { ascending: false })
@@ -216,6 +227,8 @@ export function useTimeEntriesData(
         description?: string;
         /** M26: independent of the project's own default — omit for no change. */
         billable?: boolean;
+        /** M46: null clears it (not casual service). Omit for no change. Deliberately excludes vaPaidAt — that's admin-only, via markCasualEntriesPaid, never through this self-editable path. */
+        serviceCategory?: CasualServiceCategory | null;
         date?: string;
         startTime?: string;
         /**
@@ -240,6 +253,7 @@ export function useTimeEntriesData(
       if (patch.task !== undefined) dbPatch.task = patch.task;
       if (patch.description !== undefined) dbPatch.description = patch.description;
       if (patch.billable !== undefined) dbPatch.is_billable = patch.billable;
+      if (patch.serviceCategory !== undefined) dbPatch.service_category = patch.serviceCategory;
 
       if (patch.endTime === null) {
         // Still running — the dialog always supplies both when editing this
@@ -332,6 +346,8 @@ export function useTimeEntriesData(
       endDate?: string;
       /** M26: omit to fall back to the project's own billable default, same as before this existed. */
       billable?: boolean;
+      /** M46: no project-level fallback — category is per-entry only. Omit/null for "not casual service" (the default for virtually every entry). */
+      serviceCategory?: CasualServiceCategory | null;
     }) => {
       if (!uid) return;
       if (!settings.allowManualEntry) {
@@ -356,6 +372,7 @@ export function useTimeEntriesData(
       // so it's atomic — either the whole shift is saved, or none of it is.
       const segments = splitByDay(start, end);
       const billable = input.billable ?? project?.billable ?? true;
+      const serviceCategory = input.serviceCategory ?? null;
       const rows = segments.map((seg) => ({
         user_id: uid,
         project_id: input.projectId,
@@ -366,6 +383,7 @@ export function useTimeEntriesData(
         entry_date: seg.date,
         duration_minutes: Math.max(1, seg.minutes),
         is_billable: billable,
+        service_category: serviceCategory,
         tag_ids: project?.tagIds ?? [],
       }));
       const { error } = await supabase.from("time_entries").insert(rows);
@@ -402,7 +420,7 @@ export function useTimeEntriesData(
       const { data, error } = await supabase
         .from("time_entries")
         .select(
-          "id, user_id, project_id, task, description, start_time, entry_date, duration_minutes, is_billable",
+          "id, user_id, project_id, task, description, start_time, entry_date, duration_minutes, is_billable, service_category, va_paid_at",
         )
         .gte("entry_date", from)
         .lte("entry_date", to)
@@ -423,9 +441,36 @@ export function useTimeEntriesData(
         minutes: e.duration_minutes ?? 0,
         billable: e.is_billable,
         startTime: e.start_time,
+        serviceCategory: e.service_category,
+        vaPaidAt: e.va_paid_at,
       }));
     },
     [],
+  );
+
+  // M46: last casual-service date per client, company-wide — backs the
+  // client-health badge (useClientHealth in workspace-store.tsx). Computed
+  // fresh on every call, not cached/stored, same as useClientBudgets.
+  const casualClientLastServiceForAll = useCallback(async () => {
+    const { data, error } = await supabase.rpc("casual_client_last_service");
+    throwIf(error);
+    const map = new Map<string, string | null>();
+    for (const r of data ?? []) map.set(r.client_id, r.last_service_date);
+    return map;
+  }, []);
+
+  // M46: admin-only — goes through admin.functions.ts, not a plain
+  // .update(), since time_entries_update lets a row's own owner write to
+  // it (required for day-to-day self-edits) and RLS is row-scoped, not
+  // column-scoped — there's no policy that can allow a self-edit to every
+  // column except va_paid_at. See markCasualEntriesPaid's own comment.
+  const markCasualEntriesPaid = useCallback(
+    async (entryIds: string[], paidDate: string | null) => {
+      const { markCasualEntriesPaid: markPaid } = await import("@/lib/admin.functions");
+      await markPaid({ data: { entryIds, paidDate } });
+      invalidateEntries();
+    },
+    [invalidateEntries],
   );
 
   const entriesForTag = useCallback(async (tagId: string) => {
@@ -457,6 +502,8 @@ export function useTimeEntriesData(
     deleteEntry,
     entriesForTag,
     detailedEntriesForRange,
+    casualClientLastServiceForAll,
+    markCasualEntriesPaid,
   };
 }
 
@@ -478,9 +525,7 @@ export function useMemberEntriesData(enabled: boolean, userId: string | null, we
     queryFn: async () => {
       const { data, error } = await supabase
         .from("time_entries")
-        .select(
-          "id, project_id, task, description, start_time, end_time, entry_date, duration_minutes, is_billable",
-        )
+        .select(ENTRY_COLUMNS)
         .eq("user_id", userId!)
         .gte("entry_date", from)
         .lte("entry_date", to)

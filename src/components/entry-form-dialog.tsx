@@ -35,6 +35,7 @@ import {
 } from "@/lib/time-utils";
 import { formatHours } from "@/lib/mock-data";
 import { useClientBudgets, useWorkspace, type WorkspaceEntry } from "@/lib/workspace-store";
+import { CASUAL_SERVICE_CATEGORY_LABELS, type CasualServiceCategory } from "@/lib/workspace/types";
 
 const pad = (n: number) => n.toString().padStart(2, "0");
 
@@ -115,6 +116,10 @@ export function EntryFormDialog({
   // same as the stored value an existing entry already has.
   const [billable, setBillable] = useState(true);
   const [billableTouched, setBillableTouched] = useState(false);
+  // M46: no project-level default to follow (category is per-entry only),
+  // so this just seeds from the stored value (or null, for a new entry)
+  // and stays a plain controlled value — no touched-tracking needed.
+  const [serviceCategory, setServiceCategory] = useState<CasualServiceCategory | null>(null);
 
   useEffect(() => {
     if (open) {
@@ -122,6 +127,7 @@ export function EntryFormDialog({
       setEndsNextDay(false);
       setBillable(entry ? entry.billable : true);
       setBillableTouched(!!entry);
+      setServiceCategory(entry ? entry.serviceCategory : null);
     }
     // defaultTask intentionally excluded — it should only affect the
     // initial value when the dialog opens, not overwrite whatever the
@@ -173,16 +179,21 @@ export function EntryFormDialog({
     setBusy(true);
     try {
       if (entry) {
-        // billable isn't part of the running-timer patch — the checkbox is
-        // hidden in that case (only the start time is correctable), so
-        // there's nothing to apply.
+        // billable/serviceCategory aren't part of the running-timer patch —
+        // both controls are hidden in that case (only the start time is
+        // correctable), so there's nothing to apply.
         await updateEntry(
           entry.id,
-          isRunning ? { ...values, endTime: null } : { ...values, billable },
+          isRunning ? { ...values, endTime: null } : { ...values, billable, serviceCategory },
         );
         toast.success("Entry updated");
       } else {
-        await createEntry({ ...values, endDate: endsNextDay ? endDate : undefined, billable });
+        await createEntry({
+          ...values,
+          endDate: endsNextDay ? endDate : undefined,
+          billable,
+          serviceCategory,
+        });
         toast.success("Entry added", { description: "Logged to your timesheet." });
       }
       // Non-blocking heads-up, same as TimerBar's — the entry is already
@@ -367,6 +378,36 @@ export function EntryFormDialog({
               <Label htmlFor="entry-billable" className="cursor-pointer font-normal">
                 Billable
               </Label>
+            </div>
+          )}
+          {/* M46: rare (only accounts-relevant casual work uses this), so it
+              stays out of the way for the overwhelming majority of entries
+              rather than adding an always-visible dropdown. */}
+          {!isRunning && (
+            <div className="grid gap-2">
+              <Label htmlFor="entry-service-category" className="text-xs text-muted-foreground">
+                Casual service category (optional)
+              </Label>
+              <Select
+                value={serviceCategory ?? "none"}
+                onValueChange={(v) =>
+                  setServiceCategory(v === "none" ? null : (v as CasualServiceCategory))
+                }
+              >
+                <SelectTrigger id="entry-service-category">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">Not casual service</SelectItem>
+                  {(Object.keys(CASUAL_SERVICE_CATEGORY_LABELS) as CasualServiceCategory[]).map(
+                    (category) => (
+                      <SelectItem key={category} value={category}>
+                        {CASUAL_SERVICE_CATEGORY_LABELS[category]}
+                      </SelectItem>
+                    ),
+                  )}
+                </SelectContent>
+              </Select>
             </div>
           )}
         </div>

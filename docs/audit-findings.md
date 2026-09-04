@@ -2861,3 +2861,94 @@ from an empty database in one continuous run, and both bugs only exist in that s
 pass against a real instance — this round's CI failure happened during migration replay, before the
 test suite ever got to run. First real signal on that specific question is still pending the next CI
 run.
+
+---
+
+## Casual Service Monitoring
+
+**M46. ⚠️ Improved 2026-09-04 — built and tested where this environment can reach; the actual
+historical cutover has not run.** Ironbrij's accounts team maintains "Casual Service Monitoring.xlsx"
+entirely by hand: a 22,276-row Excel log of ad-hoc/casual billable work VAs do for clients outside
+the standard subscription retainer, feeding a KPI dashboard and five pivot-table "Summary Report"
+sheets. Reverse-engineered from the workbook itself (no prior spec existed): each row carries a
+**Service Category** (`Ironbrij` — internal/no-charge, `Paid Casual Service`, `VIP Client`,
+`Promotional`), a **VA Paid Date** the accounts team sets by hand, and a hand-typed **Hours After
+Adding Increment** — a cell comment on that column ("Ironbrij is excluded from the additional
+increment") confirms a minimum-billing-increment rounding rule applied to the three paid categories
+only. A separate side-table tracks each client's last-serviced date and an Active/Inactive churn
+signal. None of this existed anywhere in IronTrack before this pass.
+
+**Why it matters:** every one of these facts currently lives only in a spreadsheet one team
+maintains by hand — there's no server-side backstop, no report anyone else can pull, and no
+visibility into which clients have gone quiet on casual work specifically (distinct from
+`clients.is_active`, a manually-set flag for the relationship overall that can legitimately disagree
+with casual-service recency).
+
+**Built, following the same per-entry pattern M26 already established for `is_billable`:**
+
+- Two new nullable columns on `time_entries` — `service_category` (a new
+  `casual_service_category` enum) and `va_paid_at` (date) — `NULL` on both meaning "not a
+  casual-monitoring entry at all," the default and unchanged state for every pre-existing row.
+  `20260903000000_casual_service_monitoring.sql`.
+- A tunable `workspace_settings.casual_billing_increment_hours` (default `0.25`, confirmed correct
+  with the product owner) rather than a hardcoded rounding size. `20260903020000_...sql`.
+- `src/lib/casual-billing.ts`'s `billableHoursForCasualEntry()` — the increment-rounding rule,
+  computed at report time only, never mutating stored hours, and explicitly scoped to the three paid
+  categories (`ironbrij` passes through unrounded, per the workbook's own comment). Unit-tested
+  (`casual-billing.test.ts`) — this is a deliberately narrow, re-confirmed exception to the *general*
+  time-rounding feature this document's own "Unnecessary" section rejected above, not a reversal of
+  that call.
+- A `casual_client_last_service()` `SECURITY DEFINER` RPC for the client-health signal — computed
+  fresh on every read, not stored, same reasoning `useClientBudgets` already established for budget
+  status (nothing in this repo runs a background job to keep a stored value fresh). A per-client
+  rollup by category (`casualServiceSummaryForRange`, originally planned as a second aggregate RPC)
+  was deliberately **not** built that way: summing `duration_minutes` server-side and rounding the
+  total afterward gives a different, wrong number than rounding each task line first — the workbook's
+  own per-task increment. The Reports rollup below instead derives from already-fetched per-entry
+  data client-side, same as `detailedEntriesForRange` already supplies the Detailed tab.
+- `markCasualEntriesPaid` (`src/lib/admin.functions.ts`) — admin-only via a `createServerFn` +
+  `has_role` check, not a plain RLS-gated update. Unlike `clients` (manager/admin-only write policy),
+  `time_entries_update` lets a row's own owner write to it — required for everyday self-edits — and
+  RLS is row-scoped, not column-scoped, so there's no policy shape that lets a VA edit their own
+  entry's description but not its `va_paid_at`. Mirrors `inviteMembers`'s exact template.
+- A Service Category picker in `entry-form-dialog.tsx`, next to the existing Billable checkbox.
+- Reports' new "Casual Service" tab — the client x category rollup, CSV export, gated `canManage`
+  same as Reports' other cross-team tabs.
+- Manage's new "Casual Service" tab (`src/components/casual-service-tab.tsx`) — the admin *action*
+  view (bulk mark-paid), living in Manage rather than Reports on the same split this app already
+  uses everywhere else: Reports is read/export-only, Manage is where row-level privileged actions
+  (Approvals, Entries) live.
+- A "Casual service inactive" badge on Projects and Clients, next to the existing budget badges —
+  shown only for a client that has appeared in the casual log at least once (absent from the map
+  otherwise, same "absent means not tracked" convention `useClientBudgets` uses for a client with no
+  `subscriptionHours` cap — a retainer-only client with zero casual history isn't a churn signal).
+- `scripts/import-casual-service-history.mjs` — the one-time historical import, built following
+  H18's exact template (dry-run default, `--commit` required, service-role key, `--mapping` file for
+  unresolved names, nothing ever guessed or auto-created). Its pure helper functions (Excel-serial and
+  locale date parsing, IANA-timezone-aware wall-clock-to-UTC conversion, the CSV parser) were verified
+  by hand against real values pulled from the actual workbook during reverse-engineering (e.g. serial
+  `45166` → `2023-08-28`, matching that row's own "Aug 28 – Sep 03, 2023" week label) — this
+  environment has no way to run the script itself against a live database.
+
+**What's still open:**
+
+- **The actual cutover import hasn't run.** Same shape as H18 before its own cutover: the tool exists
+  and its logic is verified in isolation, but running it with `--commit` against the real 22,276-row
+  export — plus the `--mapping` iteration H18's own history shows this kind of name-matching always
+  needs — hasn't happened. VA names in the source are informal first names (`Vellih`, `Rocky`,
+  `Andre`), so a `--mapping` file is all but certain to be needed, not just a fallback.
+- **Nothing in this pass has been verified against a real Postgres instance** — the `SECURITY
+  DEFINER` RPC, the RLS-adjacent admin-only write path, and the trigger-driven `duration_minutes`
+  interaction the import script relies on are reasoned through and internally consistent, but
+  unproven the way this document's own M43 initiative is still tracking for the rest of this
+  codebase's RPCs. First real signal arrives whenever this branch's CI (or a linked Supabase project)
+  actually exercises them.
+- **The historical-hours compromise.** The workbook only ever recorded the already-*rounded* hours
+  per casual line — there's no way to recover true raw tracked time for old rows. Confirmed acceptable
+  with the product owner: imported rows will show `duration_minutes` equal to that historical rounded
+  figure (making the rounding rule a no-op on old rows), while every entry logged going forward stores
+  genuinely raw time.
+- **The client-inactivity threshold** (currently a hardcoded 90 days, `CLIENT_INACTIVE_THRESHOLD_DAYS`
+  in `workspace-store.tsx`) is a placeholder — the workbook's own staleness rule wasn't recoverable
+  from its formulas. Worth getting a real number from accounts, and promoting it to a
+  `workspace_settings` field (like the billing increment) if it needs to be tunable without a deploy.
