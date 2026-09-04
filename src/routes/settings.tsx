@@ -767,6 +767,9 @@ function AdminTab() {
   const [logo, setLogo] = useState<string | null>(settings.logoDataUrl);
   const [requireDescriptions, setRequireDescriptions] = useState(settings.requireDescriptions);
   const [allowManualEntry, setAllowManualEntry] = useState(settings.allowManualEntry);
+  const [casualBillingIncrementHours, setCasualBillingIncrementHours] = useState(
+    String(settings.casualBillingIncrementHours),
+  );
   const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -777,6 +780,7 @@ function AdminTab() {
     setLogo(settings.logoDataUrl);
     setRequireDescriptions(settings.requireDescriptions);
     setAllowManualEntry(settings.allowManualEntry);
+    setCasualBillingIncrementHours(String(settings.casualBillingIncrementHours));
   }, [settings]);
 
   const onPickLogo = (file: File | undefined) => {
@@ -893,6 +897,24 @@ function AdminTab() {
             </p>
           </div>
 
+          <div className="grid gap-2">
+            <Label htmlFor="ws-casual-increment">Casual service billing increment (hours)</Label>
+            <Input
+              id="ws-casual-increment"
+              type="number"
+              step={0.05}
+              min={0.05}
+              value={casualBillingIncrementHours}
+              onChange={(e) => setCasualBillingIncrementHours(e.target.value)}
+              className="max-w-32"
+            />
+            <p className="text-xs text-muted-foreground">
+              Casual-service hours (Paid Casual, VIP Client, Promotional — not Ironbrij) are rounded
+              up to the nearest increment of this many hours in Reports and CSV exports. Doesn't
+              change any stored tracked time.
+            </p>
+          </div>
+
           <ul className="divide-y divide-border rounded-xl border border-border">
             <li className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 px-4 py-3">
               <div className="min-w-0">
@@ -940,6 +962,15 @@ function AdminTab() {
                   toast.error("Weekly hours must be a number of 1 or more");
                   return;
                 }
+                const parsedIncrement = Number(casualBillingIncrementHours);
+                if (
+                  !casualBillingIncrementHours.trim() ||
+                  Number.isNaN(parsedIncrement) ||
+                  parsedIncrement <= 0
+                ) {
+                  toast.error("Casual service billing increment must be a number greater than 0");
+                  return;
+                }
                 void updateSettings({
                   companyName: companyName.trim() || settings.companyName,
                   timezone,
@@ -948,6 +979,7 @@ function AdminTab() {
                   logoDataUrl: logo,
                   requireDescriptions,
                   allowManualEntry,
+                  casualBillingIncrementHours: parsedIncrement,
                 })
                   .then(() =>
                     toast.success("Workspace settings saved", {

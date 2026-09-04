@@ -177,15 +177,17 @@ type WorkspaceContextValue = {
   teamMemberCount: (teamId: string) => number;
   memberById: (id: string) => WorkspaceMember | undefined;
   projectById: (id: string | null) => WorkspaceProject | undefined;
-  /** Hours by project for an arbitrary date range, for the Reports page — not part of the eagerly-loaded state. */
+  /** Hours by project for an arbitrary date range, for the Reports page — not part of the eagerly-loaded state. Optional teamId scopes to hours logged by that team's members specifically (a project itself has no bearing on this — a person can belong to more than one team). */
   projectHoursForRange: (
     from: string,
     to: string,
+    teamId?: string,
   ) => Promise<{ projectId: string; minutes: number }[]>;
-  /** M28: billable-only hours by project, for Reports' billable/non-billable split — summed from time_entries.is_billable, not projects.is_billable. */
+  /** M28: billable-only hours by project, for Reports' billable/non-billable split — summed from time_entries.is_billable, not projects.is_billable. Same optional teamId scoping as projectHoursForRange. */
   projectBillableHoursForRange: (
     from: string,
     to: string,
+    teamId?: string,
   ) => Promise<{ projectId: string; minutes: number }[]>;
   /** Hours by employee for an arbitrary date range — scoped server-side to self/admin/manager's-team, unlike the project version. */
   employeeHoursForRange: (

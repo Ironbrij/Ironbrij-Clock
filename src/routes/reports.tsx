@@ -224,7 +224,11 @@ function Reports() {
   useEffect(() => {
     let cancelled = false;
     setLoadingProject(true);
-    Promise.all([projectHoursForRange(from, to), projectBillableHoursForRange(from, to)])
+    const scopedTeam = teamFilter === "all" ? undefined : teamFilter;
+    Promise.all([
+      projectHoursForRange(from, to, scopedTeam),
+      projectBillableHoursForRange(from, to, scopedTeam),
+    ])
       .then(([totals, billable]) => {
         if (cancelled) return;
         const map: Record<string, number> = {};
@@ -245,7 +249,7 @@ function Reports() {
     return () => {
       cancelled = true;
     };
-  }, [from, to, projectHoursForRange, projectBillableHoursForRange]);
+  }, [from, to, teamFilter, projectHoursForRange, projectBillableHoursForRange]);
 
   // Only fetched for managers/admins — a plain Member's own row is all
   // they'd get back anyway (see the migration for why), so there's
@@ -377,10 +381,10 @@ function Reports() {
   }, [from, to, teamFilter, clientFilter, projectFilter, employeeFilter, detailedSearch]);
 
   const projectRows = projects
-    // A project with no team set isn't unassigned — the "All teams" choice
-    // in the New/Edit Project dialog stores it that way on purpose, so it
-    // should surface under every specific team filter, not just "All".
-    .filter((p) => teamFilter === "all" || p.teamId === teamFilter || !p.teamId)
+    // Team scoping now happens inside projectHoursForRange/
+    // projectBillableHoursForRange itself (hours logged by that team's
+    // members), not as a row-inclusion filter here — every project stays
+    // visible, its hours just reflect whichever team is selected.
     .filter((p) => {
       if (clientFilter === "all") return true;
       if (clientFilter === "none") return p.clientId === null;
@@ -484,7 +488,10 @@ function Reports() {
       hours: e.minutes / 60,
       projectName: project?.name ?? "No project",
       projectColor: project?.color ?? "var(--muted-foreground)",
-      teamId: project?.teamId ?? "",
+      // Team filter means "logged by that team's members," not "the
+      // entry's project's team" — a person can belong to more than one
+      // team, so this is every team they're in, not a single value.
+      employeeTeamIds: member?.teamIds ?? [],
       clientId: project?.clientId ?? null,
       employeeName: member?.name ?? "Former member",
       employeeInitials: member?.initials ?? "—",
@@ -493,7 +500,7 @@ function Reports() {
   });
 
   const filteredDetailed = detailedRows
-    .filter((r) => teamFilter === "all" || r.teamId === teamFilter || !r.teamId)
+    .filter((r) => teamFilter === "all" || r.employeeTeamIds.includes(teamFilter))
     .filter((r) => {
       if (clientFilter === "all") return true;
       if (clientFilter === "none") return r.clientId === null;
@@ -521,10 +528,17 @@ function Reports() {
     return entries
       .map((e) => {
         const project = projects.find((p) => p.id === e.projectId);
-        return { ...e, teamId: project?.teamId ?? "", clientId: project?.clientId ?? null };
+        const member = members.find((m) => m.id === e.userId);
+        return {
+          ...e,
+          // Same "logged by that team's members" semantics as the
+          // Detailed tab's employeeTeamIds — not the entry's project's team.
+          employeeTeamIds: member?.teamIds ?? [],
+          clientId: project?.clientId ?? null,
+        };
       })
       .filter((r) => r.serviceCategory !== null)
-      .filter((r) => teamFilter === "all" || r.teamId === teamFilter || !r.teamId)
+      .filter((r) => teamFilter === "all" || r.employeeTeamIds.includes(teamFilter))
       .filter((r) => {
         if (clientFilter === "all") return true;
         if (clientFilter === "none") return r.clientId === null;
