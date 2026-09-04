@@ -241,8 +241,17 @@ export function useProjectsData(
     [qc],
   );
 
-  const projectHoursForRange = useCallback(async (from: string, to: string) => {
-    const { data, error } = await supabase.rpc("project_hours_range", { _from: from, _to: to });
+  // teamId scopes hours to that team's members specifically — "who
+  // actually logged the time," not which team a project happens to be
+  // tagged to (a person can be scoped under more than one team, same
+  // membership-not-exclusive-attribution semantics the employee-side team
+  // filter already uses). Omit for the company-wide total.
+  const projectHoursForRange = useCallback(async (from: string, to: string, teamId?: string) => {
+    const { data, error } = await supabase.rpc("project_hours_range", {
+      _from: from,
+      _to: to,
+      _team_id: teamId ?? null,
+    });
     throwIf(error);
     return (data ?? []).map((r) => ({ projectId: r.project_id, minutes: r.minutes }));
   }, []);
@@ -251,14 +260,18 @@ export function useProjectsData(
   // non-billable split — has to be summed from time_entries.is_billable
   // per row (M26 lets any entry override its project's default), not
   // read off projects.is_billable directly.
-  const projectBillableHoursForRange = useCallback(async (from: string, to: string) => {
-    const { data, error } = await supabase.rpc("project_billable_hours_range", {
-      _from: from,
-      _to: to,
-    });
-    throwIf(error);
-    return (data ?? []).map((r) => ({ projectId: r.project_id, minutes: r.billable_minutes }));
-  }, []);
+  const projectBillableHoursForRange = useCallback(
+    async (from: string, to: string, teamId?: string) => {
+      const { data, error } = await supabase.rpc("project_billable_hours_range", {
+        _from: from,
+        _to: to,
+        _team_id: teamId ?? null,
+      });
+      throwIf(error);
+      return (data ?? []).map((r) => ({ projectId: r.project_id, minutes: r.billable_minutes }));
+    },
+    [],
+  );
 
   return {
     projectsQ,

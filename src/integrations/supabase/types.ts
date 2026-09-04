@@ -734,7 +734,7 @@ export type Database = {
       is_approved: { Args: { _user_id: string }; Returns: boolean };
       manual_entry_allowed: { Args: never; Returns: boolean };
       project_billable_hours_range: {
-        Args: { _from: string; _to: string };
+        Args: { _from: string; _to: string; _team_id?: string | null };
         Returns: {
           billable_minutes: number;
           project_id: string;
@@ -749,7 +749,7 @@ export type Database = {
         }[];
       };
       project_hours_range: {
-        Args: { _from: string; _to: string };
+        Args: { _from: string; _to: string; _team_id?: string | null };
         Returns: {
           minutes: number;
           project_id: string;
