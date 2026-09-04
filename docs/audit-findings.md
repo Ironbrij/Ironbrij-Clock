@@ -16,7 +16,7 @@ Original audit performed 2026-08-11 against `src/lib/workspace/*`, `src/routes/*
 
 **C4. ⚠️ Reverted 2026-08-19 — this is now a deliberate product decision, not a regression.** No overlap validation on time entries. Was fixed via a Postgres `EXCLUDE` constraint (`btree_gist`, `tstzrange(start_time, end_time)`) plus a client-side pre-check for a friendlier error.
 
-**Reverted:** `20260819000000_time_entries_allow_overlap.sql` drops the `EXCLUDE` constraint entirely, and the matching client-side pre-check was removed from `use-time-entries.ts` — commit `df512c1`, "Allow timer-less starts, overlapping entries, and add a searchable client filter," explicitly "matching Clockify." Flagged here because this directly contradicts this document's own "Fixed" marker on a *Critical* finding from five audit passes ago — anyone reading only the original section 1 table would believe overlaps are still blocked. They are not, as of 2026-08-19, on purpose. This also changed the failure shape H21's own fix (the atomic `stop_timer()` RPC, added 2026-08-25) was written against: the "later-day segment insert collides with an overlap" scenario H21 originally described can no longer happen, since overlaps are now allowed — H21's atomicity fix is still correct and still needed for other failure causes (network drop, tab close, a locked week), just no longer for that specific one.
+**Reverted:** `20260819000000_time_entries_allow_overlap.sql` drops the `EXCLUDE` constraint entirely, and the matching client-side pre-check was removed from `use-time-entries.ts` — commit `df512c1`, "Allow timer-less starts, overlapping entries, and add a searchable client filter," explicitly "matching Clockify." Flagged here because this directly contradicts this document's own "Fixed" marker on a _Critical_ finding from five audit passes ago — anyone reading only the original section 1 table would believe overlaps are still blocked. They are not, as of 2026-08-19, on purpose. This also changed the failure shape H21's own fix (the atomic `stop_timer()` RPC, added 2026-08-25) was written against: the "later-day segment insert collides with an overlap" scenario H21 originally described can no longer happen, since overlaps are now allowed — H21's atomicity fix is still correct and still needed for other failure causes (network drop, tab close, a locked week), just no longer for that specific one.
 
 **C5. ✅ Fixed.** Approvers couldn't see what they were approving — just a name and an aggregate total. Fixed: Approvals queue rows are now expandable to show the actual entries (project/task/description/duration) behind the total.
 
@@ -35,6 +35,7 @@ Original audit performed 2026-08-11 against `src/lib/workspace/*`, `src/routes/*
 **H10. ✅ Fixed.** History views silently showed wrong (empty) data past a hardcoded 60-day window, indistinguishable from a genuinely empty week. Fixed: history window extended to 400 days, with the Grid/Timesheet week-nav disabling further back-paging and explaining why once you hit the edge.
 
 **H11. ✅ Fixed.** No UI existed for a manager/admin to view or edit an individual employee's time entries, despite the backend fully supporting it (RLS on `time_entries` already granted admins/same-team managers SELECT/UPDATE/DELETE on anyone's rows). Fixed: a new Manage → Entries tab lets a manager/admin pick a team member and week, and view, edit, or delete that person's entries — reusing the existing `updateEntry`/`deleteEntry` client functions (neither was ever scoped to the signed-in user; they always relied on RLS) and the same edit dialog now shared with the personal Time page (`src/components/entry-form-dialog.tsx`). A manager (not admin) still can't touch a locked (submitted/approved) week, matching the backend; an admin can, same as everywhere else in this app.
+
 - Corollary addressed: these edits are now audited. A new trigger (`log_time_entry_edit_by_other`, `supabase/migrations/20260812020000_log_time_entry_edits_by_other.sql`) logs to `activity_log` whenever a `time_entries` UPDATE/DELETE's actor differs from the entry's owner — routine self-edits are untouched, only manager/admin-on-someone-else edits are logged. Shows up in Manage → Activity as "edited"/"deleted … entry for …".
 
 **H12. ✅ Fixed.** Admin policy toggles ("Require descriptions", "Allow manual time entry") were pure client-side checks, bypassable via direct API calls. Fixed: enforced server-side via RLS `WITH CHECK` clauses referencing `workspace_settings`, admin-overridable.
@@ -45,7 +46,7 @@ Original audit performed 2026-08-11 against `src/lib/workspace/*`, `src/routes/*
 
 **M13. ✅ Fixed.** "Repeat" (↻ on a past entry) called `startTimer` directly with the old `projectId`, with no archived check — unlike the normal project pickers, which always filter `!p.archived`. Now blocked with a clear error.
 
-**M14. ✅ Fixed.** `updateEntry` had a latent bug for running entries — a date/start-time patch with no explicit end fell back `existingEnd` to `existingStart`, forcing `minutes = 0` and throwing the misleading "End time must be after start time." Fixing this also uncovered a real bug it was hiding: `updateEntry`'s fallback lookup only ever checked the *caller's own* entries, which broke every manager/admin edit of someone else's entry (H11) the moment the dialog supplied a full patch. Both fixed together — see `use-time-entries.ts`.
+**M14. ✅ Fixed.** `updateEntry` had a latent bug for running entries — a date/start-time patch with no explicit end fell back `existingEnd` to `existingStart`, forcing `minutes = 0` and throwing the misleading "End time must be after start time." Fixing this also uncovered a real bug it was hiding: `updateEntry`'s fallback lookup only ever checked the _caller's own_ entries, which broke every manager/admin edit of someone else's entry (H11) the moment the dialog supplied a full patch. Both fixed together — see `use-time-entries.ts`.
 
 **M15. ✅ Fixed.** Reports' overtime column compared everyone against one workspace-wide `weeklyHours`, ignoring `member_employment.employment_type`. Per product decision, there's no stored expected-hours-per-week for part-time staff (only a free-text schedule note), so overtime is now `null` ("—" / "N/A") for anyone marked part-time rather than guessing a fraction of the full-time number.
 
@@ -75,30 +76,30 @@ Original audit performed 2026-08-11 against `src/lib/workspace/*`, `src/routes/*
 
 ## 5. Edge Cases — Pass/Fail Against the Original Prompt's List
 
-| Edge case | Status | Note |
-|---|---|---|
-| Multiple active timers | ✅ Fixed | C3 — unique partial index |
-| Overlapping time entries | ✅ Fixed | C4 — EXCLUDE constraint |
-| Double clock-in (same tab) | ✅ OK | Button state is server-derived |
-| Clocking out without clocking in | ✅ OK | `stopTimer` is a no-op if no matching entry is found |
-| Forgotten clock-outs | ⚠️ Improved | M18 — manager/admin visibility added, still no server-side auto-stop |
-| Browser refresh during active timer | ✅ OK | Elapsed time correctly reconstructed from stored `start_time` |
-| Browser closing during active timer | ⚠️ Partial | Data is safe, but no warning fires anywhere (ties to M18) |
-| Network failure during tracking | ⚠️ Partial | Throws a toast, leaves state as-is (safe default), but no retry/offline queue |
-| Switching projects while tracking | ⚠️ By design, unclear | Pickers are `disabled={running}`; not explained to the user why |
-| Editing an active timer | ✅ Fixed | M14 — running entries now rejected with a clear error instead of a silent 0-minute bug |
-| Deleting an active timer | ✅ Blocked in UI | Delete button hidden while running |
-| Working across midnight | ✅ Fixed | H8 — split at day boundaries |
-| Editing approved/submitted timesheets | ✅ Fixed | H6 — locked at submission, admin override remains |
-| Manager modifying employee records | ✅ Fixed | H11 — Manage → Entries |
+| Edge case                             | Status                | Note                                                                                   |
+| ------------------------------------- | --------------------- | -------------------------------------------------------------------------------------- |
+| Multiple active timers                | ✅ Fixed              | C3 — unique partial index                                                              |
+| Overlapping time entries              | ✅ Fixed              | C4 — EXCLUDE constraint                                                                |
+| Double clock-in (same tab)            | ✅ OK                 | Button state is server-derived                                                         |
+| Clocking out without clocking in      | ✅ OK                 | `stopTimer` is a no-op if no matching entry is found                                   |
+| Forgotten clock-outs                  | ⚠️ Improved           | M18 — manager/admin visibility added, still no server-side auto-stop                   |
+| Browser refresh during active timer   | ✅ OK                 | Elapsed time correctly reconstructed from stored `start_time`                          |
+| Browser closing during active timer   | ⚠️ Partial            | Data is safe, but no warning fires anywhere (ties to M18)                              |
+| Network failure during tracking       | ⚠️ Partial            | Throws a toast, leaves state as-is (safe default), but no retry/offline queue          |
+| Switching projects while tracking     | ⚠️ By design, unclear | Pickers are `disabled={running}`; not explained to the user why                        |
+| Editing an active timer               | ✅ Fixed              | M14 — running entries now rejected with a clear error instead of a silent 0-minute bug |
+| Deleting an active timer              | ✅ Blocked in UI      | Delete button hidden while running                                                     |
+| Working across midnight               | ✅ Fixed              | H8 — split at day boundaries                                                           |
+| Editing approved/submitted timesheets | ✅ Fixed              | H6 — locked at submission, admin override remains                                      |
+| Manager modifying employee records    | ✅ Fixed              | H11 — Manage → Entries                                                                 |
 
 ---
 
 ## 6. Status Summary
 
-*(Snapshot from this original 2026-08-11 pass — see the "Same-Day Implementation Pass (2026-08-25)"
+_(Snapshot from this original 2026-08-11 pass — see the "Same-Day Implementation Pass (2026-08-25)"
 section at the end of this document for the current picture. One correction: C4, "fixed" below, was
-deliberately reverted 2026-08-19 — see C4's own entry above.)*
+deliberately reverted 2026-08-19 — see C4's own entry above.)_
 
 - **Critical (C1–C5):** all fixed.
 - **High (H6–H12):** all fixed.
@@ -121,7 +122,7 @@ three High findings (H13–H15) were fixed in a follow-up pass once reviewed —
 **H13. ✅ Fixed.** A failed background fetch was indistinguishable from a legitimate empty state
 everywhere in the app — no global `onError`, no `isError` handling anywhere. Fixed at two levels:
 `src/router.tsx` now constructs `QueryClient` with a `QueryCache({ onError })` that toasts
-"Couldn't load the latest data" (deduped to one toast via a fixed `id`) whenever *any* query fails,
+"Couldn't load the latest data" (deduped to one toast via a fixed `id`) whenever _any_ query fails,
 so a background failure is never silent. Separately, `workspace-store.tsx` now exposes `loadError`
 alongside the existing (previously unused) `loading` flag — both derived from the same "core shell"
 query set (profile, teams, projects, tags, settings, timesheets, task categories) — and `AppShell`
@@ -145,7 +146,7 @@ token, with no app-level backstop. Fixed in
 `supabase/migrations/20260812060000_require_active_for_privileged_access.sql`: a new
 `is_active_user()` helper, folded directly into `has_role()`/`can_manage()` (every call site across
 every migration invokes them as `has_role(auth.uid(), ...)`/`can_manage(auth.uid())` — always a
-check on the *caller*, never a target — so this strengthens every policy built on them for free:
+check on the _caller_, never a target — so this strengthens every policy built on them for free:
 every `*_write_manage` policy, `settings_write_admin`, `set_member_role`, `approve_member`,
 `review_timesheet`, and the admin/manager branches of every `time_entries`/`timesheets` policy).
 The remaining gap those two functions can't cover — the plain `user_id = auth.uid()` self-access
@@ -237,23 +238,23 @@ subscribed to once, from `use-members.ts`, rather than duplicated in `use-teams.
 
 ### 10. Edge Cases — This Pass
 
-| Edge case | Status | Note |
-|---|---|---|
-| Query/network failure surfaced to the user | ✅ Fixed | H13 — global toast on any query error, plus a dedicated error+retry screen for core-shell load failures |
-| Submitting the current (unfinished) week | ✅ Fixed | H14 — confirmation dialog explains the lock-out before submitting; not a hard block |
-| Removed user's orphaned running timer | ✅ Fixed | M20 — Active Timers card and Manage → Entries picker both reach it now |
-| Manual entry across midnight | ✅ Fixed | M21 — "Ends after midnight" checkbox, split into one row per day like the timer |
-| Empty timesheet submitted via direct API call | ✅ Fixed | M22 — `submit_timesheet()` now rejects a week with zero entries server-side |
-| Editing an approved week's entries (admin) | ✅ Fixed | M23 — still allowed (payroll corrections), now flags `entries_modified_at` and shows it on the employee's Timesheet page |
-| Double-clicking Approve/Resend invite (pending members) | ✅ Fixed | L25 — per-row-and-action busy keys instead of one shared string |
-| Concurrent actions across two different pending approvals | ✅ Fixed | L26 — `busyIds` is now a `Set`, not a single shared value |
-| Multi-tab drift on projects/teams/clients/members | ✅ Fixed | L27 — Realtime added to all of them |
-| Double-clicking Start/Stop Timer | ✅ OK | `busy` state + the `time_entries_one_running_per_user` index both hold |
-| Double-submitting Add/Edit entry dialog | ✅ OK | `busy` state + the no-overlap `EXCLUDE` constraint both hold |
-| Starting a timer with no project selected | ✅ Blocked in UI | `TimerBar.toggle()` rejects with a toast before calling `startTimer` |
-| Starting a timer with no task selected | ⚠️ Unenforced | `startTimer`/DB never require a non-empty `task`; only reachable if a workspace has zero task categories |
-| Moving an entry into a locked week via edit | ✅ Blocked | `time_entries_update`'s `WITH CHECK` re-checks `week_is_locked()` against the *new* `entry_date` |
-| Un-approving an approved timesheet | ✅ By design (documented) | Still true post-audit — `review_timesheet()` only ever transitions rows currently `'submitted'`, no admin override (see original M19) |
+| Edge case                                                 | Status                    | Note                                                                                                                                  |
+| --------------------------------------------------------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| Query/network failure surfaced to the user                | ✅ Fixed                  | H13 — global toast on any query error, plus a dedicated error+retry screen for core-shell load failures                               |
+| Submitting the current (unfinished) week                  | ✅ Fixed                  | H14 — confirmation dialog explains the lock-out before submitting; not a hard block                                                   |
+| Removed user's orphaned running timer                     | ✅ Fixed                  | M20 — Active Timers card and Manage → Entries picker both reach it now                                                                |
+| Manual entry across midnight                              | ✅ Fixed                  | M21 — "Ends after midnight" checkbox, split into one row per day like the timer                                                       |
+| Empty timesheet submitted via direct API call             | ✅ Fixed                  | M22 — `submit_timesheet()` now rejects a week with zero entries server-side                                                           |
+| Editing an approved week's entries (admin)                | ✅ Fixed                  | M23 — still allowed (payroll corrections), now flags `entries_modified_at` and shows it on the employee's Timesheet page              |
+| Double-clicking Approve/Resend invite (pending members)   | ✅ Fixed                  | L25 — per-row-and-action busy keys instead of one shared string                                                                       |
+| Concurrent actions across two different pending approvals | ✅ Fixed                  | L26 — `busyIds` is now a `Set`, not a single shared value                                                                             |
+| Multi-tab drift on projects/teams/clients/members         | ✅ Fixed                  | L27 — Realtime added to all of them                                                                                                   |
+| Double-clicking Start/Stop Timer                          | ✅ OK                     | `busy` state + the `time_entries_one_running_per_user` index both hold                                                                |
+| Double-submitting Add/Edit entry dialog                   | ✅ OK                     | `busy` state + the no-overlap `EXCLUDE` constraint both hold                                                                          |
+| Starting a timer with no project selected                 | ✅ Blocked in UI          | `TimerBar.toggle()` rejects with a toast before calling `startTimer`                                                                  |
+| Starting a timer with no task selected                    | ⚠️ Unenforced             | `startTimer`/DB never require a non-empty `task`; only reachable if a workspace has zero task categories                              |
+| Moving an entry into a locked week via edit               | ✅ Blocked                | `time_entries_update`'s `WITH CHECK` re-checks `week_is_locked()` against the _new_ `entry_date`                                      |
+| Un-approving an approved timesheet                        | ✅ By design (documented) | Still true post-audit — `review_timesheet()` only ever transitions rows currently `'submitted'`, no admin override (see original M19) |
 
 ### 11. Status Summary
 
@@ -319,7 +320,7 @@ constraint on scope, not a coincidence — see the "Unnecessary" section.
 ### 12. Must-Have Gaps
 
 **H16. ✅ Fixed 2026-08-25. No entry-level ("Detailed") time report.** Reports (`src/routes/reports.tsx`) only
-ever offers two *aggregated* views — hours-by-project and hours-by-employee, both pre-summed by
+ever offers two _aggregated_ views — hours-by-project and hours-by-employee, both pre-summed by
 `project_hours_range`/`employee_hours_range` RPCs — with CSV export of those summary rows. There is
 no view anywhere in the app that lists individual time entries across people/projects/date ranges
 with filters, the way Clockify's Detailed report does. Manage → Entries (`TeamEntriesTab`) and the
@@ -426,6 +427,7 @@ predictions exactly.
 
 Along the way this surfaced real IronTrack data-quality issues the dry run's plain unmatched-list
 report wouldn't have caught on its own:
+
 - **5 accidentally-duplicated projects** (`Joanne Williams`, `Carol Stimpson`, `Monica Hill`,
   `Samala Robinson` each existed twice; `Jim O'Connor`/`Jim O' Connor` as an apostrophe-spacing
   near-duplicate) — confirmed as accidental and archived (not deleted — all were either empty or
@@ -479,7 +481,7 @@ accrual rules); Low if the decision is to remove it.
 **M25. ✅ Fixed 2026-08-25. Task categories are a flat, workspace-wide list — not scoped to a project.**
 `task_categories` (Settings → Admin → Task categories, `use-task-categories.ts`) is a single global
 list every project shares; `WorkspaceEntry.task` is a free-text label with no `task_id`, estimate,
-assignee, or completion state. Clockify's Tasks live *inside* a Project, each with their own
+assignee, or completion state. Clockify's Tasks live _inside_ a Project, each with their own
 estimate/assignee/status, and a time entry links to a specific task within its project.
 **Why it matters:** if Ironbrij's 13 teams work across many client projects with genuinely
 different task breakdowns per project (not just "Design / Dev / QA" shared workspace-wide), the
@@ -516,7 +518,7 @@ on `time_entries` already), this is UI + wiring, not schema work.
 only supports correcting its start time). It defaults to the selected project's own setting and
 keeps following it as the project changes, until the checkbox itself is touched once — then it's a
 fixed override for that entry, same as an existing entry's stored value is from the moment the
-dialog opens. `CopyYesterdayButton` (M33) now also carries over the *original* entry's billable
+dialog opens. `CopyYesterdayButton` (M33) now also carries over the _original_ entry's billable
 status when duplicating a day, rather than silently re-defaulting to the project's current setting.
 
 **M27. ✅ Fixed 2026-08-25. No project-level budget or estimated-hours tracking.** Clients already have this
@@ -526,7 +528,7 @@ logged hours against, no progress bar, no "over budget" signal anywhere `project
 `reports.tsx` renders.
 **Why it matters:** for fixed-scope or capped-hours project work (as opposed to open retainers,
 which the client-level subscription hours already cover), knowing you're approaching or over budget
-*before* the invoice is the main reason Clockify's budget feature gets used day to day.
+_before_ the invoice is the main reason Clockify's budget feature gets used day to day.
 **Recommended behavior:** an optional `budget_hours` (or `budget_amount`) column on `projects`,
 surfaced the same way client subscription hours already are — a remaining/over indicator on the
 project card and in Reports.
@@ -582,7 +584,7 @@ exist anywhere in this codebase yet.
 **Fixed (partially — built and wired, not yet deployed):** took exactly the recommended scope —
 just "timesheet submitted for your review," the rest of the mocked list left alone. A new
 `timesheet_submission_recipients()` `SECURITY DEFINER` RPC answers "who should be told" (re-verifies
-the caller owns a *submitted* timesheet with the given id before returning anyone — admins, plus
+the caller owns a _submitted_ timesheet with the given id before returning anyone — admins, plus
 managers sharing a team with the submitter, reusing `shares_team()` rather than reimplementing it),
 and a new `notify-timesheet-submitted` edge function (`supabase/functions/`) sends the actual email
 via Resend, called client-side (fire-and-forget, best-effort — a failed notification never blocks or
@@ -642,14 +644,14 @@ currently means re-creating each entry by hand or using the single-entry ↻ Rep
 entries onto today via `createEntry`, same pattern `repeatEntry` already uses per-entry.
 **Priority:** Low. **Complexity:** Low.
 
-*Status correction (Final Product Review pass, 2026-08-14): this finding's own marker was never
+_Status correction (Final Product Review pass, 2026-08-14): this finding's own marker was never
 updated when the Smart Automation audit built exactly this feature under M33 — verified live in
 `src/routes/time.tsx` (`CopyYesterdayButton`, line 586 at time of writing). Marking fixed here
-rather than leaving it permanently open.*
+rather than leaving it permanently open._
 
 **L31. ✅ Fixed 2026-08-25. Avatar upload is still a disabled placeholder.** `ProfileTab`
 (`src/routes/settings.tsx`) shows "Change avatar" disabled with a "coming soon" title — unchanged
-since the original audit's L21 pass made the *messaging* honest without building the feature.
+since the original audit's L21 pass made the _messaging_ honest without building the feature.
 **Priority:** Low. **Complexity:** Low (file upload to Supabase Storage + `avatar_url` column,
 which already exists on `profiles`).
 
@@ -767,7 +769,7 @@ clearing an approvals queue — measurably faster." No code was changed. Numberi
 the parity pass above; all findings start `⏳ Open`.
 
 **Ground rule applied throughout:** an automation only made this list if it saves real, repeated
-clicks/attention *and* is low-risk to get wrong. Anything that would need real AI, a background job
+clicks/attention _and_ is low-risk to get wrong. Anything that would need real AI, a background job
 scheduler, email infrastructure that doesn't exist yet, or guesses at things the app has no data to
 know for certain (who's on leave, whether a short entry was a mistake) either got downgraded in
 priority with the risk spelled out, or moved to the rejected list at the end.
@@ -776,12 +778,13 @@ priority with the risk spelled out, or moved to the rejected list at the end.
 
 **H19. ✅ Fixed.** No proactive reminder for unsubmitted past weeks. Nothing in the app told the
 person themselves "you have time logged in a past week that was never submitted." Manage →
-Approvals has `WeekStatusPanel` (`src/routes/manage.tsx`), but it's manager-facing, scoped to *this*
+Approvals has `WeekStatusPanel` (`src/routes/manage.tsx`), but it's manager-facing, scoped to _this_
 week only, and requires a manager to go looking — there was no equivalent pull for an employee's own
 Dashboard, and no push at all. Fixed in `src/routes/index.tsx`: a dismissible amber Dashboard banner
 (same visual pattern as the existing "N people waiting for approval" one) listing every past week
 that has logged entries but isn't `Submitted`/`Approved` yet, distinguishing a `Rejected` week
 ("sent back") from one that was simply never submitted, linking to `/timesheet` to act on it.
+
 - **Trigger:** Dashboard (`src/routes/index.tsx`) render, for the signed-in user.
 - **Logic:** every distinct past `weekStart` (before `useThisWeekStart()`) present in `entries` where
   `timesheetForWeek(weekStart)?.status` is not `"Submitted"` or `"Approved"` — both values already
@@ -805,8 +808,9 @@ that has logged entries but isn't `Submitted`/`Approved` yet, distinguishing a `
 
 **M30. ✅ Fixed (narrowed).** No "you haven't logged anything today" nudge. Distinct from H19 (which is about
 already-logged time never submitted) — this is about a day going by with nothing tracked at all.
+
 - **Trigger:** it's a weekday, past some cutoff local to the person's own timezone (`profiles
-  .timezone`, already stored and shown in Settings → Profile), and today has zero entries.
+.timezone`, already stored and shown in Settings → Profile), and today has zero entries.
 - **Logic:** `entries.filter(e => e.date === todayKey).length === 0`, gated on time-of-day computed
   against the user's stored timezone rather than the browser's.
 - **Result:** a soft, dismissible line on the Dashboard — "Nothing logged today yet" — not a modal,
@@ -826,7 +830,7 @@ already-logged time never submitted) — this is about a day going by with nothi
   unless a real leave calendar exists (M24) to suppress it on days off.
 
 Shipped narrower than originally scoped, per product decision: rather than a daily zero-entries
-check, it fires at most once a week — Friday afternoon, only if the *entire* week has nothing
+check, it fires at most once a week — Friday afternoon, only if the _entire_ week has nothing
 logged (`weekEntries.length === 0` in `src/routes/index.tsx`, reusing the week's entries already
 computed for the stat cards), local to the person's own stored timezone via
 `Intl.DateTimeFormat(..., { timeZone })` rather than a new date-library dependency. This avoids the
@@ -838,10 +842,11 @@ than a daily check.
 time. `ApprovalsPanel` (`src/routes/manage.tsx`) already tracks per-row busy state independently
 (`busyIds`, a `Set` — see L26), so nothing stops two actions running concurrently, but there's no
 way to act on more than one row from a single click.
+
 - **Trigger:** a manager/admin on Manage → Approvals with several pending timesheets that all look
   routine.
 - **Logic:** add row checkboxes and a "select all visible" control; "Approve selected" loops the
-  *existing* `reviewTimesheet(id, "Approved")` RPC per selected id — no new backend, since it's
+  _existing_ `reviewTimesheet(id, "Approved")` RPC per selected id — no new backend, since it's
   already a single-timesheet-scoped call with self-review already blocked server-side. Each call
   needs its own try/catch so one failure doesn't abort the rest of the batch.
 - **Result:** one confirmation dialog listing every person/week/hours about to be approved (not just
@@ -871,11 +876,12 @@ hours total before the batch fires, not just a count.
 
 **M32. ✅ Fixed.** The Task field's default didn't use recency, even though Project's already did.
 Both `TimerBar` (`time.tsx`) and `EntryFormDialog` already compute `orderByRecencyName(taskCategories,
-entries)` to build the dropdown's "Recent" group — but the *default* selection on open falls back to
+entries)` to build the dropdown's "Recent" group — but the _default_ selection on open falls back to
 `taskCategories[0]` (first in creation/alphabetical order), not the most recently used one, even
-though `recentProjects[0]` is exactly what the *project* field's default already does. Small,
+though `recentProjects[0]` is exactly what the _project_ field's default already does. Small,
 concrete inconsistency: `time.tsx`'s two `useEffect`s (project vs. task default) literally use
 different logic for what should be the same behavior.
+
 - **Trigger:** opening TimerBar with no running entry, or opening the Add-entry dialog, for the
   first time in a session.
 - **Logic:** change the task-default effect to `recentTasks[0]?.name ?? taskCategories[0]?.name ?? ""`
@@ -898,20 +904,21 @@ already used.
 already flagged the absence of a bulk-duplicate action; this pass adds the trigger/logic/edge-case
 detail that pass didn't go into, since "quick duplicate previous entry" was explicitly one of the
 categories asked about here.
+
 - **Trigger:** a "Copy yesterday" button on `ListView`'s "Today" card (`time.tsx`) — visible whenever
   yesterday had entries and today doesn't already fully match them.
 - **Logic:** clone each of yesterday's entries onto today via the existing `createEntry` call per
   entry (same function `repeatEntry`'s single-entry ↻ already uses), preserving project/task/
   description/duration but re-dating to today.
 - **Result:** a full duplicate day-of-entries in one click, instead of recreating each one by hand or
-  using ↻ Repeat (which starts a *live timer*, not a completed duplicate entry) one at a time.
+  using ↻ Repeat (which starts a _live timer_, not a completed duplicate entry) one at a time.
 - **UX:** should show what it's about to copy before committing (a short list, not a blind action),
   and respect `settings.allowManualEntry` the same way the existing Add-entry button already hides
   itself when manual entry is off.
 - **Edge cases:** the DB's overlap `EXCLUDE` constraint and `overlapsExisting` client check both
   already guard against double-booking if today already has something in the same time slot —
   copying should surface that per-entry, not fail the whole batch, same reasoning as M31's bulk
-  approve. A locked (submitted/approved) *today* should disable the button entirely, same as the
+  approve. A locked (submitted/approved) _today_ should disable the button entirely, same as the
   existing manual-entry gating.
 - **Complexity:** Low — no new mutation, just multiple calls to `createEntry`, which already exists.
 - **Risks:** Low. Worst case is a duplicate entry someone has to delete — already a one-click action
@@ -924,9 +931,10 @@ reported honestly rather than failing the whole batch. Hidden entirely when `all
 off or yesterday has nothing to copy.
 
 **L33. ✅ Fixed.** No lightweight "last week" recap. The Dashboard (`src/routes/index.tsx`) already
-computes `weekTotal`/`dayTotals`/`topProjects` for the *current* week — there's no equivalent
+computes `weekTotal`/`dayTotals`/`topProjects` for the _current_ week — there's no equivalent
 glance-back at the week that just ended, which is exactly when someone's about to decide whether
 their timesheet looks right before submitting it.
+
 - **Trigger:** Dashboard render, Monday/Tuesday of a new week (i.e., last week has ended).
 - **Logic:** the same aggregation `Dashboard` already does, just pointed at `addDays(weekStart, -7)`
   instead of `weekStart`, plus that week's `timesheetForWeek(...)?.status` for a one-word status.
@@ -968,7 +976,7 @@ any day and gating it added complexity without real benefit.
   one of the categories this audit was asked to look for: this is **already implemented** —
   `orderByRecency`/`orderByRecencyName` (`time-utils.ts`) already group both the TimerBar and
   Add-entry dialog's project/task pickers into "Recent" vs. the rest, based on real entry history.
-  The only gap found in that area is M32 above (the task field's *default selection*, not the
+  The only gap found in that area is M32 above (the task field's _default selection_, not the
   dropdown grouping, doesn't use that same recency data yet).
 
 ### 19. Already Automated — No Action Needed
@@ -977,8 +985,8 @@ Cross-checking every category this audit was asked to look for, so the list abov
 for the full picture:
 
 - **Recently used projects** — done (`orderByRecency`, TimerBar + Add-entry dialog).
-- **Recently used tasks** — the dropdown grouping is done (`orderByRecencyName`); only the *default
-  selection* isn't (M32).
+- **Recently used tasks** — the dropdown grouping is done (`orderByRecencyName`); only the _default
+  selection_ isn't (M32).
 - **Remembering previous selections** — effectively covered by the above: the project/task pickers
   default to what was most recently used, recomputed from real entries rather than a separate
   "remembered" setting that could drift from reality.
@@ -1015,7 +1023,7 @@ for the full picture:
   flag on).
 - **Already automated, no new work needed:** recently-used projects, overlap detection, automatic
   duration/overtime calculation, and forgotten-timer visibility are all already real, not mocked —
-  this pass's job was mostly finding the gaps *around* those, not rebuilding them.
+  this pass's job was mostly finding the gaps _around_ those, not rebuilding them.
 
 ---
 
@@ -1039,18 +1047,19 @@ wrong with the actual data." Numbering continues from the passes above; new find
 Core tables and their write paths, as actually implemented (not as documented elsewhere) — this is
 the map the findings below refer back to:
 
-| Table | Owner FK | Delete behavior | Write path |
-|---|---|---|---|
-| `profiles` | — (PK, no FK to `auth.users`) | `profiles_delete_admin` RLS policy + direct `GRANT DELETE` to `authenticated` | Direct table access (RLS-gated); role changes only via `set_member_role()` |
-| `time_entries` | `user_id → profiles(id) ON DELETE CASCADE` | cascades from profile deletion | Direct table access (RLS-gated: self/admin/manager-shares-team, `week_is_locked()`, `description_required()`, `manual_entry_allowed()`) |
-| `timesheets` | `user_id → profiles(id) ON DELETE CASCADE`, `reviewed_by → profiles(id)` **(no `ON DELETE` clause — defaults to `NO ACTION`)** | cascades from profile deletion; blocked if `reviewed_by` points at the profile being deleted | No direct INSERT/UPDATE/DELETE grant — only via `submit_timesheet()` / `review_timesheet()` |
-| `team_members`, `project_members` | `user_id → profiles(id) ON DELETE CASCADE` | cascades from profile deletion | Direct table access (`can_manage()`-gated); logged via `log_team_membership_change()` trigger (team_members only) |
-| `member_employment` | `user_id → profiles(id) ON DELETE CASCADE` | cascades from profile deletion | Direct table access, admin/manager-only |
-| `activity_log` | `actor_id`/`target_user_id → profiles(id) ON DELETE SET NULL` | survives profile deletion (nulled) | Append-only via `SECURITY DEFINER` functions/triggers — no grant to `authenticated` at all |
+| Table                             | Owner FK                                                                                                                       | Delete behavior                                                                              | Write path                                                                                                                              |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `profiles`                        | — (PK, no FK to `auth.users`)                                                                                                  | `profiles_delete_admin` RLS policy + direct `GRANT DELETE` to `authenticated`                | Direct table access (RLS-gated); role changes only via `set_member_role()`                                                              |
+| `time_entries`                    | `user_id → profiles(id) ON DELETE CASCADE`                                                                                     | cascades from profile deletion                                                               | Direct table access (RLS-gated: self/admin/manager-shares-team, `week_is_locked()`, `description_required()`, `manual_entry_allowed()`) |
+| `timesheets`                      | `user_id → profiles(id) ON DELETE CASCADE`, `reviewed_by → profiles(id)` **(no `ON DELETE` clause — defaults to `NO ACTION`)** | cascades from profile deletion; blocked if `reviewed_by` points at the profile being deleted | No direct INSERT/UPDATE/DELETE grant — only via `submit_timesheet()` / `review_timesheet()`                                             |
+| `team_members`, `project_members` | `user_id → profiles(id) ON DELETE CASCADE`                                                                                     | cascades from profile deletion                                                               | Direct table access (`can_manage()`-gated); logged via `log_team_membership_change()` trigger (team_members only)                       |
+| `member_employment`               | `user_id → profiles(id) ON DELETE CASCADE`                                                                                     | cascades from profile deletion                                                               | Direct table access, admin/manager-only                                                                                                 |
+| `activity_log`                    | `actor_id`/`target_user_id → profiles(id) ON DELETE SET NULL`                                                                  | survives profile deletion (nulled)                                                           | Append-only via `SECURITY DEFINER` functions/triggers — no grant to `authenticated` at all                                              |
 
 ### 22. Critical Integrity Issues
 
 **C6. ✅ Fixed.**
+
 - **Database object:** `time_entries.duration_minutes` (`integer`, nullable; introduced in
   `20260804000910_5a7605fb-...sql`).
 - **Problem:** `duration_minutes` has no server-side relationship to `start_time`/`end_time` at
@@ -1063,7 +1072,7 @@ the map the findings below refer back to:
   this app's own server-side business-rule backstops (`week_is_locked()`, `description_required()`,
   `manual_entry_allowed()`, the `time_entries_not_far_future` and
   `member_employment_hourly_rate_check` CHECKs, the no-overlap `EXCLUDE` constraint) has exactly
-  this shape — a client-side check *and* a database one — except this single field, which is the
+  this shape — a client-side check _and_ a database one — except this single field, which is the
   one every hours-based feature in the app actually sums.
 - **Impact:** a client bug, a browser extension, or literally opening devtools and editing the
   network request before it's sent can record `duration_minutes = 480` for a 5-minute span (or
@@ -1079,11 +1088,11 @@ the map the findings below refer back to:
 - **Recommended solution:** a `CHECK` constraint can't reference `end_time - start_time` in minutes
   cleanly across a nullable `end_time` (a running entry has no duration yet), so the right shape is
   either (a) a `CHECK (end_time IS NULL OR duration_minutes = CEIL(EXTRACT(EPOCH FROM (end_time -
-  start_time)) / 60))` if exact-match is desired (risk: any legitimate rounding difference between
+start_time)) / 60))` if exact-match is desired (risk: any legitimate rounding difference between
   the client's `Math.round` and Postgres's arithmetic would then hard-reject good writes — needs
   testing against the actual client rounding before adopting), or (b) a looser sanity bound (e.g.
   `duration_minutes >= 0 AND duration_minutes <= EXTRACT(EPOCH FROM (end_time - start_time)) / 60 +
-  1` allowing a minute of slack) plus a `BEFORE INSERT OR UPDATE` trigger that recomputes
+1` allowing a minute of slack) plus a `BEFORE INSERT OR UPDATE` trigger that recomputes
   `duration_minutes` from the timestamps server-side rather than trusting the client value at all —
   the latter is more robust and removes an entire class of drift rather than just bounding it.
   Either way, this needs the same "check existing data for violations first" caution as the
@@ -1102,8 +1111,9 @@ is no longer possible, not just bounded. A `time_entries_duration_non_negative` 
 backstop, safe to add with no data check needed since every existing row already satisfies it.
 
 **C7. ✅ Fixed.**
+
 - **Database object:** `public.profiles` — the `GRANT ... DELETE ON public.profiles TO
-  authenticated` and `profiles_delete_admin` RLS policy (both from
+authenticated` and `profiles_delete_admin` RLS policy (both from
   `20260804000910_5a7605fb-...sql`, never revisited since).
 - **Problem:** any admin can issue a direct `DELETE FROM profiles WHERE id = ...` (e.g.
   `supabase.from("profiles").delete().eq("id", x)` from the browser console, or any future code
@@ -1111,20 +1121,20 @@ backstop, safe to add with no data check needed since every existing row already
   permits it.
 - **Current behavior:** `time_entries.user_id`, `timesheets.user_id`, `team_members.user_id`,
   `project_members.user_id`, and `member_employment.user_id` are all `REFERENCES
-  profiles(id) ON DELETE CASCADE`. Deleting a `profiles` row therefore permanently deletes every
+profiles(id) ON DELETE CASCADE`. Deleting a `profiles` row therefore permanently deletes every
   time entry, timesheet (including **approved, locked** ones — cascade deletes are enforced by
   Postgres directly and do not go through `time_entries`'/`timesheets`' own RLS policies, so
   `week_is_locked()`'s admin-only-override-on-approved-weeks protection is simply bypassed, not
   overridden), team membership, project assignment, and employment/rate record that person ever
   had. This directly contradicts what Settings → Users' own remove-member dialog tells an admin:
-  *"Their past time entries, timesheets, and reports stay exactly as they are; nothing historical
-  is deleted."* That promise is kept by the app's actual "remove user" flow
+  _"Their past time entries, timesheets, and reports stay exactly as they are; nothing historical
+  is deleted."_ That promise is kept by the app's actual "remove user" flow
   (`removeUserAccess` in `admin.functions.ts`, which deliberately soft-deactivates via
   `is_active = false` and only ever deletes the `auth.users` row and `team_members` rows — its own
   comment explains this exact reasoning) — but the schema itself doesn't enforce or require that
   safer path; it just happens to be the only one the UI currently uses. One partial, accidental
   mitigation: `timesheets.reviewed_by → profiles(id)` has **no `ON DELETE` clause** (defaults to
-  `NO ACTION`), so deleting a profile that has ever reviewed *someone else's* timesheet fails
+  `NO ACTION`), so deleting a profile that has ever reviewed _someone else's_ timesheet fails
   outright with a raw foreign-key-violation error instead of succeeding — but this only protects
   managers/admins who've reviewed at least once, not the plain Members who make up most of a
   workforce and whose time-tracking history is exactly what this app exists to protect. There is
@@ -1159,6 +1169,7 @@ API call by an authenticated user, to delete a `profiles` row and cascade away s
 ### 23. High-Priority Issues
 
 **H20. ✅ Fixed 2026-08-14.**
+
 - **Database object:** `public.submit_timesheet(_week_start date)`
   (originally `20260804110000_timesheet_approvals.sql`, most recently redefined in
   `20260812070000_require_entries_to_submit.sql`).
@@ -1185,7 +1196,7 @@ API call by an authenticated user, to delete a `profiles` row and cascade away s
   prevent, and the person affected has no self-service recovery.
 - **Recommended solution:** wrap the check-and-submit sequence in `submit_timesheet()` with
   `PERFORM 1 FROM time_entries WHERE user_id = auth.uid() AND entry_date >= _week_start AND
-  entry_date < _week_start + 7 FOR UPDATE` (row-locking the candidate entries for the duration of
+entry_date < _week_start + 7 FOR UPDATE` (row-locking the candidate entries for the duration of
   the function) so a concurrent `startTimer` INSERT either commits first (and gets caught by the
   existence check) or blocks until this transaction finishes — or equivalently, take a
   transaction-scoped `pg_advisory_xact_lock(hashtext(auth.uid()::text))` at the top of the function
@@ -1204,15 +1215,16 @@ week already locked and gets rejected normally, or completes and commits before 
 ever runs its `_has_running` check.
 
 **H21. ✅ Fixed 2026-08-25.**
-- **Database object:** no single database object — this is about the *absence* of one: `stopTimer`'s
+
+- **Database object:** no single database object — this is about the _absence_ of one: `stopTimer`'s
   multi-day split (`use-time-entries.ts`) is implemented as two separate, sequential client-side
   Supabase calls (`INSERT` of later-day segments, then `UPDATE` of the original row) with no
   wrapping transaction or `SECURITY DEFINER` RPC tying them together.
 - **Problem:** the split isn't atomic. The code comment in `use-time-entries.ts` already
-  acknowledges the ordering was chosen deliberately ("insert later-day segments *before* touching
+  acknowledges the ordering was chosen deliberately ("insert later-day segments _before_ touching
   the original row" so a failure leaves the original "still running and visible, not silently
-  missing time") — which correctly protects against losing the *original* row, but doesn't protect
-  against losing the *later* segments.
+  missing time") — which correctly protects against losing the _original_ row, but doesn't protect
+  against losing the _later_ segments.
 - **Current behavior:** if a shift spans three days and the insert for day 2 succeeds but the
   insert for day 3 fails (or the browser tab closes, or the network drops) partway through the
   `for (const seg of laterSegments)` loop, `stopTimer` throws — but whatever segments already
@@ -1232,10 +1244,10 @@ ever runs its `_has_running` check.
   with no automated recovery path, for exactly the "working across midnight" scenario this schema
   already put real effort into handling correctly (H8 in the original audit).
 - **Severity:** High — data-loss risk is bounded (nothing is silently double-counted or
-  silently dropped without *some* visible symptom), but the recovery burden falls entirely on the
+  silently dropped without _some_ visible symptom), but the recovery burden falls entirely on the
   affected person noticing and fixing it by hand.
 - **Recommended solution:** move the whole split-and-close operation into a single `SECURITY
-  DEFINER` RPC (mirroring the shape `submit_timesheet`/`review_timesheet` already use) that inserts
+DEFINER` RPC (mirroring the shape `submit_timesheet`/`review_timesheet` already use) that inserts
   every segment and updates the original row inside one Postgres transaction — either all of it
   commits, or none of it does, and the client goes back to a single round trip instead of an
   N+1 sequence it can't make atomic on its own.
@@ -1251,7 +1263,7 @@ bypassed policies would have enforced is replicated explicitly inside the functi
 `is_active_user` (H15), `week_is_locked` with the same admin override, `description_required`, and
 `manual_entry_allowed` (preserved exactly as it already behaved — it already applied to a later-day
 segment insert since its `end_time` is set at insert time — not reconsidered as part of this fix).
-Note: the specific *overlap-collision* failure mode this finding originally described can no longer
+Note: the specific _overlap-collision_ failure mode this finding originally described can no longer
 happen, since C4's overlap constraint was separately removed on 2026-08-19 (see C4 above) — this fix
 still matters for every other partial-failure cause (network drop, tab close, a locked week).
 **Not independently verified against a live database** — this is the most structurally complex
@@ -1262,6 +1274,7 @@ H23's standing recommendation for every migration in this repo.
 ### 24. Medium-Priority Issues
 
 **M34. ✅ Fixed 2026-08-25.**
+
 - **Database object:** `timesheets.week_start` (date, `20260804110000_timesheet_approvals.sql`) and
   `submit_timesheet(_week_start date)`.
 - **Problem:** nothing constrains `week_start` to actually be a Monday — the app's own notion of
@@ -1272,7 +1285,7 @@ H23's standing recommendation for every migration in this repo.
   never happens through normal use. A direct RPC call
   (`supabase.rpc("submit_timesheet", { _week_start: "2026-08-13" })`, a Wednesday) would create a
   `timesheets` row keyed to that arbitrary date, and `week_is_locked()`'s `_entry_date >= week_start
-  AND _entry_date < week_start + 7` arithmetic would then lock a 7-day window that doesn't align
+AND _entry_date < week_start + 7` arithmetic would then lock a 7-day window that doesn't align
   with any Monday-start week the Timesheet/Grid/Reports UI ever renders — straddling parts of two
   different UI-displayed weeks.
 - **Impact:** low likelihood (requires bypassing the UI entirely), but if it happened, the
@@ -1289,16 +1302,17 @@ H23's standing recommendation for every migration in this repo.
 `_week_start := date_trunc('week', _week_start)::date;` as its first statement
 (`20260825040000_normalize_submit_timesheet_week_start.sql`). No `CHECK` constraint added alongside
 it: `authenticated` has no INSERT/UPDATE grant on `public.timesheets` at all, so `submit_timesheet()`
-is the *only* write path — normalizing there closes the gap completely, not just partially, making a
+is the _only_ write path — normalizing there closes the gap completely, not just partially, making a
 table-level constraint genuinely redundant rather than defense-in-depth.
 
 **M35. ✅ Fixed 2026-08-25.**
+
 - **Database object:** `time_entries.tag_ids` (`uuid[]`, `20260804000910_5a7605fb-...sql`).
 - **Problem:** `tag_ids` is a plain array column, not a real relationship — Postgres can't put a
   foreign key on individual array elements, so nothing enforces that every UUID inside it still
   refers to an existing `tags` row.
 - **Current behavior:** `deleteTag` (`use-tags.ts`) only ever runs `DELETE FROM tags WHERE id =
-  id` — confirmed by reading the function directly. `project_tags` cleans up correctly via its own
+id` — confirmed by reading the function directly. `project_tags` cleans up correctly via its own
   `ON DELETE CASCADE`, but `time_entries.tag_ids` is never touched. Every historical entry that
   carried the deleted tag keeps that now-dangling UUID in its array, permanently.
 - **Impact:** not user-visible today — `tag_usage()` joins `FROM tags`, so a dangling id simply
@@ -1310,7 +1324,7 @@ table-level constraint genuinely redundant rather than defense-in-depth.
 - **Recommended solution:** either accept this as a permanent, harmless artifact (arrays of a
   handful of short UUIDs per row cost very little), or have `deleteTag` remove the id from every
   entry's `tag_ids` first — `UPDATE time_entries SET tag_ids = array_remove(tag_ids, _tag_id)
-  WHERE _tag_id = ANY(tag_ids)` — wrapped into the same `SECURITY DEFINER` treatment as the tag
+WHERE _tag_id = ANY(tag_ids)` — wrapped into the same `SECURITY DEFINER` treatment as the tag
   delete itself, so it's atomic with the `tags` row deletion rather than a second client-side call
   that could itself fail independently.
 
@@ -1324,6 +1338,7 @@ workspace-wide, not just rows the caller could update directly under `shares_tea
 `deleteTag()` in `use-tags.ts` now calls the RPC instead of a bare `DELETE`.
 
 **M36. ✅ Fixed 2026-08-25.**
+
 - **Database object:** `time_entries.entry_date` (date) vs. `time_entries.start_time` (timestamptz),
   both `20260804000910_5a7605fb-...sql`.
 - **Problem:** nothing in the database enforces that `entry_date` actually corresponds to the local
@@ -1348,16 +1363,16 @@ workspace-wide, not just rows the caller could update directly under `shares_tea
   timezone" (that requires a join, which CHECK constraints can't do). The more tractable fix is a
   `BEFORE INSERT OR UPDATE` trigger that derives `entry_date` server-side from `start_time` plus a
   timezone looked up from `profiles` at write time (`(start_time AT TIME ZONE (SELECT timezone FROM
-  profiles WHERE id = NEW.user_id))::date`), rather than trusting the client-supplied value —
+profiles WHERE id = NEW.user_id))::date`), rather than trusting the client-supplied value —
   removing the possibility of drift entirely instead of trying to detect it after the fact.
 
 **Fixed:** took the recommended trigger option — a new `BEFORE INSERT OR UPDATE` trigger
 (`20260825060000_derive_entry_date_from_timezone.sql`) recomputes `entry_date` server-side from
-`start_time` interpreted through the entry owner's *current* `profiles.timezone`, on every write,
+`start_time` interpreted through the entry owner's _current_ `profiles.timezone`, on every write,
 same pattern C6/H20 already established for `duration_minutes`. Plain `SECURITY INVOKER` — no
 elevated privilege needed, since `profiles_select_all` already lets any active authenticated user
 read any profile's timezone. **Known accepted edge case, documented in the migration, not fixed
-here:** H8/M21's multi-day split still splits at *browser*-local midnight, not the entry owner's
+here:** H8/M21's multi-day split still splits at _browser_-local midnight, not the entry owner's
 `profiles.timezone` — if those genuinely differ, a split entry's segments can straddle this
 trigger's day boundary differently than the browser-time split intended. Making the split itself
 timezone-aware is a separate, larger change this finding didn't ask for.
@@ -1365,16 +1380,17 @@ timezone-aware is a separate, larger change this finding didn't ask for.
 ### 25. Low-Priority Issues
 
 **L34. ✅ Fixed 2026-08-25.**
+
 - **Database object:** `public.profiles` — specifically the client-side bootstrap insert in
   `use-members.ts` that creates a person's own profile row on first sign-in (`supabase.from
-  ("profiles").insert({ id: uid, ... })`), not a schema object itself.
+("profiles").insert({ id: uid, ... })`), not a schema object itself.
 - **Problem:** that insert has no `.catch()` — it's a bare `.then(() => qc.invalidateQueries(...))`
   with no error handler.
 - **Current behavior:** under normal conditions this succeeds and is idempotent-by-construction
   (guarded by `profilesQ.data.some((p) => p.id === uid)` first). But if it fails — a transient
   network error, or a genuine race between two tabs open simultaneously on a brand-new account's
   very first load both attempting the insert (the second would hit `profiles`' own primary key and
-  fail with a `23505` unique violation, which is actually the *correct*, safe outcome for the
+  fail with a `23505` unique violation, which is actually the _correct_, safe outcome for the
   table, but the promise rejection from it is silently swallowed) — nothing surfaces that failure
   to the person. They're left on whatever loading/empty state renders for "no profile exists yet,"
   indistinguishable from the app still loading, with no retry affordance.
@@ -1392,7 +1408,7 @@ timezone-aware is a separate, larger change this finding didn't ask for.
 
 **Fixed:** took the recommended option, with one adjustment noted below. `use-members.ts`'s bootstrap
 effect now checks the resolved `{ error }` (Supabase's query builder resolves rather than rejects on
-a Postgres/API error, so the old bare `.then()` was silently ignoring `error` even when it *did*
+a Postgres/API error, so the old bare `.then()` was silently ignoring `error` even when it _did_
 fire) and toasts "Couldn't set up your account" for anything other than a `23505` unique violation
 (the harmless race case — Realtime's own `profiles` subscription already picks up the other tab's
 successful insert and invalidates). A second `.then()` callback (not a chained `.catch()` — the
@@ -1471,10 +1487,11 @@ finding around it.
 ### 27. Findings
 
 **H22. ✅ Fixed.**
+
 - **Current workflow:** a manager or admin has no way to know whether anything is waiting for their
   review without opening Manage and clicking into the Approvals tab specifically.
   `app-shell.tsx`'s nav badge logic only ever shows two things: `pendingCount` (pending
-  *sign-ups*, on Settings) and `unseenActivityCount` (on Manage, but tied to the *Activity* tab,
+  _sign-ups_, on Settings) and `unseenActivityCount` (on Manage, but tied to the _Activity_ tab,
   not Approvals). `pendingApprovals.length` — already computed in `workspace-store.tsx` and used
   by `ApprovalsPanel` itself — drives nothing outside that one tab.
 - **Problem:** the single most time-sensitive manager action in the app (a submitted timesheet
@@ -1483,7 +1500,7 @@ finding around it.
   that they should.
 - **Why it matters:** Dashboard already has a whole banner pattern built for exactly this shape of
   problem (`pendingCount > 0` → amber card, `src/routes/index.tsx`) — for admin-facing pending
-  *sign-ups*. The same-shaped, arguably higher-stakes problem for pending *timesheets* has nothing
+  _sign-ups_. The same-shaped, arguably higher-stakes problem for pending _timesheets_ has nothing
   equivalent, which means the thing most likely to actually block someone (an employee waiting on
   approval to know their week is settled) is the thing least likely to be noticed promptly.
 - **Recommended improvement:** badge the "Manage" nav item with `pendingApprovals.length` (or a
@@ -1503,11 +1520,12 @@ banner — "N timesheets waiting on your review," gated on `canManage`, linking 
 Manage → Approvals — sitting above the existing pending-signups banner it was modeled on.
 
 **M37. ✅ Fixed.**
+
 - **Current workflow:** reviewing a submitted timesheet in `ApprovalsPanel` (Manage → Approvals)
   already expands to show the real entries behind it (`ApprovalEntries`) — but that view is
   read-only. If a manager spots something that needs fixing (wrong project, a typo in the
   description, a time that looks off), their only in-context option is **Send back** — rejecting
-  the *entire* week with a note and waiting for the employee to fix and resubmit it. To correct it
+  the _entire_ week with a note and waiting for the employee to fix and resubmit it. To correct it
   directly (an admin can, and a manager can for their own team, via `TeamEntriesTab`), they have to
   leave Approvals entirely, go to Manage → Entries, re-open the member picker, find the same
   person again, and page the week navigator back to the same week they were just looking at —
@@ -1541,6 +1559,7 @@ landing here on a `Submitted` week still sees it read-only per the existing lock
 them the same "why can't I edit this" context in place, it doesn't change who's allowed to edit.
 
 **M38. ✅ Fixed.**
+
 - **Current workflow:** Reports (`src/routes/reports.tsx`) offers exactly five date-range choices —
   `computeRange()`'s `this_week` / `this_month` / `last_30` / `this_quarter` / `this_year` — with
   no way to enter an arbitrary start/end date.
@@ -1564,13 +1583,14 @@ every other preset, guarded against an inverted or empty range. The chart/table 
 actual `from`–`to` dates instead of a generic "Custom range" label once selected.
 
 **M39. ✅ Fixed.**
+
 - **Current workflow:** every member-heavy manager surface is either a flat, unfilterable
   `<Select>` or an unfilterable table: `TeamEntriesTab`'s member picker (`manage.tsx`), `ScheduleTab`'s
   roster table (`manage.tsx`), `WeekStatusPanel`'s status list (`manage.tsx`), and Settings →
   Users' approved-members table (`UsersTab`, `settings.tsx`, which does at least paginate at 10 per
   page, but still has no search or team filter ahead of that pagination).
 - **Problem:** none of these let a manager type a name to jump to someone, or narrow the list to
-  just their own team (relevant for an admin — every one of these shows *all* active members for
+  just their own team (relevant for an admin — every one of these shows _all_ active members for
   an admin, unfiltered, unlike a manager's own view, which is already narrowed to shared-team
   members by `relevantMembers`'s existing `isAdmin` branch).
 - **Why it matters:** this workspace's own seed data models 13 teams — at that scale, scrolling a
@@ -1594,6 +1614,7 @@ its existing pagination. Each surface only shows the filter bar once its member 
 threshold (>8), so it doesn't add clutter to small teams.
 
 **M40. ✅ Fixed.**
+
 - **Current workflow:** `ActivityTab` (`manage.tsx`) renders every event in `activityLog`,
   grouped by week, with no filter of any kind.
 - **Problem:** there's no way to answer "did anyone review X's timesheet" or "who changed Y's
@@ -1601,7 +1622,7 @@ threshold (>8), so it doesn't add clutter to small teams.
 - **Why it matters:** this is the literal "Review changes made by managers/admins" item this audit
   was asked to look for. The log itself is solid (already covers approvals, role changes, team
   membership, and entry edits-by-others, per the original audit's H11/M20 work) — it just doesn't
-  scale to being *searched* the longer a workspace has been running, only *browsed*.
+  scale to being _searched_ the longer a workspace has been running, only _browsed_.
 - **Recommended improvement:** a person filter (`<Select>` of members, matching against
   `actorId`/`targetUserId`) and/or an action-type filter, applied client-side over the already-loaded
   `activityLog` — no new query needed, this is the same shape of filter Reports already has for
@@ -1619,8 +1640,9 @@ by; a filtered-to-nothing state gets its own "no matches" message distinct from 
 empty-log state.
 
 **L35. ✅ Fixed.**
+
 - **Current workflow:** `WeekStatusPanel` (Manage → Approvals, `manage.tsx`) shows each team
-  member's current-week timesheet *status* (Approved/Submitted/Rejected/Not submitted) but never
+  member's current-week timesheet _status_ (Approved/Submitted/Rejected/Not submitted) but never
   their actual hours. Seeing "who's logged how many hours this week" means leaving Manage
   entirely, going to Reports, switching to the "By employee" tab, and setting the date preset to
   "This week."
@@ -1629,7 +1651,7 @@ empty-log state.
   context-switch pages for a number that's directly adjacent, conceptually, to the status badge
   already shown.
 - **Why it matters:** the literal "View weekly team hours" item this audit asked about — the
-  closest existing surface (`WeekStatusPanel`) shows *whether* someone submitted, not *how much*
+  closest existing surface (`WeekStatusPanel`) shows _whether_ someone submitted, not _how much_
   they logged, which is often the more useful of the two at a glance.
 - **Recommended improvement:** show each row's current-week total alongside the status badge,
   using `employeeHoursForRange` (already exists, already used by Reports for exactly this
@@ -1644,6 +1666,7 @@ leaves the hours column blank rather than breaking the status list, which is the
 half of this panel.
 
 **L36. ✅ Fixed.**
+
 - **Current workflow:** `TeamEntriesTab` (Manage → Entries, `manage.tsx`) navigates week-by-week
   via prev/next chevrons only (`offset` state), with no "Today"/reset shortcut.
 - **Problem:** after paging back several weeks for one person, then switching to a different
@@ -1710,7 +1733,7 @@ directly against the code rather than trusting prior summaries. One verification
 stating up front rather than burying in a footnote: this environment has no linked Supabase CLI
 session and no service-role credential (`npx supabase migration list --linked` fails with an
 IPv6/network error before it can even authenticate), so nothing here confirms what's actually
-*deployed* to the live project — only what's committed. That gap is itself the single largest new
+_deployed_ to the live project — only what's committed. That gap is itself the single largest new
 finding below (H23).
 
 ### 29. Verification of Prior Audits
@@ -1739,7 +1762,7 @@ doc's own prior wording:
   feature it asked for (`CopyYesterdayButton`, confirmed live in `src/routes/time.tsx`); updated to
   `✅ Fixed` above with a note explaining the correction. Every other finding in this section is
   confirmed **still open**, re-checked directly: `reports.tsx` still has exactly two views (`"By
-  project"` / `"By employee"`, line ~98) with no entry-level Detailed tab (H16) and no `$`/rate
+project"` / `"By employee"`, line ~98) with no entry-level Detailed tab (H16) and no `$`/rate
   column anywhere (H17); `time-off.tsx` still imports `timeOffBalances`/`timeOffHistory` straight
   from `@/lib/mock-data` (M24); `entry-form-dialog.tsx` still has no `is_billable` field at all
   (M26); `reports.tsx` never references `is_billable` on either tab (M28); Settings → Notifications
@@ -1792,12 +1815,13 @@ doc's own prior wording:
 **H23. ⚠️ Improved — the specific launch-blocking risk is closed, the systemic gap isn't. No
 confirmed migration-deployment pipeline — every "Fixed" DB-level finding in this document is a
 committed file, not a verified live change.**
+
 - **Current behavior:** `supabase/config.toml` only pins a `project_id`; there's no
   `.github/workflows/`, no CI of any kind, and no script anywhere in `package.json` that applies
   migrations. `npx supabase migration list --linked` fails outright in this environment
   (`LegacyDbConfigIpv6Error`) before it can even compare local vs. remote migration state.
 - **Why it matters:** this document has, across five prior passes, described 7 Critical and roughly
-  a dozen High findings as "✅ Fixed" specifically *because* a migration file exists — but a
+  a dozen High findings as "✅ Fixed" specifically _because_ a migration file exists — but a
   migration file existing in `supabase/migrations/` and that migration having actually run against
   Ironbrij's real project (`cdzsgstdndbebdatijav`) are two different facts, and nothing in this
   repository, this environment, or this document confirms the second one. If — for any reason —
@@ -1830,6 +1854,7 @@ unless a real pipeline exists; this was a one-time manual check, not a fix to th
 
 **H24. ✅ Fixed 2026-08-14. `is_active_user()` protects `time_entries`/`timesheets` only — nine other
 tables' `SELECT` policies still trust a live JWT alone.**
+
 - **Current behavior:** H15 (QA audit) added `is_active_user(auth.uid())` directly into the
   self-access branches of `time_entries` and `timesheets` policies specifically, and folded it into
   `has_role()`/`can_manage()` for everything gated by those. But `profiles_select_all`,
@@ -1865,6 +1890,7 @@ changed.
 
 **H25. ✅ Fixed 2026-08-14. The signed-in user's own `time_entries` fetch has no row limit — a heavy
 user's 400-day history can silently truncate exactly the way H10 already fixed once.**
+
 - **Current behavior:** `useTimeEntriesData`'s `entriesQ` (`src/lib/workspace/use-time-entries.ts`,
   around line 89) fetches every row for the signed-in user from `ENTRIES_HISTORY_DAYS` (400 days)
   ago to now, with `.gte("entry_date", ...)` and `.order(...)` but **no `.limit()` and no
@@ -1897,6 +1923,7 @@ here.
 
 **H26. ✅ Fixed 2026-08-14. `resendInvite()` calls `listUsers()` with no pagination — silently can't
 find anyone past the first 50 accounts.**
+
 - **Current behavior:** `resendInvite` (`src/lib/admin.functions.ts`, line 140) calls
   `supabaseAdmin.auth.admin.listUsers()` with no arguments, then does
   `users.users.find((u) => u.email?.toLowerCase() === data.email.toLowerCase())`. Supabase's admin
@@ -1922,12 +1949,13 @@ skipping `listUsers()`'s pagination problem entirely instead of looping around i
 
 **M41. ✅ Fixed 2026-08-25. Two unbounded, workspace-wide fetches with no cap: `timesheetsQ` and
 `activity_log`'s missing index.**
+
 - **Current behavior:** `useTimesheetsData`'s `timesheetsQ` (`src/lib/workspace/use-timesheets.ts`,
   line 18) fetches **every** `timesheets` row RLS lets the viewer see — for an admin, that's every
   timesheet ever submitted, workspace-wide, forever, with no `.limit()` and no date bound. Loaded on
   every session for anyone with `canManage`. Separately, `activity_log` is correctly capped at 300
   rows client-side (`use-activity-log.ts`, `.limit(300)`) but that query's `ORDER BY created_at
-  DESC LIMIT 300` has no matching index — `CREATE INDEX ... ON activity_log` never appears anywhere
+DESC LIMIT 300` has no matching index — `CREATE INDEX ... ON activity_log` never appears anywhere
   in `supabase/migrations/`, unlike `time_entries_user_date_idx` and `timesheets_user_week_idx`,
   which do exist for exactly the columns their own queries filter/sort by.
 - **Why it matters:** both degrade gracefully today (small dataset, since this is a pre-launch
@@ -1954,6 +1982,7 @@ Timesheet's own week-nav already refuses to page any further (H10/L22). Added
 
 **M42. ✅ Fixed 2026-08-14. Three permanently-"coming soon" Manage tabs, recommended for removal
 once already, still present.**
+
 - **Current behavior:** `manage.tsx`'s `sections` array still includes `expenses`, `kiosks`, and
   `invoices` — each rendering the same static "coming soon"/"scope still being confirmed" empty
   state it did at the Clockify Parity audit, which explicitly recommended removing them (section 15
@@ -1984,6 +2013,7 @@ wording from the route's own `head()` meta description.
 
 **M43. ⚠️ Improved 2026-08-25 — a test runner and a scoped starting set of tests now exist; the specific integration-test ask below is still open.** No automated test suite, no CI — every fix in this document (40+ and counting) is
 verified by hand, once, and never re-verified automatically again.**
+
 - **Current behavior:** confirmed via `package.json` (`scripts`: `dev`, `build`, `build:dev`,
   `preview`, `lint`, `format` — no `test`) and the absence of any `.github/workflows/` directory.
   CLAUDE.md states this plainly too ("There is no test suite / test script in this repo
@@ -2016,8 +2046,40 @@ instance to test against, which this environment doesn't have, and still rely en
 verification. **Still open:** the CI wiring, and the actual integration tests against those
 functions once a real database is reachable from wherever this runs next.
 
+**Further improved 2026-09-02 — CI wiring and the integration tests themselves now exist, but
+neither has actually been run yet.** This machine has the Supabase CLI but no Docker (`supabase
+start` needs it), so the local half of this finding's own blocker is still unresolved here — the
+new pieces are built the same way H18's import script was built-and-validated-before-cutover: ready,
+reasoned through, but not yet exercised for real.
+
+- `.github/workflows/ci.yml` — new, this repo had no CI at all before this (nothing ran
+  `lint`/`typecheck`/`test` automatically on push). Installs deps, lints, typechecks, then uses
+  `supabase/setup-cli` and `supabase start` — GitHub's own Ubuntu runners ship Docker preinstalled,
+  which sidesteps this machine's exact blocker entirely — to bring up a throwaway local
+  Postgres+Auth+Storage stack with every migration under `supabase/migrations/` applied, before
+  running `npm run test`.
+- `src/lib/workspace/rpc.integration.test.ts` — the actual integration tests this finding's
+  "Recommended action" named: `submit_timesheet` (empty-week block, running-timer block, happy path,
+  re-submit block), `review_timesheet` (self-review block, no-shared-team block, happy-path approve,
+  reviewing-twice block), and `set_member_role` (non-admin block, happy-path change, last-admin
+  protection, and demoting an admin once a second one exists). Fixture users/team/entries are created
+  and torn down per run via the service-role client; the RPCs under test are always called through a
+  per-persona signed-in client (real `auth.uid()`, not a service-role bypass), matching how the app
+  itself calls them. Guarded to no-op (one visibly-skipped test, not a failure) unless
+  `TEST_SUPABASE_URL`/`TEST_SUPABASE_ANON_KEY`/`TEST_SUPABASE_SERVICE_ROLE_KEY` are set, so a
+  contributor without Docker still gets a clean `npm run test`.
+- `tsc --noEmit`, `npm run lint`, and `npm run test` (37 tests: 36 passing, this new file's one
+  placeholder correctly skipped) are all clean in this environment — but that only proves the
+  no-database skip path works. **What's still unverified:** the workflow has never actually run
+  against a live `supabase start` (the `-o env` key-name matching it depends on is written
+  defensively — case-insensitive substring match, with the raw output logged for debugging — for
+  exactly this reason), and none of the nine RPC assertions above have executed against a real
+  Postgres instance yet. First real verification happens on this branch's first push once CI picks
+  it up, or from a machine with Docker.
+
 **M44. ✅ Fixed — already resolved before this document was updated to say so.** The Projects tab has no search, filter, or pagination — the busiest list in the app
 has less findability than the Clients tab one click away in the same file.**
+
 - **Current behavior:** `projects.tsx:198-294` renders every project as an unconditional
   `projects.map(...)` grid of cards, with no name search, no team/client filter, and no pagination.
   The **Clients** tab in the exact same file already has all three — a search input, a "Show
@@ -2049,11 +2111,12 @@ done.
 
 **L37. ✅ Fixed 2026-08-25. No `typecheck` script in `package.json` despite the codebase relying on `tsc
 --noEmit` for verification.**
+
 - **Current behavior:** `package.json`'s `scripts` has `lint` (ESLint) and `format` (Prettier) but
   nothing that runs the TypeScript compiler in check-only mode — every verification pass in this
   document's history (including the Manager & Admin Workflow implementation immediately preceding
   this one) has had to invoke `npx tsc --noEmit` directly rather than a documented `npm run
-  typecheck`.
+typecheck`.
 - **Why it matters:** minor, but it's the kind of thing that's easy to forget to run precisely
   because it isn't in the list of documented commands (`CLAUDE.md`'s own "Commands" section doesn't
   mention it either).
@@ -2067,6 +2130,7 @@ documented commands") would otherwise still be true even with the script added.
 **L38. ✅ Fixed 2026-08-14. `/manage`'s deep-linked `TeamEntriesTab` doesn't re-sync on a second
 consecutive deep-link while already mounted — a real, narrow bug in this session's own M37
 implementation.**
+
 - **Current behavior:** `TeamEntriesTab` (`manage.tsx`) seeds its `memberId`/`offset` state from
   `initialMemberId`/`initialWeekStart` props via `useState(initialMemberId ?? "")` and a
   `useState(() => ...)` initializer — both of which only ever run once, on mount. `ManagePage`
@@ -2080,9 +2144,8 @@ implementation.**
   different tab always remounts cleanly, since the tab itself changes) — but it's a real
   data-display bug, not a hypothetical one, in code that shipped this same session.
 - **Recommended solution:** key the component on the target itself —
-  `<TeamEntriesTab key={\`${entriesTarget?.memberId}-${entriesTarget?.weekStart}\`} .../>` in
-  `ManagePage` — forcing a clean remount (and therefore a fresh `useState` initializer run) on every
-  distinct deep-link, one line, no logic change inside `TeamEntriesTab` itself.
+  `<TeamEntriesTab key={\`${entriesTarget?.memberId}-${entriesTarget?.weekStart}\`} .../>`in`ManagePage`— forcing a clean remount (and therefore a fresh`useState`initializer run) on every
+distinct deep-link, one line, no logic change inside`TeamEntriesTab` itself.
 - **Priority:** Low — narrow reachability, no data is lost or written incorrectly, just displayed
   against the wrong context until the person re-selects manually.
 - **Complexity:** Trivial — a single `key` prop.
@@ -2096,11 +2159,12 @@ remount (and fresh `useState` initializer run) on every distinct deep-link targe
 `<Select>` with no explanatory copy if every project is archived or none exist yet — a first-day
 workspace with no projects created hits this immediately, sees an empty dropdown, then only
 learns why on submit via a generic "Pick a project first" error.
+
 - **Priority:** Low. **Complexity:** Very low — one conditional empty-state message per picker.
 
 **Fixed:** a small muted-text hint ("No projects yet — ask an admin to create one") now appears
 under both pickers when there are zero active projects. Worth noting: `TimerBar`'s picker is no
-longer ever *truly* empty since the "Allow timer-less starts" change (2026-08-19) added a permanent
+longer ever _truly_ empty since the "Allow timer-less starts" change (2026-08-19) added a permanent
 "No project" option to it — this finding's original "cryptic empty dropdown" framing applies more
 squarely to `EntryFormDialog` now, which still requires a real project for a manual entry and has no
 such fallback option. Fixed in both anyway, for the same "why is there nothing to pick" clarity.
@@ -2110,6 +2174,7 @@ with zero hours that week.** `timesheet-grid.tsx` includes any project that's ei
 or has at least one non-zero day — meaning every active project shows up regardless of whether it
 was touched that week, which for a workspace with many concurrent projects turns the weekly grid
 into mostly `—` cells to scroll past to find the two or three rows with real data.
+
 - **Priority:** Low today, worth revisiting as Medium once project counts grow. **Complexity:**
   Low — filter to rows with a non-zero weekly total, or add a "hide empty rows" toggle.
 
@@ -2123,6 +2188,7 @@ behaviors rather than picking one.
 history across a new, duplicate `profiles` row instead of reusing the old one.** Found live in
 production, not via code review — the user noticed "Andre" and "Mark" each appearing as two/three
 separate bars on the Reports "By employee" chart.
+
 - **Root cause:** `removeUserAccess()` (`admin.functions.ts`) revokes access by calling
   `supabaseAdmin.auth.admin.deleteUser()` — which deletes the underlying Supabase Auth account —
   then sets `profiles.is_active = false` on that same row. It deliberately does **not** delete the
@@ -2301,6 +2367,7 @@ pass identified, not rewritten into a status list:
 ### 35. Final Roadmap
 
 **Before launch:**
+
 - ~~Confirm (via real Supabase project access) that every migration under `supabase/migrations/` —
   especially `20260814000000` and `20260814010000` — has actually reached production (H23).~~
   **Done 2026-08-14** — verified directly against the Supabase dashboard; both migrations are live.
@@ -2335,6 +2402,7 @@ pass identified, not rewritten into a status list:
   (H20)~~ **Done 2026-08-14** — `20260814030000_atomic_submit_timesheet_lock.sql`.
 
 **After launch (soon, not day one):** — **all done 2026-08-25**, see each finding's own entry above.
+
 - ~~H16 (Detailed report) and H17 (cost/billing report)~~ **Done.**
 - ~~M26, M27, M28 — per-entry billable override, project budgets, billable/non-billable Reports
   split.~~ **Done.**
@@ -2349,6 +2417,7 @@ pass identified, not rewritten into a status list:
 - ~~M41 — bound `timesheetsQ`, index `activity_log`.~~ **Done.**
 
 **Future / optional:**
+
 - M24 — a real (minimal) time-off workflow, or a decision to remove the page entirely — a product
   call, not an engineering one. **Still open** — explicitly deferred 2026-08-25 rather than guessed
   at from this environment.
@@ -2413,13 +2482,13 @@ deliberately reverted on 2026-08-19 — see C4's own entry near the top of this 
 
   **Reasoning:** the actual core loop — start a timer or log time manually, submit a week, have a
   manager review and approve it, see it in Reports — is genuinely solid: six audit passes deep, with
-  real defense-in-depth (client check *and* database backstop) on every business rule that matters,
+  real defense-in-depth (client check _and_ database backstop) on every business rule that matters,
   not a prototype wearing a UI. Nothing found in this final pass changes that assessment; if the
   question were only "does the core workflow work correctly," the answer would be ✅ Ready.
   What keeps this at ⚠️ rather than ✅ now that H23's specific risk is resolved: (1) H18's
   historical-data import is built and tested but not yet run against production — "switch tomorrow"
   implies the data has actually moved, not just that a tool exists to move it; (2) three
-  genuine day-one product gaps for *this specific business* — entry-level billing backup (H16), a
+  genuine day-one product gaps for _this specific business_ — entry-level billing backup (H16), a
   cost/billing figure (H17), and any notification delivery at all (M29) — would each generate real
   friction and support questions in week one, even though none of them are bugs; (3) the three dead
   Manage tabs (M42) are a small but real, easily-fixed first impression problem. None of these are
@@ -2546,12 +2615,13 @@ Eight new migrations: `20260825000000_employee_billable_hours_range.sql`,
 `claude/timer-stop-issues-1hj575`.
 
 **Not done this pass, by explicit scope decision, not oversight:**
+
 - **L31** (avatar upload) and **L32** (structured weekly-schedule storage) remain open — see each
   finding's own entry / the roadmap above for why.
 - **M43** (automated tests) remains open — the one item from both prior Top 10 lists this pass didn't
   touch.
 - Client subscription-hours-remaining (H17) and the new project-budget status (M27) were both
-  deliberately *not* added to Reports — both are all-time figures, not date-ranged, and would sit
+  deliberately _not_ added to Reports — both are all-time figures, not date-ranged, and would sit
   oddly in an otherwise entirely date-ranged page. Consistent scope call across both findings, not
   two different answers to the same question.
 
@@ -2645,7 +2715,7 @@ rounds combined:
   emptier/less-used one of each pair), **8 people who already existed as `clients` rows but had no
   matching `projects` row** (created, archived by default since purely historical), and a
   **"VA name | Client" naming convention** Clockify used for the `Tessa Jetson`/`Tex He
-  Yit`/`Tracey Clarke` accounts that the exact-string matching alone couldn't resolve — confirmed
+Yit`/`Tracey Clarke` accounts that the exact-string matching alone couldn't resolve — confirmed
   with the user and mapped, including abbreviated variants (`Tex`, `Tracey FT`, etc.) a naive
   suffix-only check would have missed.
 - Added `--allow-unmatched-projects` to the import script itself (default off) so the long tail of
@@ -2679,7 +2749,7 @@ as two/three separate bars. Traced with the same live-database access used for t
   reinvite cycles for the same email silently accumulate duplicate profiles forever.
 - Confirmed with the user before touching anything, then cleaned up the two real clusters this had
   already produced in production: reassigned the one orphan's real `time_entries` and `timesheets`
-  (submitter *and* reviewer) rows onto each person's canonical active profile, deleted the 5 resulting
+  (submitter _and_ reviewer) rows onto each person's canonical active profile, deleted the 5 resulting
   empty duplicates. 17 profiles → 12.
 - Closed the root cause in code: `inviteMembers()` now folds any same-email inactive orphan's data
   onto the newly-invited id automatically, so this can't silently recur.
@@ -2729,3 +2799,156 @@ existing schedule data was lost or required a live-database backfill to move ove
 **Updated final remainder:** M24 (product decision, still explicitly deferred) and the DB-dependent
 half of M43 (still needs a live Postgres instance) — the only two items this document has been
 carrying that are still actually open. **L32 is closed.**
+
+### Seventh round, same day (2026-09-02) — M43's CI wiring and RPC integration tests built, not yet run
+
+The DB-dependent half of M43 (integration tests against `submit_timesheet`/`review_timesheet`/
+`set_member_role`) has been carried as "needs a live Postgres instance this environment doesn't
+have" since 2026-08-25. That's still true of this machine specifically — checked directly this
+round: Supabase CLI is present, Docker is not — but GitHub's own Ubuntu Actions runners ship Docker
+preinstalled, which sidesteps the blocker without needing anything installed here. Built accordingly
+— see M43's own entry above (section 17) for the full account:
+
+- `.github/workflows/ci.yml` — this repo had no CI at all before this. Lints, typechecks, then
+  `supabase start`s a throwaway local stack and runs `npm run test` against it.
+- `src/lib/workspace/rpc.integration.test.ts` — the actual RPC tests, one happy path plus the named
+  business rule for each of the three functions, guarded to skip cleanly (not fail) with no database
+  configured.
+
+**What this round could not do:** actually run any of it. No Docker here means `supabase start`
+has never executed in this environment, so the CI workflow's `-o env` key-name assumptions and all
+nine new RPC assertions are unverified — reasoned through and internally consistent, but not proven
+against a real Postgres instance the way, say, H18's cutover eventually was against production. First
+real signal arrives whenever this branch's CI actually runs, or from a machine with Docker.
+
+**Updated final remainder:** M24 (product decision, still explicitly deferred) — the only item left
+that isn't purely "waiting to actually execute for the first time." M43's DB-dependent half is now
+built rather than unstarted, but stays open until a real CI run (or a Docker-equipped machine)
+confirms it actually passes.
+
+### Eighth round, same day (2026-09-02) — CI's first real run found a genuine, previously-unknown migration bug
+
+PR #35's CI actually ran against a live Postgres instance for the first time (Docker preinstalled on
+GitHub's Ubuntu runners, exactly as planned). Two real bugs surfaced, neither related to M43 or L32
+directly — this is the first time in this document's history anyone has replayed every migration
+from an empty database in one continuous run, and both bugs only exist in that specific path:
+
+1. **A real backlog of pre-existing Prettier drift** across ~15 hand-maintained files, invisible
+   until now because this repo never had CI running `lint` before. Fixed via `npm run format` (every
+   diff hand-verified as whitespace/wrapping only). The 5 Lovable/Supabase-generated files under
+   `src/integrations/` were deliberately left unformatted and added to `.prettierignore` instead —
+   reformatting them would just get overwritten with their own style on Lovable's next sync,
+   permanently re-breaking this same check.
+2. **A genuine migration-replay bug**, found on the very next CI run after fixing (1):
+   `20260804000910_5a7605fb-...sql`'s demo seed data anchors its `time_entries` rows to
+   `date_trunc('week', now())` — "start of whatever calendar week the migration happens to run in."
+   Eight days later, `20260812040000_reject_far_future_entries.sql` adds a `CHECK (start_time <= now()
+   + interval '1 day')` constraint. Against the real, already-migrated production database this was
+   never a problem — those two migrations ran eight real days apart, so the seed data was already
+   safely in the past by the time the constraint arrived. But replayed back-to-back from empty (what
+   `supabase start` does), the seed's Monday-through-Friday spread can land several days ahead of
+   "now" depending purely on which day of the week the replay happens to execute — a real,
+   day-of-week-dependent flakiness bug that could never have been found without actually doing a
+   from-scratch replay, which nothing before this CI run had ever done. Fixed by anchoring the seed to
+   `date_trunc('day', now()) - interval '7 days'` instead — always 3-7 days in the past regardless of
+   which day it's replayed on. Edited the original migration file directly rather than adding a
+   corrective one: it's pure demo data with no schema impact, and editing it has zero effect on the
+   one production database that already applied it under the old definition — migrations aren't
+   re-run against an already-migrated project, so this only changes what a *fresh* replay (CI, a new
+   dev machine) produces, which is exactly the bug.
+
+**Still unverified:** whether the RPC integration tests themselves (the actual point of this work)
+pass against a real instance — this round's CI failure happened during migration replay, before the
+test suite ever got to run. First real signal on that specific question is still pending the next CI
+run.
+
+---
+
+## Casual Service Monitoring
+
+**M46. ⚠️ Improved 2026-09-04 — built and tested where this environment can reach; the actual
+historical cutover has not run.** Ironbrij's accounts team maintains "Casual Service Monitoring.xlsx"
+entirely by hand: a 22,276-row Excel log of ad-hoc/casual billable work VAs do for clients outside
+the standard subscription retainer, feeding a KPI dashboard and five pivot-table "Summary Report"
+sheets. Reverse-engineered from the workbook itself (no prior spec existed): each row carries a
+**Service Category** (`Ironbrij` — internal/no-charge, `Paid Casual Service`, `VIP Client`,
+`Promotional`), a **VA Paid Date** the accounts team sets by hand, and a hand-typed **Hours After
+Adding Increment** — a cell comment on that column ("Ironbrij is excluded from the additional
+increment") confirms a minimum-billing-increment rounding rule applied to the three paid categories
+only. A separate side-table tracks each client's last-serviced date and an Active/Inactive churn
+signal. None of this existed anywhere in IronTrack before this pass.
+
+**Why it matters:** every one of these facts currently lives only in a spreadsheet one team
+maintains by hand — there's no server-side backstop, no report anyone else can pull, and no
+visibility into which clients have gone quiet on casual work specifically (distinct from
+`clients.is_active`, a manually-set flag for the relationship overall that can legitimately disagree
+with casual-service recency).
+
+**Built, following the same per-entry pattern M26 already established for `is_billable`:**
+
+- Two new nullable columns on `time_entries` — `service_category` (a new
+  `casual_service_category` enum) and `va_paid_at` (date) — `NULL` on both meaning "not a
+  casual-monitoring entry at all," the default and unchanged state for every pre-existing row.
+  `20260903000000_casual_service_monitoring.sql`.
+- A tunable `workspace_settings.casual_billing_increment_hours` (default `0.25`, confirmed correct
+  with the product owner) rather than a hardcoded rounding size. `20260903020000_...sql`.
+- `src/lib/casual-billing.ts`'s `billableHoursForCasualEntry()` — the increment-rounding rule,
+  computed at report time only, never mutating stored hours, and explicitly scoped to the three paid
+  categories (`ironbrij` passes through unrounded, per the workbook's own comment). Unit-tested
+  (`casual-billing.test.ts`) — this is a deliberately narrow, re-confirmed exception to the *general*
+  time-rounding feature this document's own "Unnecessary" section rejected above, not a reversal of
+  that call.
+- A `casual_client_last_service()` `SECURITY DEFINER` RPC for the client-health signal — computed
+  fresh on every read, not stored, same reasoning `useClientBudgets` already established for budget
+  status (nothing in this repo runs a background job to keep a stored value fresh). A per-client
+  rollup by category (`casualServiceSummaryForRange`, originally planned as a second aggregate RPC)
+  was deliberately **not** built that way: summing `duration_minutes` server-side and rounding the
+  total afterward gives a different, wrong number than rounding each task line first — the workbook's
+  own per-task increment. The Reports rollup below instead derives from already-fetched per-entry
+  data client-side, same as `detailedEntriesForRange` already supplies the Detailed tab.
+- `markCasualEntriesPaid` (`src/lib/admin.functions.ts`) — admin-only via a `createServerFn` +
+  `has_role` check, not a plain RLS-gated update. Unlike `clients` (manager/admin-only write policy),
+  `time_entries_update` lets a row's own owner write to it — required for everyday self-edits — and
+  RLS is row-scoped, not column-scoped, so there's no policy shape that lets a VA edit their own
+  entry's description but not its `va_paid_at`. Mirrors `inviteMembers`'s exact template.
+- A Service Category picker in `entry-form-dialog.tsx`, next to the existing Billable checkbox.
+- Reports' new "Casual Service" tab — the client x category rollup, CSV export, gated `canManage`
+  same as Reports' other cross-team tabs.
+- Manage's new "Casual Service" tab (`src/components/casual-service-tab.tsx`) — the admin *action*
+  view (bulk mark-paid), living in Manage rather than Reports on the same split this app already
+  uses everywhere else: Reports is read/export-only, Manage is where row-level privileged actions
+  (Approvals, Entries) live.
+- A "Casual service inactive" badge on Projects and Clients, next to the existing budget badges —
+  shown only for a client that has appeared in the casual log at least once (absent from the map
+  otherwise, same "absent means not tracked" convention `useClientBudgets` uses for a client with no
+  `subscriptionHours` cap — a retainer-only client with zero casual history isn't a churn signal).
+- `scripts/import-casual-service-history.mjs` — the one-time historical import, built following
+  H18's exact template (dry-run default, `--commit` required, service-role key, `--mapping` file for
+  unresolved names, nothing ever guessed or auto-created). Its pure helper functions (Excel-serial and
+  locale date parsing, IANA-timezone-aware wall-clock-to-UTC conversion, the CSV parser) were verified
+  by hand against real values pulled from the actual workbook during reverse-engineering (e.g. serial
+  `45166` → `2023-08-28`, matching that row's own "Aug 28 – Sep 03, 2023" week label) — this
+  environment has no way to run the script itself against a live database.
+
+**What's still open:**
+
+- **The actual cutover import hasn't run.** Same shape as H18 before its own cutover: the tool exists
+  and its logic is verified in isolation, but running it with `--commit` against the real 22,276-row
+  export — plus the `--mapping` iteration H18's own history shows this kind of name-matching always
+  needs — hasn't happened. VA names in the source are informal first names (`Vellih`, `Rocky`,
+  `Andre`), so a `--mapping` file is all but certain to be needed, not just a fallback.
+- **Nothing in this pass has been verified against a real Postgres instance** — the `SECURITY
+  DEFINER` RPC, the RLS-adjacent admin-only write path, and the trigger-driven `duration_minutes`
+  interaction the import script relies on are reasoned through and internally consistent, but
+  unproven the way this document's own M43 initiative is still tracking for the rest of this
+  codebase's RPCs. First real signal arrives whenever this branch's CI (or a linked Supabase project)
+  actually exercises them.
+- **The historical-hours compromise.** The workbook only ever recorded the already-*rounded* hours
+  per casual line — there's no way to recover true raw tracked time for old rows. Confirmed acceptable
+  with the product owner: imported rows will show `duration_minutes` equal to that historical rounded
+  figure (making the rounding rule a no-op on old rows), while every entry logged going forward stores
+  genuinely raw time.
+- **The client-inactivity threshold** (currently a hardcoded 90 days, `CLIENT_INACTIVE_THRESHOLD_DAYS`
+  in `workspace-store.tsx`) is a placeholder — the workbook's own staleness rule wasn't recoverable
+  from its formulas. Worth getting a real number from accounts, and promoting it to a
+  `workspace_settings` field (like the billing increment) if it needs to be tunable without a deploy.

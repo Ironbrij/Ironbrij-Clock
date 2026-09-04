@@ -27,6 +27,16 @@ export const toDbReviewStatus = (s: "Approved" | "Rejected"): "approved" | "reje
 
 export const NO_CLIENT = "Internal — no client";
 
+/** M46: Casual Service Monitoring category — null (the far-more-common case) means "not a casual-monitoring entry at all," distinct from 'ironbrij' (tracked casual work, just unbilled). See docs/audit-findings.md M46. */
+export type CasualServiceCategory = "ironbrij" | "paid_casual" | "vip_client" | "promotional";
+
+export const CASUAL_SERVICE_CATEGORY_LABELS: Record<CasualServiceCategory, string> = {
+  ironbrij: "Ironbrij (internal, no charge)",
+  paid_casual: "Paid Casual Service",
+  vip_client: "VIP Client",
+  promotional: "Promotional",
+};
+
 export type Team = { id: string; name: string; color: string };
 
 export type WorkspaceMember = {
@@ -97,6 +107,8 @@ export type WorkspaceSettings = {
   currency: string;
   requireDescriptions: boolean;
   allowManualEntry: boolean;
+  /** M46: casual-billing rounding increment (hours) — see src/lib/casual-billing.ts. */
+  casualBillingIncrementHours: number;
 };
 
 export type WorkspaceEntry = {
@@ -111,6 +123,10 @@ export type WorkspaceEntry = {
   running: boolean;
   /** M26: per-entry override, independent of the project's own default — set at creation from the project's billable flag, but editable afterward. */
   billable: boolean;
+  /** M46: null means not a Casual Service Monitoring entry at all. */
+  serviceCategory: CasualServiceCategory | null;
+  /** M46: accounts-team-set date the VA was paid for this line — null until then. Admin-only write, via markCasualEntriesPaid — never settable through updateEntry. */
+  vaPaidAt: string | null;
 };
 
 export type WorkspaceTimesheet = {
@@ -150,6 +166,10 @@ export type DetailedEntry = {
   minutes: number;
   billable: boolean;
   startTime: string;
+  /** M46: null means not a Casual Service Monitoring entry at all. */
+  serviceCategory: CasualServiceCategory | null;
+  /** M46: accounts-team-set date the VA was paid for this line — null until then. */
+  vaPaidAt: string | null;
 };
 
 /** One posted announcement — `teamIds` is empty for an 'everyone' post, non-empty for a team-scoped one. */

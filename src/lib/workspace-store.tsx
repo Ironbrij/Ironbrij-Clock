@@ -2,7 +2,7 @@ import { createContext, useContext, useEffect, useMemo, useState, type ReactNode
 import { useQueryClient } from "@tanstack/react-query";
 import type { Session } from "@supabase/supabase-js";
 import { supabase } from "@/integrations/supabase/client";
-import { dayIndexOf, startOfWeek } from "@/lib/time-utils";
+import { dayIndexOf, fromDateKey, startOfWeek } from "@/lib/time-utils";
 import {
   currencies,
   dotColors,
@@ -12,6 +12,7 @@ import {
   timezones,
   toDbReviewStatus,
   toTimesheetStatus,
+  type CasualServiceCategory,
   type DaySchedule,
   type DbTimesheetStatus,
   type DetailedEntry,
@@ -214,6 +215,10 @@ type WorkspaceContextValue = {
   >;
   /** H16: every entry in a date range that time_entries' own RLS lets the viewer see — backs the Reports page's Detailed tab. */
   detailedEntriesForRange: (from: string, to: string) => Promise<DetailedEntry[]>;
+  /** M46: last casual-service date per client, company-wide — backs useClientHealth below. */
+  casualClientLastServiceForAll: () => Promise<Map<string, string | null>>;
+  /** M46: admin-only — see markCasualEntriesPaid's own comment in use-time-entries.ts. */
+  markCasualEntriesPaid: (entryIds: string[], paidDate: string | null) => Promise<void>;
 
   invitePeople: (input: { emails: string[]; teamId: string; role: Role }) => Promise<number>;
   resendInvite: (email: string) => Promise<void>;
@@ -269,6 +274,8 @@ type WorkspaceContextValue = {
     endDate?: string;
     /** M26: omit to fall back to the project's own billable default. */
     billable?: boolean;
+    /** M46: no project-level fallback — omit/null for "not casual service." */
+    serviceCategory?: CasualServiceCategory | null;
   }) => Promise<void>;
   updateEntry: (
     entryId: string,
@@ -278,6 +285,8 @@ type WorkspaceContextValue = {
       description?: string;
       /** M26: independent of the project's own default — omit for no change. */
       billable?: boolean;
+      /** M46: omit for no change; null clears it. Excludes vaPaidAt — admin-only, via markCasualEntriesPaid. */
+      serviceCategory?: CasualServiceCategory | null;
       date?: string;
       startTime?: string;
       /** `null` means "still running, leave it open" — see use-time-entries.ts's updateEntry. */
@@ -409,6 +418,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     deleteEntry,
     entriesForTag,
     detailedEntriesForRange,
+    casualClientLastServiceForAll,
+    markCasualEntriesPaid,
   } = useTimeEntriesData(enabled, uid, projects, settings);
 
   const {
@@ -518,6 +529,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       employeeClientHoursForRange,
       entriesForTag,
       detailedEntriesForRange,
+      casualClientLastServiceForAll,
+      markCasualEntriesPaid,
       invitePeople,
       resendInvite,
       updateMemberRole,
@@ -601,6 +614,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     deleteEntry,
     entriesForTag,
     detailedEntriesForRange,
+    casualClientLastServiceForAll,
+    markCasualEntriesPaid,
     timesheets,
     pendingApprovals,
     entriesForApproval,
@@ -733,6 +748,58 @@ export function useProjectBudgets() {
     }
     return map;
   }, [projects]);
+}
+
+export type ClientHealthStatus = {
+  clientId: string;
+  lastServiceDate: string;
+  daysSinceLastService: number;
+  /** M46: mirrors the accounts team's workbook Active/Inactive side-table — a client whose last casual-service entry is older than CLIENT_INACTIVE_THRESHOLD_DAYS is flagged inactive for casual-service purposes specifically. Distinct from WorkspaceClient.active (a separate, manually-set flag for the client relationship overall) — the two can legitimately disagree. */
+  inactive: boolean;
+};
+
+// Placeholder — the workbook's own staleness threshold wasn't captured in
+// the reverse-engineering pass; confirm the real number with accounts.
+const CLIENT_INACTIVE_THRESHOLD_DAYS = 90;
+
+/**
+ * M46: client-health status computed purely from already-fetched data,
+ * same pattern as useClientBudgets/useProjectBudgets above rather than a
+ * stored/kept-fresh column — nothing in this repo runs scheduled jobs, so
+ * computing fresh on read avoids ever going stale. `lastServiceByClient`
+ * comes from casualClientLastServiceForAll(), fetched by whichever route
+ * renders the Casual Service view (kept out of always-loaded workspace
+ * state, same reasoning detailedEntriesForRange is a callback rather than
+ * eagerly-loaded).
+ *
+ * A client that has never had a single casual-service entry is simply
+ * absent from the map (same "absent means not tracked, not automatically
+ * flagged" convention useClientBudgets already established for a client
+ * with no subscriptionHours cap) — the workbook's own Active/Inactive
+ * side-table only ever listed clients who'd appeared in the casual log at
+ * least once, so a retainer-only client with zero casual history isn't a
+ * churn signal, it's just outside this program entirely.
+ */
+export function useClientHealth(lastServiceByClient: Map<string, string | null>) {
+  const { clients } = useWorkspace();
+  return useMemo(() => {
+    const map = new Map<string, ClientHealthStatus>();
+    const today = new Date();
+    for (const c of clients) {
+      const lastServiceDate = lastServiceByClient.get(c.id);
+      if (!lastServiceDate) continue;
+      const daysSinceLastService = Math.floor(
+        (today.getTime() - fromDateKey(lastServiceDate).getTime()) / 86_400_000,
+      );
+      map.set(c.id, {
+        clientId: c.id,
+        lastServiceDate,
+        daysSinceLastService,
+        inactive: daysSinceLastService > CLIENT_INACTIVE_THRESHOLD_DAYS,
+      });
+    }
+    return map;
+  }, [clients, lastServiceByClient]);
 }
 
 /** Hours per project per weekday for the given week, from the signed-in person's entries. */

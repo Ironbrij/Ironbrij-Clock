@@ -27,11 +27,16 @@ export function MultiSelectList({
             <label className="flex cursor-pointer items-center gap-3 px-3 py-2.5 transition-colors hover:bg-muted/50">
               <Checkbox checked={selected.includes(o.id)} onCheckedChange={() => onToggle(o.id)} />
               {o.color && (
-                <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: o.color }} />
+                <span
+                  className="h-2.5 w-2.5 shrink-0 rounded-full"
+                  style={{ backgroundColor: o.color }}
+                />
               )}
               <span className="min-w-0">
                 <span className="block truncate text-sm font-medium">{o.label}</span>
-                {o.hint && <span className="block truncate text-xs text-muted-foreground">{o.hint}</span>}
+                {o.hint && (
+                  <span className="block truncate text-xs text-muted-foreground">{o.hint}</span>
+                )}
               </span>
             </label>
           </li>

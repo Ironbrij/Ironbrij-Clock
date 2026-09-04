@@ -1,10 +1,10 @@
 # Ironbrij Time Tracker
 
-Build the frontend for an internal time-tracking web app for Ironbrij, 
+Build the frontend for an internal time-tracking web app for Ironbrij,
 
-called "Ironbrij Time" (Ironbrij / Virtual Assistant Australia is a digital 
+called "Ironbrij Time" (Ironbrij / Virtual Assistant Australia is a digital
 
-agency and VA staffing company — this app is for internal use only by our 
+agency and VA staffing company — this app is for internal use only by our
 
 own staff across 13 teams, not a public product).
 
@@ -28,4 +28,3 @@ cd <repository-name>
 npm i
 npm run dev
 ```
-

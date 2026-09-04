@@ -113,9 +113,7 @@ export function useProjectsData(
         weekHours: (h?.week_minutes ?? 0) / 60,
         memberIds: pm.filter((x) => x.project_id === p.id).map((x) => x.user_id),
         tagIds: pt.filter((x) => x.project_id === p.id).map((x) => x.tag_id),
-        taskCategoryIds: ptc
-          .filter((x) => x.project_id === p.id)
-          .map((x) => x.task_category_id),
+        taskCategoryIds: ptc.filter((x) => x.project_id === p.id).map((x) => x.task_category_id),
         billable: p.is_billable,
         archived: p.is_archived,
         budgetHours: p.budget_hours,
@@ -131,12 +129,7 @@ export function useProjectsData(
   ]);
 
   const writeProjectLinks = useCallback(
-    async (
-      projectId: string,
-      tagIds: string[],
-      memberIds: string[],
-      taskCategoryIds: string[],
-    ) => {
+    async (projectId: string, tagIds: string[], memberIds: string[], taskCategoryIds: string[]) => {
       await supabase.from("project_tags").delete().eq("project_id", projectId);
       await supabase.from("project_members").delete().eq("project_id", projectId);
       await supabase.from("project_task_categories").delete().eq("project_id", projectId);

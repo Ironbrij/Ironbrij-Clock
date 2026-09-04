@@ -30,6 +30,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
+import { CasualServiceTab } from "@/components/casual-service-tab";
 import { Combobox } from "@/components/combobox";
 import { EntryFormDialog } from "@/components/entry-form-dialog";
 import { Input } from "@/components/ui/input";
@@ -122,6 +123,7 @@ const sections: { id: string; label: string }[] = [
   { id: "entries", label: "Entries" },
   { id: "approvals", label: "Approvals" },
   { id: "activity", label: "Activity" },
+  { id: "casual", label: "Casual Service" },
 ];
 
 function ManagePage() {
@@ -193,6 +195,8 @@ function ManagePage() {
           initialMemberId={entriesTarget?.memberId}
           initialWeekStart={entriesTarget?.weekStart}
         />
+      ) : tab === "casual" ? (
+        <CasualServiceTab />
       ) : null}
     </AppShell>
   );
@@ -981,7 +985,13 @@ function ScheduleRow({
   isAdmin,
   updateMemberTimezone,
 }: {
-  member: { id: string; name: string; initials: string; timezone: string; avatarUrl: string | null };
+  member: {
+    id: string;
+    name: string;
+    initials: string;
+    timezone: string;
+    avatarUrl: string | null;
+  };
   employment: WorkspaceEmployment | undefined;
   updateMemberEmployment: (
     userId: string,

@@ -1,0 +1,101 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          # @supabase/supabase-js's Realtime client needs native WebSocket
+          # support (Node 22+) even though this test file never actually
+          # uses Realtime — the client constructor initializes it
+          # unconditionally. Node 20 threw "Node.js detected but native
+          # WebSocket not found" the first time this test file actually ran.
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Set up Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      # M43: spins up a throwaway local Postgres + Auth + Storage stack
+      # (Docker is already preinstalled on this runner) and applies every
+      # migration under supabase/migrations/ — exactly what
+      # src/lib/workspace/rpc.integration.test.ts needs to actually exercise
+      # submit_timesheet()/review_timesheet()/set_member_role() instead of
+      # skipping itself, which is what happens with no database reachable.
+      - name: Start local Supabase
+        id: supabase_start
+        run: supabase start
+
+      # `-o env` variable names are matched by substring (case-insensitive)
+      # rather than assumed exact, since this hasn't been run end-to-end
+      # against a real CLI output yet — the `cat` below makes the raw output
+      # visible in the log so a naming mismatch is easy to diagnose and fix
+      # rather than failing silently. None of this is a secret: `supabase
+      # start` generates a fresh, disposable local dev instance every run.
+      #
+      # `extract` also strips wrapping quotes (single or double) and
+      # surrounding whitespace from the value — `-o env` output isn't
+      # guaranteed to be bare `KEY=value` with no quoting, and a stray quote
+      # character is exactly the kind of thing that turns a real URL into
+      # "Invalid supabaseUrl: Must be a valid HTTP or HTTPS URL" downstream.
+      - name: Export local Supabase connection info
+        run: |
+          supabase status -o env > /tmp/supabase-status.env
+          cat /tmp/supabase-status.env
+
+          extract() {
+            grep -iE "_?$1=" /tmp/supabase-status.env | head -1 | cut -d= -f2- \
+              | sed -e 's/^[[:space:]"'"'"']*//' -e 's/[[:space:]"'"'"']*$//'
+          }
+
+          TEST_SUPABASE_URL="$(extract API_URL)"
+          TEST_SUPABASE_ANON_KEY="$(extract ANON_KEY)"
+          TEST_SUPABASE_SERVICE_ROLE_KEY="$(extract SERVICE_ROLE_KEY)"
+
+          # Visible, safe debug — the URL is not sensitive, and the keys are
+          # local-only throwaway values regenerated every run, but only
+          # their presence/length is printed rather than the full value,
+          # just to keep the log tidy.
+          echo "Parsed TEST_SUPABASE_URL: $TEST_SUPABASE_URL"
+          echo "Parsed TEST_SUPABASE_ANON_KEY length: ${#TEST_SUPABASE_ANON_KEY}"
+          echo "Parsed TEST_SUPABASE_SERVICE_ROLE_KEY length: ${#TEST_SUPABASE_SERVICE_ROLE_KEY}"
+
+          {
+            echo "TEST_SUPABASE_URL=$TEST_SUPABASE_URL"
+            echo "TEST_SUPABASE_ANON_KEY=$TEST_SUPABASE_ANON_KEY"
+            echo "TEST_SUPABASE_SERVICE_ROLE_KEY=$TEST_SUPABASE_SERVICE_ROLE_KEY"
+          } >> "$GITHUB_ENV"
+
+      - name: Run tests (unit + M43 RPC integration)
+        run: npm run test
+
+      - name: Stop local Supabase
+        # Only if it actually started — `if: always()` alone would also run
+        # this after an earlier failure that skipped "Start local Supabase"
+        # entirely, and the Supabase CLI wouldn't even be installed yet.
+        if: always() && steps.supabase_start.outcome == 'success'
+        run: supabase stop
