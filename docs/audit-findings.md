@@ -2979,7 +2979,33 @@ the cutover is done and verified — same as `import-clockify-history.mjs` was a
   with the product owner: imported rows will show `duration_minutes` equal to that historical rounded
   figure (making the rounding rule a no-op on old rows), while every entry logged going forward stores
   genuinely raw time.
-- **The client-inactivity threshold** (currently a hardcoded 90 days, `CLIENT_INACTIVE_THRESHOLD_DAYS`
-  in `workspace-store.tsx`) is a placeholder — the workbook's own staleness rule wasn't recoverable
-  from its formulas. Worth getting a real number from accounts, and promoting it to a
-  `workspace_settings` field (like the billing increment) if it needs to be tunable without a deploy.
+
+**Fixed 2026-09-08 — client-inactivity threshold promoted to a setting.** Took the recommended
+option: `workspace_settings.client_inactive_threshold_days` (integer, `NOT NULL DEFAULT 90`, `CHECK
+> 0`, `20260908000000_client_inactive_threshold_setting.sql`), same additive pattern as
+`casual_billing_increment_hours`. `useClientHealth` (`workspace-store.tsx`) now reads
+`settings.clientInactiveThresholdDays` instead of the module-level `CLIENT_INACTIVE_THRESHOLD_DAYS`
+constant it used before; a matching "Casual service inactivity threshold (days)" input sits under the
+billing-increment field on Settings → Admin, same validation shape (must parse, must be > 0). Default
+stays 90 until accounts confirms the workbook's real number — this only removes the "needs a code
+deploy to change" part of the finding, not the "what should the number actually be" part, which is
+still a call for accounts to make, not engineering. `tsc --noEmit`, `npm run lint` (touched files —
+`prettier/prettier` caught two lines, fixed via `npm run format` on `settings.tsx` only), and `npm run
+test` (44 passed, 1 skipped) all clean.
+**Confirmed live 2026-09-08 — and this environment turns out to have real Supabase CLI/project
+access after all.** Every prior pass of this document, including this finding's own first draft
+above, asserted "this environment has no linked Supabase CLI session or service-role credential" —
+that was true when originally written, but is no longer accurate: `supabase projects list` shows an
+active login, and `cdzsgstdndbebdatijav` (the real Ironbrij-Clock project) is already linked
+(`supabase/.temp/project-ref`). `supabase migration list --linked` was run before touching anything,
+confirming every migration through `20260904000000` was already applied remote-side and exactly one
+(`20260908000000`, this one) was pending — then `supabase db push --linked` applied it, re-verified
+by re-running `migration list` (now shows `remote: "20260908000000"`) and by directly querying the
+live row (`supabase db query --linked "SELECT client_inactive_threshold_days,
+casual_billing_increment_hours FROM workspace_settings"` → `90`, `0.25`). This is the first migration
+in this document's entire history actually confirmed applied from within this environment itself,
+rather than via a product-owner-run manual check (H23) or a separate production cutover session
+(H18, M46's own historical import). Worth a flag, not just a footnote: if CLI/project access is
+reliably available going forward, H23's "no CI/automated deployment check" systemic gap may be
+substantially closeable — but that's worth confirming deliberately (e.g. is this a one-off grant for
+this session, or standing access) rather than assumed from one successful push.

@@ -109,6 +109,8 @@ export type WorkspaceSettings = {
   allowManualEntry: boolean;
   /** M46: casual-billing rounding increment (hours) — see src/lib/casual-billing.ts. */
   casualBillingIncrementHours: number;
+  /** M46: days since a client's last casual-service entry before useClientHealth flags it inactive. */
+  clientInactiveThresholdDays: number;
 };
 
 export type WorkspaceEntry = {
