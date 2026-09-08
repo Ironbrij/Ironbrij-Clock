@@ -14,7 +14,7 @@ export function useSettingsData(enabled: boolean) {
       const { data, error } = await supabase
         .from("workspace_settings")
         .select(
-          "company_name, logo_url, timezone, weekly_hours, currency, require_descriptions, allow_manual_entry, casual_billing_increment_hours",
+          "company_name, logo_url, timezone, weekly_hours, currency, require_descriptions, allow_manual_entry, casual_billing_increment_hours, client_inactive_threshold_days",
         )
         .maybeSingle();
       if (error) throw error;
@@ -33,6 +33,7 @@ export function useSettingsData(enabled: boolean) {
       requireDescriptions: s?.require_descriptions ?? false,
       allowManualEntry: s?.allow_manual_entry ?? true,
       casualBillingIncrementHours: Number(s?.casual_billing_increment_hours ?? 0.25),
+      clientInactiveThresholdDays: Number(s?.client_inactive_threshold_days ?? 90),
     };
   }, [settingsQ.data]);
 
@@ -49,6 +50,8 @@ export function useSettingsData(enabled: boolean) {
       if (patch.allowManualEntry !== undefined) row["allow_manual_entry"] = patch.allowManualEntry;
       if (patch.casualBillingIncrementHours !== undefined)
         row["casual_billing_increment_hours"] = patch.casualBillingIncrementHours;
+      if (patch.clientInactiveThresholdDays !== undefined)
+        row["client_inactive_threshold_days"] = patch.clientInactiveThresholdDays;
       const { error } = await supabase.from("workspace_settings").upsert(row as never);
       throwIf(error);
       qc.invalidateQueries({ queryKey: ["workspace_settings"] });

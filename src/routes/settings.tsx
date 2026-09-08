@@ -770,6 +770,9 @@ function AdminTab() {
   const [casualBillingIncrementHours, setCasualBillingIncrementHours] = useState(
     String(settings.casualBillingIncrementHours),
   );
+  const [clientInactiveThresholdDays, setClientInactiveThresholdDays] = useState(
+    String(settings.clientInactiveThresholdDays),
+  );
   const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -781,6 +784,7 @@ function AdminTab() {
     setRequireDescriptions(settings.requireDescriptions);
     setAllowManualEntry(settings.allowManualEntry);
     setCasualBillingIncrementHours(String(settings.casualBillingIncrementHours));
+    setClientInactiveThresholdDays(String(settings.clientInactiveThresholdDays));
   }, [settings]);
 
   const onPickLogo = (file: File | undefined) => {
@@ -915,6 +919,25 @@ function AdminTab() {
             </p>
           </div>
 
+          <div className="grid gap-2">
+            <Label htmlFor="ws-client-inactive-days">
+              Casual service inactivity threshold (days)
+            </Label>
+            <Input
+              id="ws-client-inactive-days"
+              type="number"
+              step={1}
+              min={1}
+              value={clientInactiveThresholdDays}
+              onChange={(e) => setClientInactiveThresholdDays(e.target.value)}
+              className="max-w-32"
+            />
+            <p className="text-xs text-muted-foreground">
+              A client is flagged "Casual service inactive" on Projects and Clients once this many
+              days have passed since their last casual-service entry.
+            </p>
+          </div>
+
           <ul className="divide-y divide-border rounded-xl border border-border">
             <li className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 px-4 py-3">
               <div className="min-w-0">
@@ -971,6 +994,17 @@ function AdminTab() {
                   toast.error("Casual service billing increment must be a number greater than 0");
                   return;
                 }
+                const parsedInactiveDays = Number(clientInactiveThresholdDays);
+                if (
+                  !clientInactiveThresholdDays.trim() ||
+                  Number.isNaN(parsedInactiveDays) ||
+                  parsedInactiveDays <= 0
+                ) {
+                  toast.error(
+                    "Casual service inactivity threshold must be a number greater than 0",
+                  );
+                  return;
+                }
                 void updateSettings({
                   companyName: companyName.trim() || settings.companyName,
                   timezone,
@@ -980,6 +1014,7 @@ function AdminTab() {
                   requireDescriptions,
                   allowManualEntry,
                   casualBillingIncrementHours: parsedIncrement,
+                  clientInactiveThresholdDays: parsedInactiveDays,
                 })
                   .then(() =>
                     toast.success("Workspace settings saved", {

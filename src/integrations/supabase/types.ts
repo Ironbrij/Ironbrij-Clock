@@ -630,6 +630,7 @@ export type Database = {
         Row: {
           allow_manual_entry: boolean;
           casual_billing_increment_hours: number;
+          client_inactive_threshold_days: number;
           company_name: string;
           currency: string;
           id: boolean;
@@ -642,6 +643,7 @@ export type Database = {
         Insert: {
           allow_manual_entry?: boolean;
           casual_billing_increment_hours?: number;
+          client_inactive_threshold_days?: number;
           company_name?: string;
           currency?: string;
           id?: boolean;
@@ -654,6 +656,7 @@ export type Database = {
         Update: {
           allow_manual_entry?: boolean;
           casual_billing_increment_hours?: number;
+          client_inactive_threshold_days?: number;
           company_name?: string;
           currency?: string;
           id?: boolean;

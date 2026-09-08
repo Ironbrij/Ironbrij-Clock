@@ -756,13 +756,9 @@ export type ClientHealthStatus = {
   clientId: string;
   lastServiceDate: string;
   daysSinceLastService: number;
-  /** M46: mirrors the accounts team's workbook Active/Inactive side-table — a client whose last casual-service entry is older than CLIENT_INACTIVE_THRESHOLD_DAYS is flagged inactive for casual-service purposes specifically. Distinct from WorkspaceClient.active (a separate, manually-set flag for the client relationship overall) — the two can legitimately disagree. */
+  /** M46: mirrors the accounts team's workbook Active/Inactive side-table — a client whose last casual-service entry is older than settings.clientInactiveThresholdDays is flagged inactive for casual-service purposes specifically. Distinct from WorkspaceClient.active (a separate, manually-set flag for the client relationship overall) — the two can legitimately disagree. */
   inactive: boolean;
 };
-
-// Placeholder — the workbook's own staleness threshold wasn't captured in
-// the reverse-engineering pass; confirm the real number with accounts.
-const CLIENT_INACTIVE_THRESHOLD_DAYS = 90;
 
 /**
  * M46: client-health status computed purely from already-fetched data,
@@ -772,7 +768,10 @@ const CLIENT_INACTIVE_THRESHOLD_DAYS = 90;
  * comes from casualClientLastServiceForAll(), fetched by whichever route
  * renders the Casual Service view (kept out of always-loaded workspace
  * state, same reasoning detailedEntriesForRange is a callback rather than
- * eagerly-loaded).
+ * eagerly-loaded). The staleness threshold itself lives in
+ * settings.clientInactiveThresholdDays (workspace_settings.client_inactive_threshold_days)
+ * rather than a hardcoded constant, so accounts can tune it without a
+ * code deploy once they confirm the workbook's real number.
  *
  * A client that has never had a single casual-service entry is simply
  * absent from the map (same "absent means not tracked, not automatically
@@ -783,7 +782,7 @@ const CLIENT_INACTIVE_THRESHOLD_DAYS = 90;
  * churn signal, it's just outside this program entirely.
  */
 export function useClientHealth(lastServiceByClient: Map<string, string | null>) {
-  const { clients } = useWorkspace();
+  const { clients, settings } = useWorkspace();
   return useMemo(() => {
     const map = new Map<string, ClientHealthStatus>();
     const today = new Date();
@@ -797,11 +796,11 @@ export function useClientHealth(lastServiceByClient: Map<string, string | null>)
         clientId: c.id,
         lastServiceDate,
         daysSinceLastService,
-        inactive: daysSinceLastService > CLIENT_INACTIVE_THRESHOLD_DAYS,
+        inactive: daysSinceLastService > settings.clientInactiveThresholdDays,
       });
     }
     return map;
-  }, [clients, lastServiceByClient]);
+  }, [clients, lastServiceByClient, settings.clientInactiveThresholdDays]);
 }
 
 /** Hours per project per weekday for the given week, from the signed-in person's entries. */
