@@ -81,6 +81,15 @@ const casualGroupByLabels: Record<"client" | "va" | "day" | "week", string> = {
   week: "Week",
 };
 
+// Same dimension names, phrased for the chart title ("Billable hours by
+// client/VA/day/week") rather than a table column header.
+const casualGroupByChartLabels: Record<"client" | "va" | "day" | "week", string> = {
+  client: "client",
+  va: "VA",
+  day: "day",
+  week: "week",
+};
+
 // M38: only ever called for the fixed presets — "custom" is resolved
 // directly in Reports() from the two date inputs instead, since there's
 // no formula to compute it from.
@@ -185,6 +194,7 @@ function Reports() {
   const [casualCategoryFilter, setCasualCategoryFilter] = useState<"all" | CasualServiceCategory>(
     "all",
   );
+  const [casualTagFilter, setCasualTagFilter] = useState("all");
   // Dashboard's own "vs last week" indicator — only meaningful for the
   // this_week preset (see pctChange's own comment), not a generic
   // period-over-period comparison invented for every preset.
@@ -197,6 +207,7 @@ function Reports() {
     teams,
     clients,
     members,
+    tags,
     settings,
     canManage,
     employmentByUser,
@@ -535,6 +546,9 @@ function Reports() {
           // Detailed tab's employeeTeamIds — not the entry's project's team.
           employeeTeamIds: member?.teamIds ?? [],
           clientId: project?.clientId ?? null,
+          // Tags live on the project, not the entry itself — see
+          // projects.tsx's own tagIds filter for the same join.
+          projectTagIds: project?.tagIds ?? [],
         };
       })
       .filter((r) => r.serviceCategory !== null)
@@ -544,7 +558,8 @@ function Reports() {
         if (clientFilter === "none") return r.clientId === null;
         return r.clientId === clientFilter;
       })
-      .filter((r) => casualCategoryFilter === "all" || r.serviceCategory === casualCategoryFilter);
+      .filter((r) => casualCategoryFilter === "all" || r.serviceCategory === casualCategoryFilter)
+      .filter((r) => casualTagFilter === "all" || r.projectTagIds.includes(casualTagFilter));
   }
 
   const casualEntries = joinAndFilterCasualEntries(detailedEntries ?? []);
@@ -570,19 +585,6 @@ function Reports() {
   const lastWeekCasualActiveVAs = new Set(lastWeekCasualEntries.map((e) => e.userId)).size;
   const lastWeekCasualTotalBillableHours = casualBillableTotal(lastWeekCasualEntries);
 
-  // M46: one bar chart — billable hours per category, the single most
-  // useful "shape of the casual-service business" visual (not all ~10
-  // pivot charts the original workbook had — see the plan's own scope
-  // note on this).
-  const casualCategoryChartData = (
-    Object.keys(CASUAL_SERVICE_CATEGORY_LABELS) as CasualServiceCategory[]
-  ).map((category, i) => ({
-    category,
-    label: CASUAL_SERVICE_CATEGORY_LABELS[category],
-    hours: casualBillableTotal(casualEntries.filter((e) => e.serviceCategory === category)),
-    color: dotColors[i % dotColors.length],
-  }));
-
   // M46: "Group by" — Client (default), VA, Day, or Week. All four reuse
   // this exact same aggregation, only the grouping key changes; category
   // stays a secondary breakdown dimension within each group (matches the
@@ -597,6 +599,7 @@ function Reports() {
         rawHours: number;
         billableHours: number;
         paidCount: number;
+        tagIds: Set<string>;
       }
     >();
     for (const e of casualEntries) {
@@ -617,6 +620,7 @@ function Reports() {
         rawHours: 0,
         billableHours: 0,
         paidCount: 0,
+        tagIds: new Set<string>(),
       };
       existing.entryCount += 1;
       existing.rawHours += e.minutes / 60;
@@ -626,6 +630,7 @@ function Reports() {
         settings.casualBillingIncrementHours,
       );
       if (e.vaPaidAt) existing.paidCount += 1;
+      e.projectTagIds.forEach((id) => existing.tagIds.add(id));
       groups.set(key, existing);
     }
     return Array.from(groups.values())
@@ -644,9 +649,17 @@ function Reports() {
                 : g.groupKey === "none"
                   ? "No client"
                   : (clients.find((c) => c.id === g.groupKey)?.name ?? "Unknown client");
+        // Tags come from each entry's project, so a group (especially VA/
+        // day/week, which can span many projects) shows the union of every
+        // tag any of its entries carried — same "at least one tag matched"
+        // semantics as the tag filter above.
+        const groupTags = tags
+          .filter((t) => g.tagIds.has(t.id))
+          .sort((a, b) => a.name.localeCompare(b.name));
         return {
           ...g,
           groupLabel,
+          tags: groupTags,
           // Only a meaningful signal for Client grouping — a VA/day/week
           // row isn't "a client," so there's no health status to show.
           lastServiceDate:
@@ -660,6 +673,31 @@ function Reports() {
           a.groupLabel.localeCompare(b.groupLabel) ||
           a.serviceCategory.localeCompare(b.serviceCategory),
       );
+  })();
+
+  // M46: one bar chart — billable hours per whatever "Group by" dimension
+  // is selected above (summed across categories within each group), so
+  // switching Group by actually changes the graph, not just the table
+  // beneath it. Day/week groups sort chronologically; client/VA groups
+  // sort by hours, biggest first — matches the project/employee bar charts.
+  const casualGroupChartData = (() => {
+    const byGroup = new Map<string, { groupKey: string; groupLabel: string; hours: number }>();
+    for (const r of casualRows) {
+      const existing = byGroup.get(r.groupKey) ?? {
+        groupKey: r.groupKey,
+        groupLabel: r.groupLabel,
+        hours: 0,
+      };
+      existing.hours += r.billableHours;
+      byGroup.set(r.groupKey, existing);
+    }
+    const rows = Array.from(byGroup.values());
+    if (casualGroupBy === "day" || casualGroupBy === "week") {
+      rows.sort((a, b) => a.groupKey.localeCompare(b.groupKey));
+    } else {
+      rows.sort((a, b) => b.hours - a.hours);
+    }
+    return rows.map((r, i) => ({ ...r, color: dotColors[i % dotColors.length] }));
   })();
 
   const totalDetailedPages = Math.max(1, Math.ceil(filteredDetailed.length / DETAILED_PAGE_SIZE));
@@ -767,6 +805,7 @@ function Reports() {
           [
             casualGroupByLabels[casualGroupBy],
             "Category",
+            "Tags",
             "Entries",
             "Raw Hours",
             "Billable Hours (rounded)",
@@ -777,6 +816,7 @@ function Reports() {
           ...casualRows.map((r) => [
             r.groupLabel,
             CASUAL_SERVICE_CATEGORY_LABELS[r.serviceCategory],
+            r.tags.map((t) => t.name).join(", "),
             r.entryCount,
             r.rawHours.toFixed(2),
             r.billableHours.toFixed(2),
@@ -951,6 +991,21 @@ function Reports() {
               ))}
             </SelectContent>
           </Select>
+          {tags.length > 0 && (
+            <Select value={casualTagFilter} onValueChange={setCasualTagFilter}>
+              <SelectTrigger className="w-44">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All tags</SelectItem>
+                {tags.map((t) => (
+                  <SelectItem key={t.id} value={t.id}>
+                    {t.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
         </div>
       )}
 
@@ -1365,17 +1420,19 @@ function Reports() {
 
           <Card className="mb-6 shadow-card">
             <CardHeader>
-              <CardTitle className="text-base">Billable hours by category · {rangeLabel}</CardTitle>
+              <CardTitle className="text-base">
+                Billable hours by {casualGroupByChartLabels[casualGroupBy]} · {rangeLabel}
+              </CardTitle>
             </CardHeader>
             <CardContent className="h-64 pl-0">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart
-                  data={casualCategoryChartData}
+                  data={casualGroupChartData}
                   margin={{ top: 8, right: 16, bottom: 8, left: 8 }}
                 >
                   <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)" />
                   <XAxis
-                    dataKey="label"
+                    dataKey="groupLabel"
                     tickFormatter={(v: string) => v.split(" ")[0]}
                     tickLine={false}
                     axisLine={false}
@@ -1400,8 +1457,8 @@ function Reports() {
                     formatter={(value) => [`${(value as number).toFixed(1)} h`, "Billable"]}
                   />
                   <Bar dataKey="hours" radius={[6, 6, 0, 0]}>
-                    {casualCategoryChartData.map((d) => (
-                      <Cell key={d.category} fill={d.color} />
+                    {casualGroupChartData.map((d) => (
+                      <Cell key={d.groupKey} fill={d.color} />
                     ))}
                   </Bar>
                 </BarChart>
@@ -1427,6 +1484,7 @@ function Reports() {
                       {casualGroupByLabels[casualGroupBy]}
                     </th>
                     <th className="px-5 py-3 text-left font-medium">Category</th>
+                    {tags.length > 0 && <th className="px-5 py-3 text-left font-medium">Tags</th>}
                     <th className="px-5 py-3 text-right font-medium">Entries</th>
                     <th className="px-5 py-3 text-right font-medium">Raw Hours</th>
                     <th className="px-5 py-3 text-right font-medium">Billable Hours</th>
@@ -1446,6 +1504,28 @@ function Reports() {
                       <td className="px-5 py-3 text-muted-foreground">
                         {CASUAL_SERVICE_CATEGORY_LABELS[r.serviceCategory]}
                       </td>
+                      {tags.length > 0 && (
+                        <td className="px-5 py-3">
+                          {r.tags.length === 0 ? (
+                            <span className="text-muted-foreground">—</span>
+                          ) : (
+                            <div className="flex flex-wrap gap-1">
+                              {r.tags.map((t) => (
+                                <span
+                                  key={t.id}
+                                  className="rounded-full px-2 py-0.5 text-xs font-medium"
+                                  style={{
+                                    backgroundColor: `color-mix(in oklab, ${t.color} 14%, transparent)`,
+                                    color: t.color,
+                                  }}
+                                >
+                                  {t.name}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                        </td>
+                      )}
                       <td className="px-5 py-3 text-right tabular-nums">{r.entryCount}</td>
                       <td className="px-5 py-3 text-right tabular-nums text-muted-foreground">
                         {formatHours(r.rawHours)}
@@ -1472,7 +1552,7 @@ function Reports() {
                   {casualRows.length === 0 && (
                     <tr>
                       <td
-                        colSpan={casualGroupBy === "client" ? 7 : 6}
+                        colSpan={(casualGroupBy === "client" ? 7 : 6) + (tags.length > 0 ? 1 : 0)}
                         className="px-5 py-8 text-center text-sm text-muted-foreground"
                       >
                         No casual-service entries in this filter.
