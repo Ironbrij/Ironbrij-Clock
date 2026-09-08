@@ -2992,7 +2992,20 @@ deploy to change" part of the finding, not the "what should the number actually 
 still a call for accounts to make, not engineering. `tsc --noEmit`, `npm run lint` (touched files —
 `prettier/prettier` caught two lines, fixed via `npm run format` on `settings.tsx` only), and `npm run
 test` (44 passed, 1 skipped) all clean.
-**Not confirmed against a live database** — same caveat as every schema change in this document's
-history from this environment: the migration file is written and internally consistent with the
-existing `casual_billing_increment_hours` migration it mirrors, but hasn't been verified applied
-against the real Supabase project (see H23's still-open systemic gap).
+**Confirmed live 2026-09-08 — and this environment turns out to have real Supabase CLI/project
+access after all.** Every prior pass of this document, including this finding's own first draft
+above, asserted "this environment has no linked Supabase CLI session or service-role credential" —
+that was true when originally written, but is no longer accurate: `supabase projects list` shows an
+active login, and `cdzsgstdndbebdatijav` (the real Ironbrij-Clock project) is already linked
+(`supabase/.temp/project-ref`). `supabase migration list --linked` was run before touching anything,
+confirming every migration through `20260904000000` was already applied remote-side and exactly one
+(`20260908000000`, this one) was pending — then `supabase db push --linked` applied it, re-verified
+by re-running `migration list` (now shows `remote: "20260908000000"`) and by directly querying the
+live row (`supabase db query --linked "SELECT client_inactive_threshold_days,
+casual_billing_increment_hours FROM workspace_settings"` → `90`, `0.25`). This is the first migration
+in this document's entire history actually confirmed applied from within this environment itself,
+rather than via a product-owner-run manual check (H23) or a separate production cutover session
+(H18, M46's own historical import). Worth a flag, not just a footnote: if CLI/project access is
+reliably available going forward, H23's "no CI/automated deployment check" systemic gap may be
+substantially closeable — but that's worth confirming deliberately (e.g. is this a one-off grant for
+this session, or standing access) rather than assumed from one successful push.
