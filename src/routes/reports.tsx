@@ -195,6 +195,7 @@ function Reports() {
   const [loadingDetailed, setLoadingDetailed] = useState(true);
   const [projectFilter, setProjectFilter] = useState("all");
   const [employeeFilter, setEmployeeFilter] = useState("all");
+  const [detailedTagFilter, setDetailedTagFilter] = useState("all");
   const [detailedSearch, setDetailedSearch] = useState("");
   const [detailedPage, setDetailedPage] = useState(1);
 
@@ -407,7 +408,16 @@ function Reports() {
   // scrolled to — resetting avoids landing on a now out-of-range page.
   useEffect(() => {
     setDetailedPage(1);
-  }, [from, to, teamFilter, clientFilter, projectFilter, employeeFilter, detailedSearch]);
+  }, [
+    from,
+    to,
+    teamFilter,
+    clientFilter,
+    projectFilter,
+    employeeFilter,
+    detailedTagFilter,
+    detailedSearch,
+  ]);
 
   const projectRows = projects
     // Team scoping now happens inside projectHoursForRange/
@@ -522,6 +532,12 @@ function Reports() {
       // team, so this is every team they're in, not a single value.
       employeeTeamIds: member?.teamIds ?? [],
       clientId: project?.clientId ?? null,
+      // Tags live on the project, not the entry — same join the Casual
+      // Service tab uses.
+      projectTags: tags
+        .filter((t) => project?.tagIds.includes(t.id))
+        .sort((a, b) => a.name.localeCompare(b.name)),
+      projectTagIds: project?.tagIds ?? [],
       employeeName: member?.name ?? "Former member",
       employeeInitials: member?.initials ?? "—",
       employeeAvatarUrl: member?.avatarUrl ?? null,
@@ -537,6 +553,7 @@ function Reports() {
     })
     .filter((r) => projectFilter === "all" || r.projectId === projectFilter)
     .filter((r) => employeeFilter === "all" || r.userId === employeeFilter)
+    .filter((r) => detailedTagFilter === "all" || r.projectTagIds.includes(detailedTagFilter))
     .filter((r) => {
       const q = detailedSearch.trim().toLowerCase();
       if (!q) return true;
@@ -923,11 +940,12 @@ function Reports() {
       // The full filtered set, not just the current page — pagination is a
       // display convenience, not a limit on what the export should contain.
       downloadCsv(`ironbrij-detailed-entries_${clientLabel}_${from}_to_${to}.csv`, [
-        ["Date", "Employee", "Project", "Task", "Description", "Hours", "Billable"],
+        ["Date", "Employee", "Project", "Tags", "Task", "Description", "Hours", "Billable"],
         ...filteredDetailed.map((r) => [
           r.date,
           r.employeeName,
           r.projectName,
+          r.projectTags.map((t) => t.name).join(", "),
           r.task || "",
           r.description || "",
           r.hours.toFixed(2),
@@ -1105,6 +1123,21 @@ function Reports() {
             searchPlaceholder="Search employees…"
             triggerClassName="w-48"
           />
+          {tags.length > 0 && (
+            <Select value={detailedTagFilter} onValueChange={setDetailedTagFilter}>
+              <SelectTrigger className="w-44">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All tags</SelectItem>
+                {tags.map((t) => (
+                  <SelectItem key={t.id} value={t.id}>
+                    {t.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
         </div>
       )}
 
@@ -1420,12 +1453,13 @@ function Reports() {
         <>
           <Card className="shadow-card">
             <CardContent className="overflow-x-auto p-0">
-              <table className="w-full min-w-[760px] text-sm">
+              <table className="w-full min-w-[860px] text-sm">
                 <thead>
                   <tr className="border-b border-border text-xs uppercase tracking-wide text-muted-foreground">
                     <th className="px-5 py-3 text-left font-medium">Date</th>
                     <th className="px-5 py-3 text-left font-medium">Employee</th>
                     <th className="px-5 py-3 text-left font-medium">Project</th>
+                    {tags.length > 0 && <th className="px-5 py-3 text-left font-medium">Tags</th>}
                     <th className="px-5 py-3 text-left font-medium">Task</th>
                     <th className="px-5 py-3 text-left font-medium">Description</th>
                     <th className="px-5 py-3 text-right font-medium">Hours</th>
@@ -1465,6 +1499,28 @@ function Reports() {
                           {r.projectName}
                         </span>
                       </td>
+                      {tags.length > 0 && (
+                        <td className="px-5 py-3">
+                          {r.projectTags.length === 0 ? (
+                            <span className="text-muted-foreground">—</span>
+                          ) : (
+                            <div className="flex flex-wrap gap-1">
+                              {r.projectTags.map((t) => (
+                                <span
+                                  key={t.id}
+                                  className="rounded-full px-2 py-0.5 text-xs font-medium"
+                                  style={{
+                                    backgroundColor: `color-mix(in oklab, ${t.color} 14%, transparent)`,
+                                    color: t.color,
+                                  }}
+                                >
+                                  {t.name}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                        </td>
+                      )}
                       <td className="px-5 py-3 text-muted-foreground">{r.task || "—"}</td>
                       <td
                         className="max-w-[280px] truncate px-5 py-3 text-muted-foreground"
@@ -1483,7 +1539,7 @@ function Reports() {
                   {pagedDetailed.length === 0 && (
                     <tr>
                       <td
-                        colSpan={7}
+                        colSpan={tags.length > 0 ? 8 : 7}
                         className="px-5 py-8 text-center text-sm text-muted-foreground"
                       >
                         No entries in this filter.
