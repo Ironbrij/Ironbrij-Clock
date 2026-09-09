@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { CalendarRange, Download } from "lucide-react";
 import {
   Bar,
@@ -41,6 +41,7 @@ import {
   CASUAL_SERVICE_CATEGORY_LABELS,
   dotColors,
   type CasualServiceCategory,
+  type WorkspaceTag,
 } from "@/lib/workspace/types";
 
 export const Route = createFileRoute("/reports")({
@@ -61,6 +62,7 @@ export const Route = createFileRoute("/reports")({
 
 type ProjectSortKey = "name" | "hours" | "billable" | "team";
 type EmployeeSortKey = "name" | "hours" | "billable" | "team" | "overtime" | "amount";
+type CasualSortKey = "group" | "entries" | "rawHours" | "billableHours" | "paid";
 type RangePreset = "this_week" | "this_month" | "last_30" | "this_quarter" | "this_year" | "custom";
 
 const DETAILED_PAGE_SIZE = 50;
@@ -89,6 +91,18 @@ const casualGroupByChartLabels: Record<"client" | "va" | "day" | "week", string>
   day: "day",
   week: "week",
 };
+
+// Client/VA bars past this point collapse into a single "Other" bar — a
+// workspace with 60 clients would otherwise render 60 unreadable slivers.
+// The table below still lists every group, so nothing is hidden outright.
+const CASUAL_CHART_MAX_BARS = 12;
+// Roughly how many x-axis ticks fit legibly across the chart's width.
+const CASUAL_CHART_MAX_TICKS = 12;
+
+// A bar gets ~60px of width; the untruncated name stays in the tooltip.
+function truncateChartLabel(label: string, max = 14) {
+  return label.length > max ? `${label.slice(0, max - 1)}…` : label;
+}
 
 // M38: only ever called for the fixed presets — "custom" is resolved
 // directly in Reports() from the two date inputs instead, since there's
@@ -181,6 +195,7 @@ function Reports() {
   const [loadingDetailed, setLoadingDetailed] = useState(true);
   const [projectFilter, setProjectFilter] = useState("all");
   const [employeeFilter, setEmployeeFilter] = useState("all");
+  const [detailedTagFilter, setDetailedTagFilter] = useState("all");
   const [detailedSearch, setDetailedSearch] = useState("");
   const [detailedPage, setDetailedPage] = useState(1);
 
@@ -195,6 +210,10 @@ function Reports() {
     "all",
   );
   const [casualTagFilter, setCasualTagFilter] = useState("all");
+  // Billable hours descending by default — "who owes the most this period"
+  // is the question this tab gets opened for.
+  const [casualSortKey, setCasualSortKey] = useState<CasualSortKey>("billableHours");
+  const [casualAsc, setCasualAsc] = useState(false);
   // Dashboard's own "vs last week" indicator — only meaningful for the
   // this_week preset (see pctChange's own comment), not a generic
   // period-over-period comparison invented for every preset.
@@ -389,7 +408,16 @@ function Reports() {
   // scrolled to — resetting avoids landing on a now out-of-range page.
   useEffect(() => {
     setDetailedPage(1);
-  }, [from, to, teamFilter, clientFilter, projectFilter, employeeFilter, detailedSearch]);
+  }, [
+    from,
+    to,
+    teamFilter,
+    clientFilter,
+    projectFilter,
+    employeeFilter,
+    detailedTagFilter,
+    detailedSearch,
+  ]);
 
   const projectRows = projects
     // Team scoping now happens inside projectHoursForRange/
@@ -504,6 +532,12 @@ function Reports() {
       // team, so this is every team they're in, not a single value.
       employeeTeamIds: member?.teamIds ?? [],
       clientId: project?.clientId ?? null,
+      // Tags live on the project, not the entry — same join the Casual
+      // Service tab uses.
+      projectTags: tags
+        .filter((t) => project?.tagIds.includes(t.id))
+        .sort((a, b) => a.name.localeCompare(b.name)),
+      projectTagIds: project?.tagIds ?? [],
       employeeName: member?.name ?? "Former member",
       employeeInitials: member?.initials ?? "—",
       employeeAvatarUrl: member?.avatarUrl ?? null,
@@ -519,6 +553,7 @@ function Reports() {
     })
     .filter((r) => projectFilter === "all" || r.projectId === projectFilter)
     .filter((r) => employeeFilter === "all" || r.userId === employeeFilter)
+    .filter((r) => detailedTagFilter === "all" || r.projectTagIds.includes(detailedTagFilter))
     .filter((r) => {
       const q = detailedSearch.trim().toLowerCase();
       if (!q) return true;
@@ -668,37 +703,142 @@ function Reports() {
               : null,
         };
       })
-      .sort(
-        (a, b) =>
-          a.groupLabel.localeCompare(b.groupLabel) ||
-          a.serviceCategory.localeCompare(b.serviceCategory),
-      );
+      .sort((a, b) => a.serviceCategory.localeCompare(b.serviceCategory));
   })();
 
-  // M46: one bar chart — billable hours per whatever "Group by" dimension
-  // is selected above (summed across categories within each group), so
-  // switching Group by actually changes the graph, not just the table
-  // beneath it. Day/week groups sort chronologically; client/VA groups
-  // sort by hours, biggest first — matches the project/employee bar charts.
-  const casualGroupChartData = (() => {
-    const byGroup = new Map<string, { groupKey: string; groupLabel: string; hours: number }>();
+  // M46: the accounts team's actual question is "what does this client owe
+  // for this period" — the per-category split is detail underneath that
+  // number, not the top-level unit. So the category rows nest under their
+  // group, and the group carries the subtotal that drives sorting, the
+  // chart, and the export order.
+  type CasualGroup = {
+    groupKey: string;
+    groupLabel: string;
+    tags: WorkspaceTag[];
+    lastServiceDate: string | null;
+    categories: (typeof casualRows)[number][];
+    entryCount: number;
+    rawHours: number;
+    billableHours: number;
+    paidCount: number;
+  };
+
+  const casualGroups = (() => {
+    const byGroup = new Map<string, CasualGroup>();
+    const tagIdsByGroup = new Map<string, Set<string>>();
     for (const r of casualRows) {
       const existing = byGroup.get(r.groupKey) ?? {
         groupKey: r.groupKey,
         groupLabel: r.groupLabel,
-        hours: 0,
+        tags: [],
+        lastServiceDate: r.lastServiceDate,
+        categories: [],
+        entryCount: 0,
+        rawHours: 0,
+        billableHours: 0,
+        paidCount: 0,
       };
-      existing.hours += r.billableHours;
+      existing.categories.push(r);
+      existing.entryCount += r.entryCount;
+      existing.rawHours += r.rawHours;
+      existing.billableHours += r.billableHours;
+      existing.paidCount += r.paidCount;
+      const tagIds = tagIdsByGroup.get(r.groupKey) ?? new Set<string>();
+      r.tagIds.forEach((id) => tagIds.add(id));
+      tagIdsByGroup.set(r.groupKey, tagIds);
       byGroup.set(r.groupKey, existing);
     }
-    const rows = Array.from(byGroup.values());
-    if (casualGroupBy === "day" || casualGroupBy === "week") {
-      rows.sort((a, b) => a.groupKey.localeCompare(b.groupKey));
-    } else {
-      rows.sort((a, b) => b.hours - a.hours);
-    }
-    return rows.map((r, i) => ({ ...r, color: dotColors[i % dotColors.length] }));
+    return Array.from(byGroup.values()).map((g) => ({
+      ...g,
+      tags: tags
+        .filter((t) => tagIdsByGroup.get(g.groupKey)?.has(t.id))
+        .sort((a, b) => a.name.localeCompare(b.name)),
+    }));
   })();
+
+  const sortedCasualGroups = [...casualGroups].sort((a, b) => {
+    const dir = casualAsc ? 1 : -1;
+    if (casualSortKey === "group") {
+      // Date-keyed groups have to compare on the ISO key, not the
+      // formatted label — "Apr 1" sorts before "Jan 2" alphabetically.
+      return (
+        dir *
+        (casualGroupBy === "day" || casualGroupBy === "week"
+          ? a.groupKey.localeCompare(b.groupKey)
+          : a.groupLabel.localeCompare(b.groupLabel))
+      );
+    }
+    if (casualSortKey === "entries") return dir * (a.entryCount - b.entryCount);
+    if (casualSortKey === "rawHours") return dir * (a.rawHours - b.rawHours);
+    if (casualSortKey === "paid") return dir * (a.paidCount - b.paidCount);
+    return dir * (a.billableHours - b.billableHours);
+  });
+
+  const casualGrandTotals = casualGroups.reduce(
+    (acc, g) => ({
+      entryCount: acc.entryCount + g.entryCount,
+      rawHours: acc.rawHours + g.rawHours,
+      billableHours: acc.billableHours + g.billableHours,
+      paidCount: acc.paidCount + g.paidCount,
+    }),
+    { entryCount: 0, rawHours: 0, billableHours: 0, paidCount: 0 },
+  );
+
+  // M46: one bar chart — billable hours per whatever "Group by" dimension
+  // is selected above (summed across categories within each group), so
+  // switching Group by actually changes the graph, not just the table
+  // beneath it. `axisLabel` is the short form the x-axis renders;
+  // `groupLabel` stays the full one, which the tooltip shows on hover.
+  const casualGroupChartData = (() => {
+    const rows = casualGroups.map((g) => ({
+      groupKey: g.groupKey,
+      groupLabel: g.groupLabel,
+      hours: g.billableHours,
+    }));
+
+    // Day/week read as a time series, so they stay chronological and
+    // uncapped — dropping the quiet middle of a date range would misread
+    // as "nothing happened there." Density is handled by thinning the
+    // ticks (see the XAxis interval) rather than dropping bars.
+    if (casualGroupBy === "day" || casualGroupBy === "week") {
+      return rows
+        .sort((a, b) => a.groupKey.localeCompare(b.groupKey))
+        .map((r, i) => ({
+          ...r,
+          axisLabel: fromDateKey(r.groupKey).toLocaleDateString(undefined, {
+            month: "short",
+            day: "numeric",
+          }),
+          color: dotColors[i % dotColors.length],
+        }));
+    }
+
+    // Client/VA are a ranking, not a series — biggest first, with the long
+    // tail summed into one labelled "Other" bar.
+    rows.sort((a, b) => b.hours - a.hours);
+    const bars = rows.slice(0, CASUAL_CHART_MAX_BARS).map((r) => ({
+      ...r,
+      axisLabel: truncateChartLabel(r.groupLabel),
+    }));
+    const rest = rows.slice(CASUAL_CHART_MAX_BARS);
+    if (rest.length > 0) {
+      bars.push({
+        groupKey: "__other__",
+        groupLabel: `Other (${rest.length} ${casualGroupBy === "va" ? "VAs" : "clients"})`,
+        axisLabel: "Other",
+        hours: rest.reduce((s, r) => s + r.hours, 0),
+      });
+    }
+    return bars.map((r, i) => ({ ...r, color: dotColors[i % dotColors.length] }));
+  })();
+
+  // Recharts' `interval` is "ticks to skip between rendered ticks," so 0
+  // means every bar gets a label — right for a dozen clients, wrong for a
+  // year of days.
+  const casualChartTickInterval = Math.max(
+    0,
+    Math.ceil(casualGroupChartData.length / CASUAL_CHART_MAX_TICKS) - 1,
+  );
 
   const totalDetailedPages = Math.max(1, Math.ceil(filteredDetailed.length / DETAILED_PAGE_SIZE));
   const currentDetailedPage = Math.min(detailedPage, totalDetailedPages);
@@ -743,6 +883,19 @@ function Reports() {
       setEmpAsc(false);
     }
   };
+  const toggleCasualSort = (key: CasualSortKey) => {
+    if (key === casualSortKey) setCasualAsc((v) => !v);
+    else {
+      setCasualSortKey(key);
+      setCasualAsc(false);
+    }
+  };
+  const casualSortHeader = (key: CasualSortKey, label: string) => (
+    <button onClick={() => toggleCasualSort(key)} className="hover:text-foreground">
+      {label}
+      {casualSortKey === key ? (casualAsc ? " ↑" : " ↓") : ""}
+    </button>
+  );
 
   const exportCsv = () => {
     const clientLabel =
@@ -787,11 +940,12 @@ function Reports() {
       // The full filtered set, not just the current page — pagination is a
       // display convenience, not a limit on what the export should contain.
       downloadCsv(`ironbrij-detailed-entries_${clientLabel}_${from}_to_${to}.csv`, [
-        ["Date", "Employee", "Project", "Task", "Description", "Hours", "Billable"],
+        ["Date", "Employee", "Project", "Tags", "Task", "Description", "Hours", "Billable"],
         ...filteredDetailed.map((r) => [
           r.date,
           r.employeeName,
           r.projectName,
+          r.projectTags.map((t) => t.name).join(", "),
           r.task || "",
           r.description || "",
           r.hours.toFixed(2),
@@ -813,16 +967,32 @@ function Reports() {
             "Unpaid",
             "Date range",
           ],
-          ...casualRows.map((r) => [
-            r.groupLabel,
-            CASUAL_SERVICE_CATEGORY_LABELS[r.serviceCategory],
-            r.tags.map((t) => t.name).join(", "),
-            r.entryCount,
-            r.rawHours.toFixed(2),
-            r.billableHours.toFixed(2),
-            r.paidCount,
-            r.entryCount - r.paidCount,
-            `${from} to ${to}`,
+          // Flattened in the order shown on screen, with each group's
+          // subtotal following its categories so the export matches what
+          // was on screen when it was taken.
+          ...sortedCasualGroups.flatMap((g) => [
+            ...g.categories.map((r) => [
+              g.groupLabel,
+              CASUAL_SERVICE_CATEGORY_LABELS[r.serviceCategory],
+              g.tags.map((t) => t.name).join(", "),
+              r.entryCount,
+              r.rawHours.toFixed(2),
+              r.billableHours.toFixed(2),
+              r.paidCount,
+              r.entryCount - r.paidCount,
+              `${from} to ${to}`,
+            ]),
+            [
+              g.groupLabel,
+              "Total",
+              g.tags.map((t) => t.name).join(", "),
+              g.entryCount,
+              g.rawHours.toFixed(2),
+              g.billableHours.toFixed(2),
+              g.paidCount,
+              g.entryCount - g.paidCount,
+              `${from} to ${to}`,
+            ],
           ]),
         ],
       );
@@ -953,6 +1123,21 @@ function Reports() {
             searchPlaceholder="Search employees…"
             triggerClassName="w-48"
           />
+          {tags.length > 0 && (
+            <Select value={detailedTagFilter} onValueChange={setDetailedTagFilter}>
+              <SelectTrigger className="w-44">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All tags</SelectItem>
+                {tags.map((t) => (
+                  <SelectItem key={t.id} value={t.id}>
+                    {t.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
         </div>
       )}
 
@@ -1268,12 +1453,13 @@ function Reports() {
         <>
           <Card className="shadow-card">
             <CardContent className="overflow-x-auto p-0">
-              <table className="w-full min-w-[760px] text-sm">
+              <table className="w-full min-w-[860px] text-sm">
                 <thead>
                   <tr className="border-b border-border text-xs uppercase tracking-wide text-muted-foreground">
                     <th className="px-5 py-3 text-left font-medium">Date</th>
                     <th className="px-5 py-3 text-left font-medium">Employee</th>
                     <th className="px-5 py-3 text-left font-medium">Project</th>
+                    {tags.length > 0 && <th className="px-5 py-3 text-left font-medium">Tags</th>}
                     <th className="px-5 py-3 text-left font-medium">Task</th>
                     <th className="px-5 py-3 text-left font-medium">Description</th>
                     <th className="px-5 py-3 text-right font-medium">Hours</th>
@@ -1313,6 +1499,28 @@ function Reports() {
                           {r.projectName}
                         </span>
                       </td>
+                      {tags.length > 0 && (
+                        <td className="px-5 py-3">
+                          {r.projectTags.length === 0 ? (
+                            <span className="text-muted-foreground">—</span>
+                          ) : (
+                            <div className="flex flex-wrap gap-1">
+                              {r.projectTags.map((t) => (
+                                <span
+                                  key={t.id}
+                                  className="rounded-full px-2 py-0.5 text-xs font-medium"
+                                  style={{
+                                    backgroundColor: `color-mix(in oklab, ${t.color} 14%, transparent)`,
+                                    color: t.color,
+                                  }}
+                                >
+                                  {t.name}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                        </td>
+                      )}
                       <td className="px-5 py-3 text-muted-foreground">{r.task || "—"}</td>
                       <td
                         className="max-w-[280px] truncate px-5 py-3 text-muted-foreground"
@@ -1331,7 +1539,7 @@ function Reports() {
                   {pagedDetailed.length === 0 && (
                     <tr>
                       <td
-                        colSpan={7}
+                        colSpan={tags.length > 0 ? 8 : 7}
                         className="px-5 py-8 text-center text-sm text-muted-foreground"
                       >
                         No entries in this filter.
@@ -1432,8 +1640,8 @@ function Reports() {
                 >
                   <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)" />
                   <XAxis
-                    dataKey="groupLabel"
-                    tickFormatter={(v: string) => v.split(" ")[0]}
+                    dataKey="axisLabel"
+                    interval={casualChartTickInterval}
                     tickLine={false}
                     axisLine={false}
                     fontSize={12}
@@ -1454,6 +1662,10 @@ function Reports() {
                       color: "var(--popover-foreground)",
                       fontSize: 12,
                     }}
+                    labelFormatter={(_label, payload) =>
+                      (payload?.[0]?.payload as { groupLabel?: string } | undefined)?.groupLabel ??
+                      ""
+                    }
                     formatter={(value) => [`${(value as number).toFixed(1)} h`, "Billable"]}
                   />
                   <Bar dataKey="hours" radius={[6, 6, 0, 0]}>
@@ -1477,79 +1689,118 @@ function Reports() {
               </p>
             </CardHeader>
             <CardContent className="overflow-x-auto p-0">
-              <table className="w-full min-w-[760px] text-sm">
+              <table className="w-full min-w-[860px] text-sm">
                 <thead>
                   <tr className="border-b border-border text-xs uppercase tracking-wide text-muted-foreground">
                     <th className="px-5 py-3 text-left font-medium">
-                      {casualGroupByLabels[casualGroupBy]}
+                      {casualSortHeader("group", casualGroupByLabels[casualGroupBy])}
                     </th>
                     <th className="px-5 py-3 text-left font-medium">Category</th>
                     {tags.length > 0 && <th className="px-5 py-3 text-left font-medium">Tags</th>}
-                    <th className="px-5 py-3 text-right font-medium">Entries</th>
-                    <th className="px-5 py-3 text-right font-medium">Raw Hours</th>
-                    <th className="px-5 py-3 text-right font-medium">Billable Hours</th>
-                    <th className="px-5 py-3 text-right font-medium">Paid</th>
+                    <th className="px-5 py-3 text-right font-medium">
+                      {casualSortHeader("entries", "Entries")}
+                    </th>
+                    <th className="px-5 py-3 text-right font-medium">
+                      {casualSortHeader("rawHours", "Raw Hours")}
+                    </th>
+                    <th className="px-5 py-3 text-right font-medium">
+                      {casualSortHeader("billableHours", "Billable Hours")}
+                    </th>
+                    <th className="px-5 py-3 text-right font-medium">
+                      {casualSortHeader("paid", "Paid")}
+                    </th>
                     {casualGroupBy === "client" && (
                       <th className="px-5 py-3 text-left font-medium">Last Service</th>
                     )}
                   </tr>
                 </thead>
                 <tbody>
-                  {casualRows.map((r) => (
-                    <tr
-                      key={`${r.groupKey}::${r.serviceCategory}`}
-                      className="border-b border-border last:border-0 hover:bg-muted/40"
-                    >
-                      <td className="px-5 py-3 font-medium">{r.groupLabel}</td>
-                      <td className="px-5 py-3 text-muted-foreground">
-                        {CASUAL_SERVICE_CATEGORY_LABELS[r.serviceCategory]}
-                      </td>
-                      {tags.length > 0 && (
-                        <td className="px-5 py-3">
-                          {r.tags.length === 0 ? (
-                            <span className="text-muted-foreground">—</span>
-                          ) : (
-                            <div className="flex flex-wrap gap-1">
-                              {r.tags.map((t) => (
-                                <span
-                                  key={t.id}
-                                  className="rounded-full px-2 py-0.5 text-xs font-medium"
-                                  style={{
-                                    backgroundColor: `color-mix(in oklab, ${t.color} 14%, transparent)`,
-                                    color: t.color,
-                                  }}
-                                >
-                                  {t.name}
-                                </span>
-                              ))}
-                            </div>
+                  {sortedCasualGroups.map((g) => {
+                    // A group with one category would repeat itself exactly
+                    // in the detail row below, so it collapses into a
+                    // single row naming that category instead.
+                    const singleCategory = g.categories.length === 1;
+                    return (
+                      <Fragment key={g.groupKey}>
+                        <tr className="border-b border-border bg-muted/30">
+                          <td className="px-5 py-3 font-semibold">{g.groupLabel}</td>
+                          <td className="px-5 py-3 text-muted-foreground">
+                            {singleCategory
+                              ? CASUAL_SERVICE_CATEGORY_LABELS[g.categories[0].serviceCategory]
+                              : `${g.categories.length} categories`}
+                          </td>
+                          {tags.length > 0 && (
+                            <td className="px-5 py-3">
+                              {g.tags.length === 0 ? (
+                                <span className="text-muted-foreground">—</span>
+                              ) : (
+                                <div className="flex flex-wrap gap-1">
+                                  {g.tags.map((t) => (
+                                    <span
+                                      key={t.id}
+                                      className="rounded-full px-2 py-0.5 text-xs font-medium"
+                                      style={{
+                                        backgroundColor: `color-mix(in oklab, ${t.color} 14%, transparent)`,
+                                        color: t.color,
+                                      }}
+                                    >
+                                      {t.name}
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
+                            </td>
                           )}
-                        </td>
-                      )}
-                      <td className="px-5 py-3 text-right tabular-nums">{r.entryCount}</td>
-                      <td className="px-5 py-3 text-right tabular-nums text-muted-foreground">
-                        {formatHours(r.rawHours)}
-                      </td>
-                      <td className="px-5 py-3 text-right tabular-nums font-medium">
-                        {formatHours(r.billableHours)}
-                      </td>
-                      <td className="px-5 py-3 text-right tabular-nums text-muted-foreground">
-                        {r.paidCount}/{r.entryCount}
-                      </td>
-                      {casualGroupBy === "client" && (
-                        <td className="px-5 py-3 text-muted-foreground">
-                          {r.lastServiceDate
-                            ? fromDateKey(r.lastServiceDate).toLocaleDateString(undefined, {
-                                month: "short",
-                                day: "numeric",
-                                year: "numeric",
-                              })
-                            : "—"}
-                        </td>
-                      )}
-                    </tr>
-                  ))}
-                  {casualRows.length === 0 && (
+                          <td className="px-5 py-3 text-right tabular-nums">{g.entryCount}</td>
+                          <td className="px-5 py-3 text-right tabular-nums text-muted-foreground">
+                            {formatHours(g.rawHours)}
+                          </td>
+                          <td className="px-5 py-3 text-right font-semibold tabular-nums">
+                            {formatHours(g.billableHours)}
+                          </td>
+                          <td className="px-5 py-3 text-right tabular-nums text-muted-foreground">
+                            {g.paidCount}/{g.entryCount}
+                          </td>
+                          {casualGroupBy === "client" && (
+                            <td className="px-5 py-3 text-muted-foreground">
+                              {g.lastServiceDate
+                                ? fromDateKey(g.lastServiceDate).toLocaleDateString(undefined, {
+                                    month: "short",
+                                    day: "numeric",
+                                    year: "numeric",
+                                  })
+                                : "—"}
+                            </td>
+                          )}
+                        </tr>
+                        {!singleCategory &&
+                          g.categories.map((r) => (
+                            <tr
+                              key={r.serviceCategory}
+                              className="border-b border-border text-muted-foreground hover:bg-muted/40"
+                            >
+                              <td className="px-5 py-2" />
+                              <td className="py-2 pl-9 pr-5">
+                                {CASUAL_SERVICE_CATEGORY_LABELS[r.serviceCategory]}
+                              </td>
+                              {tags.length > 0 && <td className="px-5 py-2" />}
+                              <td className="px-5 py-2 text-right tabular-nums">{r.entryCount}</td>
+                              <td className="px-5 py-2 text-right tabular-nums">
+                                {formatHours(r.rawHours)}
+                              </td>
+                              <td className="px-5 py-2 text-right tabular-nums">
+                                {formatHours(r.billableHours)}
+                              </td>
+                              <td className="px-5 py-2 text-right tabular-nums">
+                                {r.paidCount}/{r.entryCount}
+                              </td>
+                              {casualGroupBy === "client" && <td className="px-5 py-2" />}
+                            </tr>
+                          ))}
+                      </Fragment>
+                    );
+                  })}
+                  {sortedCasualGroups.length === 0 && (
                     <tr>
                       <td
                         colSpan={(casualGroupBy === "client" ? 7 : 6) + (tags.length > 0 ? 1 : 0)}
@@ -1560,6 +1811,31 @@ function Reports() {
                     </tr>
                   )}
                 </tbody>
+                {sortedCasualGroups.length > 0 && (
+                  <tfoot>
+                    <tr className="border-t-2 border-border bg-muted/50">
+                      <td className="px-5 py-3 font-semibold">
+                        All {sortedCasualGroups.length} {casualGroupByChartLabels[casualGroupBy]}
+                        {sortedCasualGroups.length === 1 ? "" : "s"}
+                      </td>
+                      <td className="px-5 py-3" />
+                      {tags.length > 0 && <td className="px-5 py-3" />}
+                      <td className="px-5 py-3 text-right font-semibold tabular-nums">
+                        {casualGrandTotals.entryCount}
+                      </td>
+                      <td className="px-5 py-3 text-right font-semibold tabular-nums">
+                        {formatHours(casualGrandTotals.rawHours)}
+                      </td>
+                      <td className="px-5 py-3 text-right font-semibold tabular-nums">
+                        {formatHours(casualGrandTotals.billableHours)}
+                      </td>
+                      <td className="px-5 py-3 text-right font-semibold tabular-nums">
+                        {casualGrandTotals.paidCount}/{casualGrandTotals.entryCount}
+                      </td>
+                      {casualGroupBy === "client" && <td className="px-5 py-3" />}
+                    </tr>
+                  </tfoot>
+                )}
               </table>
             </CardContent>
           </Card>
