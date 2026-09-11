@@ -572,6 +572,45 @@ export type Database = {
           },
         ];
       };
+      timesheet_reminders: {
+        Row: {
+          id: string;
+          sent_at: string;
+          sent_by: string | null;
+          user_id: string;
+          week_start: string;
+        };
+        Insert: {
+          id?: string;
+          sent_at?: string;
+          sent_by?: string | null;
+          user_id: string;
+          week_start: string;
+        };
+        Update: {
+          id?: string;
+          sent_at?: string;
+          sent_by?: string | null;
+          user_id?: string;
+          week_start?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "timesheet_reminders_sent_by_fkey";
+            columns: ["sent_by"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "timesheet_reminders_user_id_fkey";
+            columns: ["user_id"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       timesheets: {
         Row: {
           created_at: string;
@@ -821,6 +860,15 @@ export type Database = {
         Returns: {
           entry_count: number;
           tag_id: string;
+        }[];
+      };
+      request_timesheet_reminder: {
+        Args: { _user_id: string; _week_start: string };
+        Returns: {
+          email: string;
+          full_name: string;
+          manager_name: string;
+          week_start: string;
         }[];
       };
       timesheet_submission_recipients: {
