@@ -25,6 +25,7 @@ import {
   type TimesheetStatus,
   type WorkspaceAnnouncement,
   type WorkspaceClient,
+  type WorkspaceClientProfile,
   type WorkspaceEmployment,
   type WorkspaceEntry,
   type WorkspaceMember,
@@ -76,6 +77,7 @@ export {
   type TimesheetStatus,
   type WorkspaceActivityEvent,
   type WorkspaceClient,
+  type WorkspaceClientProfile,
   type WorkspaceEmployment,
   type WorkspaceEntry,
   type WorkspaceMember,
@@ -114,18 +116,10 @@ type WorkspaceContextValue = {
   deleteTaskCategory: (id: string) => Promise<void>;
   /** The real clients table — every client, whether or not a project currently uses it. Distinct from useWorkspaceClients(), which groups by project usage for display. */
   clients: WorkspaceClient[];
-  createClient: (name: string) => Promise<void>;
+  createClient: (name: string, profile?: WorkspaceClientProfile) => Promise<void>;
   updateClient: (id: string, name: string) => Promise<void>;
   setClientActive: (id: string, active: boolean) => Promise<void>;
-  updateClientProfile: (
-    id: string,
-    profile: {
-      basecampUrl: string | null;
-      contactName: string | null;
-      contactEmail: string | null;
-      subscriptionHours: number | null;
-    },
-  ) => Promise<void>;
+  updateClientProfile: (id: string, profile: WorkspaceClientProfile) => Promise<void>;
   deleteClient: (id: string) => Promise<void>;
   settings: WorkspaceSettings;
   entries: WorkspaceEntry[];
@@ -172,6 +166,10 @@ type WorkspaceContextValue = {
     status: "Approved" | "Rejected",
     note?: string,
   ) => Promise<void>;
+  /** M47: `${userId}|${weekStart}` for every week already reminded about — one reminder per person per week is the rule, enforced in Postgres. Empty for anyone who isn't a manager/admin. */
+  remindedWeeks: Set<string>;
+  /** M47: emails someone that their timesheet for `weekStart` (a Monday date key) isn't submitted. Throws with a specific reason if refused. */
+  remindToSubmit: (userId: string, weekStart: string) => Promise<void>;
 
   membersByTeam: (teamId: string) => WorkspaceMember[];
   teamMemberCount: (teamId: string) => number;
@@ -433,7 +431,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     timesheetForWeek,
     submitTimesheet,
     reviewTimesheet,
-  } = useTimesheetsData(enabled, uid);
+    remindedWeeks,
+    remindToSubmit,
+  } = useTimesheetsData(enabled, uid, canManage);
 
   const loading =
     enabled &&
@@ -552,6 +552,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
 
       submitTimesheet,
       reviewTimesheet,
+      remindedWeeks,
+      remindToSubmit,
       refreshAll: () => qc.invalidateQueries(),
     };
   }, [
@@ -634,6 +636,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     timesheetForWeek,
     submitTimesheet,
     reviewTimesheet,
+    remindedWeeks,
+    remindToSubmit,
     membersByTeam,
     qc,
   ]);

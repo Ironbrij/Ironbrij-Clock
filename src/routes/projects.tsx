@@ -70,6 +70,7 @@ import {
   useWorkspaceClients,
   useWorkspaceTags,
   type ProjectInput,
+  type WorkspaceClientProfile,
   type WorkspaceTag,
   type WorkspaceProject,
   type WorkspaceTaskCategory,
@@ -656,6 +657,12 @@ function ProjectFormDialog({
   const [tagIds, setTagIds] = useState<string[]>([]);
   const [memberIds, setMemberIds] = useState<string[]>([]);
   const [taskCategoryIds, setTaskCategoryIds] = useState<string[]>([]);
+  // M25 stores "offer every category" as an empty taskCategoryIds, which is
+  // correct but invisible — an empty checklist looks like nothing has been
+  // set up rather than like a deliberate "all". This mirrors that same
+  // stored value back as an explicit choice; scoped === false always
+  // submits [].
+  const [scopedCategories, setScopedCategories] = useState(false);
   // M27: text, not number, so the field can be legitimately empty (no
   // budget) rather than coercing to 0 — same pattern as
   // ClientProfileDialog's subscriptionHours input.
@@ -671,6 +678,7 @@ function ProjectFormDialog({
     setTagIds(project?.tagIds ?? []);
     setMemberIds(project?.memberIds ?? []);
     setTaskCategoryIds(project?.taskCategoryIds ?? []);
+    setScopedCategories((project?.taskCategoryIds ?? []).length > 0);
     setBudgetHours(project?.budgetHours != null ? String(project.budgetHours) : "");
   }, [open, project, clientNames, teams]);
 
@@ -792,14 +800,38 @@ function ProjectFormDialog({
           {taskCategories.length > 0 && (
             <div className="grid gap-2">
               <Label>Task categories</Label>
-              <MultiSelectList
-                options={taskCategories.map((t) => ({ id: t.id, label: t.name }))}
-                selected={taskCategoryIds}
-                onToggle={toggle(setTaskCategoryIds)}
-              />
+              <div className="flex items-center gap-2">
+                <Checkbox
+                  id="project-all-categories"
+                  checked={!scopedCategories}
+                  onCheckedChange={(checked) => {
+                    const all = checked === true;
+                    setScopedCategories(!all);
+                    if (all) setTaskCategoryIds([]);
+                  }}
+                />
+                <Label htmlFor="project-all-categories" className="cursor-pointer font-normal">
+                  All task categories
+                </Label>
+              </div>
+              {scopedCategories && (
+                <>
+                  <MultiSelectList
+                    options={taskCategories.map((t) => ({ id: t.id, label: t.name }))}
+                    selected={taskCategoryIds}
+                    onToggle={toggle(setTaskCategoryIds)}
+                  />
+                  {taskCategoryIds.length === 0 && (
+                    <p className="text-xs text-destructive">
+                      Pick at least one category, or switch back to all task categories.
+                    </p>
+                  )}
+                </>
+              )}
               <p className="text-xs text-muted-foreground">
-                Leave none selected to offer every task category, same as today. Pick specific ones
-                to scope this project's task picker to just those.
+                {scopedCategories
+                  ? "This project's task picker will only offer the categories you pick here."
+                  : "Everyone logging time to this project can pick from every task category."}
               </p>
             </div>
           )}
@@ -826,7 +858,14 @@ function ProjectFormDialog({
               Cancel
             </Button>
             <Button
-              disabled={!name.trim() || !client || budgetHoursInvalid}
+              disabled={
+                !name.trim() ||
+                !client ||
+                budgetHoursInvalid ||
+                // Would silently save as "all", the opposite of what the
+                // scoped choice says.
+                (scopedCategories && taskCategoryIds.length === 0)
+              }
               onClick={() => {
                 onSubmit({
                   name: name.trim(),
@@ -877,24 +916,15 @@ function ClientsTab({
   }[];
   clientBudgets: ReturnType<typeof useClientBudgets>;
   clientHealth: ReturnType<typeof useClientHealth>;
-  createClient: (name: string) => Promise<void>;
+  createClient: (name: string, profile?: WorkspaceClientProfile) => Promise<void>;
   updateClient: (id: string, name: string) => Promise<void>;
   setClientActive: (id: string, active: boolean) => Promise<void>;
-  updateClientProfile: (
-    id: string,
-    profile: {
-      basecampUrl: string | null;
-      contactName: string | null;
-      contactEmail: string | null;
-      subscriptionHours: number | null;
-    },
-  ) => Promise<void>;
+  updateClientProfile: (id: string, profile: WorkspaceClientProfile) => Promise<void>;
   deleteClient: (id: string) => Promise<void>;
   canManage: boolean;
 }) {
   const [viewingId, setViewingId] = useState<string | null>(null);
-  const [newName, setNewName] = useState("");
-  const [adding, setAdding] = useState(false);
+  const [addOpen, setAddOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<{
@@ -926,21 +956,11 @@ function ClientsTab({
     setPage(1);
   }, [search, showInactive]);
 
-  const add = async () => {
-    const name = newName.trim();
-    if (!name) return;
-    setAdding(true);
-    try {
-      await createClient(name);
-      setNewName("");
-      setSearch("");
-      setPage(1);
-      toast.success("Client added");
-    } catch (error) {
-      toast.error("Couldn't add that", { description: (error as Error).message });
-    } finally {
-      setAdding(false);
-    }
+  const add = async (name: string, profile: WorkspaceClientProfile) => {
+    await createClient(name, profile);
+    setSearch("");
+    setPage(1);
+    toast.success("Client added");
   };
 
   const startEdit = (id: string, name: string) => {
@@ -991,18 +1011,13 @@ function ClientsTab({
   return (
     <div className="grid gap-4">
       {canManage && (
-        <div className="flex gap-2">
-          <Input
-            placeholder="New client name"
-            value={newName}
-            onChange={(e) => setNewName(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && void add()}
-          />
-          <Button disabled={adding || !newName.trim()} onClick={() => void add()}>
-            Add client
+        <div className="flex justify-end">
+          <Button className="gap-2" onClick={() => setAddOpen(true)}>
+            <Plus className="h-4 w-4" /> Add client
           </Button>
         </div>
       )}
+      <NewClientDialog open={addOpen} onOpenChange={setAddOpen} onSubmit={add} />
 
       <div className="flex flex-wrap items-center gap-3">
         <div className="relative min-w-[220px] flex-1">
@@ -1025,7 +1040,7 @@ function ClientsTab({
           {paged.length === 0 ? (
             <p className="px-6 py-8 text-center text-sm text-muted-foreground">
               {clients.length === 0
-                ? "No clients yet — add one above."
+                ? "No clients yet — add your first one."
                 : "No clients match your search."}
             </p>
           ) : (
@@ -1234,6 +1249,144 @@ function ClientsTab({
   );
 }
 
+/**
+ * Adding a client used to be a bare name box, which meant every new client
+ * had to be opened and edited a second time to get its Basecamp link,
+ * contact and subscription hours in. Same fields as ClientProfileDialog's
+ * edit mode — only the name is required, so a name-only client is still a
+ * one-field job.
+ */
+function NewClientDialog({
+  open,
+  onOpenChange,
+  onSubmit,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onSubmit: (name: string, profile: WorkspaceClientProfile) => Promise<void>;
+}) {
+  const [name, setName] = useState("");
+  const [basecampUrl, setBasecampUrl] = useState("");
+  const [contactName, setContactName] = useState("");
+  const [contactEmail, setContactEmail] = useState("");
+  const [subscriptionHours, setSubscriptionHours] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (open) {
+      setName("");
+      setBasecampUrl("");
+      setContactName("");
+      setContactEmail("");
+      setSubscriptionHours("");
+    }
+  }, [open]);
+
+  // Same rule as the project dialog's budget field: blank means "no cap",
+  // anything else has to be a positive number.
+  const hoursTrimmed = subscriptionHours.trim();
+  const hoursInvalid = hoursTrimmed !== "" && !(Number(hoursTrimmed) > 0);
+
+  const save = async () => {
+    const trimmed = name.trim();
+    if (!trimmed || hoursInvalid) return;
+    setSaving(true);
+    try {
+      await onSubmit(trimmed, {
+        basecampUrl: basecampUrl.trim() || null,
+        contactName: contactName.trim() || null,
+        contactEmail: contactEmail.trim() || null,
+        subscriptionHours: hoursTrimmed === "" ? null : Number(hoursTrimmed),
+      });
+      onOpenChange(false);
+    } catch (error) {
+      toast.error("Couldn't add that", { description: (error as Error).message });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Add a client</DialogTitle>
+          <DialogDescription>
+            Only the name is required — the rest can be filled in later from the client's profile.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-4 py-2">
+          <div className="grid gap-2">
+            <Label htmlFor="new-client-name">Client name</Label>
+            <Input
+              id="new-client-name"
+              autoFocus
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="e.g. Northshore Dental"
+            />
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="grid gap-2">
+              <Label htmlFor="new-client-contact-name">Contact name</Label>
+              <Input
+                id="new-client-contact-name"
+                value={contactName}
+                onChange={(e) => setContactName(e.target.value)}
+                placeholder="Jane Smith"
+              />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="new-client-contact-email">Client email</Label>
+              <Input
+                id="new-client-contact-email"
+                type="email"
+                value={contactEmail}
+                onChange={(e) => setContactEmail(e.target.value)}
+                placeholder="jane@client.com"
+              />
+            </div>
+          </div>
+          <div className="grid gap-2">
+            <Label htmlFor="new-client-basecamp">Basecamp link</Label>
+            <Input
+              id="new-client-basecamp"
+              value={basecampUrl}
+              onChange={(e) => setBasecampUrl(e.target.value)}
+              placeholder="https://3.basecamp.com/..."
+            />
+          </div>
+          <div className="grid gap-2">
+            <Label htmlFor="new-client-subscription">Subscription hours</Label>
+            <Input
+              id="new-client-subscription"
+              type="number"
+              min="0"
+              step="0.5"
+              value={subscriptionHours}
+              onChange={(e) => setSubscriptionHours(e.target.value)}
+              placeholder="No cap — hours aren't tracked against a subscription"
+            />
+            {hoursInvalid && (
+              <p className="text-xs text-destructive">
+                Enter a positive number, or leave it blank.
+              </p>
+            )}
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button disabled={saving || !name.trim() || hoursInvalid} onClick={() => void save()}>
+            Add client
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function ClientProfileDialog({
   client,
   canManage,
@@ -1250,15 +1403,7 @@ function ClientProfileDialog({
     hours: number;
   } | null;
   canManage: boolean;
-  updateClientProfile: (
-    id: string,
-    profile: {
-      basecampUrl: string | null;
-      contactName: string | null;
-      contactEmail: string | null;
-      subscriptionHours: number | null;
-    },
-  ) => Promise<void>;
+  updateClientProfile: (id: string, profile: WorkspaceClientProfile) => Promise<void>;
   onOpenChange: (open: boolean) => void;
 }) {
   const [editing, setEditing] = useState(false);

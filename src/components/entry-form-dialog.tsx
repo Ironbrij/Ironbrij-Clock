@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { ProjectDot } from "@/components/app-shell";
 import { DescriptionAutocomplete } from "@/components/description-autocomplete";
@@ -116,10 +116,12 @@ export function EntryFormDialog({
   // same as the stored value an existing entry already has.
   const [billable, setBillable] = useState(true);
   const [billableTouched, setBillableTouched] = useState(false);
-  // M46: no project-level default to follow (category is per-entry only),
-  // so this just seeds from the stored value (or null, for a new entry)
-  // and stays a plain controlled value — no touched-tracking needed.
+  // M46: seeded from the stored value (or null, for a new entry).
+  // M48: now also auto-filled from the selected project's client, so it
+  // follows the same touched-tracking shape as billable above — it keeps
+  // following the client until the person picks a category themselves.
   const [serviceCategory, setServiceCategory] = useState<CasualServiceCategory | null>(null);
+  const [serviceCategoryTouched, setServiceCategoryTouched] = useState(false);
 
   useEffect(() => {
     if (open) {
@@ -128,6 +130,7 @@ export function EntryFormDialog({
       setBillable(entry ? entry.billable : true);
       setBillableTouched(!!entry);
       setServiceCategory(entry ? entry.serviceCategory : null);
+      setServiceCategoryTouched(!!entry);
     }
     // defaultTask intentionally excluded — it should only affect the
     // initial value when the dialog opens, not overwrite whatever the
@@ -145,6 +148,47 @@ export function EntryFormDialog({
     setBillable(project?.billable ?? true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [values.projectId, open, entry, billableTouched]);
+
+  // M48: the last casual service category used for each client, so picking
+  // a project can pre-fill the category the way Project and Task already
+  // pre-fill from recency.
+  //
+  // Deliberately keyed on clients that have *actually* been categorised
+  // before, and deliberately not a blanket "has a client → Paid Casual
+  // Service": a non-null category is exactly what puts an entry into the
+  // Casual Service report (casual-service-tab.tsx filters on it) and what
+  // M46's client-inactivity flags are computed from. Defaulting it for
+  // every client would sweep ordinary client work into the accounts team's
+  // casual report. A client with no casual history stays null — "Not
+  // casual service" — which is still the right default for most entries.
+  //
+  // Built from this person's own entries (the rolling window the workspace
+  // already loads), so it reflects how *they* categorise their work for a
+  // client, not someone else's convention.
+  const lastCategoryByClient = useMemo(() => {
+    const map = new Map<string, CasualServiceCategory>();
+    const byRecency = [...entries].sort((a, b) => b.startTime.localeCompare(a.startTime));
+    for (const e of byRecency) {
+      if (!e.serviceCategory) continue;
+      const clientId = projects.find((p) => p.id === e.projectId)?.clientId;
+      // First hit wins — the list is newest-first, so that's the most
+      // recent category for this client.
+      if (!clientId || map.has(clientId)) continue;
+      map.set(clientId, e.serviceCategory);
+    }
+    return map;
+  }, [entries, projects]);
+
+  // M48: same rule as billable just above — a new entry keeps following
+  // the selected project's client until the category itself is touched;
+  // editing an existing entry never recomputes, since its stored category
+  // is a real value someone chose, not a default.
+  useEffect(() => {
+    if (!open || entry || serviceCategoryTouched) return;
+    const clientId = projects.find((p) => p.id === values.projectId)?.clientId ?? null;
+    setServiceCategory(clientId ? (lastCategoryByClient.get(clientId) ?? null) : null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [values.projectId, open, entry, serviceCategoryTouched, lastCategoryByClient]);
 
   // M25: empty taskCategoryIds means unrestricted (today's exact default)
   // — only a project deliberately scoped to specific categories narrows
@@ -390,9 +434,10 @@ export function EntryFormDialog({
               </Label>
               <Select
                 value={serviceCategory ?? "none"}
-                onValueChange={(v) =>
-                  setServiceCategory(v === "none" ? null : (v as CasualServiceCategory))
-                }
+                onValueChange={(v) => {
+                  setServiceCategoryTouched(true);
+                  setServiceCategory(v === "none" ? null : (v as CasualServiceCategory));
+                }}
               >
                 <SelectTrigger id="entry-service-category">
                   <SelectValue />
@@ -408,6 +453,17 @@ export function EntryFormDialog({
                   )}
                 </SelectContent>
               </Select>
+              {/* M48: says *why* a category appeared on its own, so a
+                  pre-filled value reads as a suggestion to check rather
+                  than something the person must have set themselves. Only
+                  while it's still the auto-filled one — once touched, it's
+                  their own choice and needs no explanation. */}
+              {!entry && !serviceCategoryTouched && serviceCategory && selectedProject && (
+                <p className="text-xs text-muted-foreground">
+                  Carried over from the last casual service entry for {selectedProject.client}.
+                  Change it here if this one's different.
+                </p>
+              )}
             </div>
           )}
         </div>

@@ -12,7 +12,7 @@ import {
   type WorkspaceTimesheet,
 } from "./types";
 
-export function useTimesheetsData(enabled: boolean, uid: string | null) {
+export function useTimesheetsData(enabled: boolean, uid: string | null, canManage: boolean) {
   const qc = useQueryClient();
 
   const timesheetsQ = useQuery({
@@ -202,6 +202,64 @@ export function useTimesheetsData(enabled: boolean, uid: string | null) {
     [qc],
   );
 
+  // M47: which (person, week) pairs have already had a reminder sent, so
+  // the button can say "Reminded" instead of offering a click that the
+  // one-per-week rule will just refuse. RLS scopes this to the caller's own
+  // reminders plus, for a manager/admin, their team's — same window as
+  // timesheets above, since a reminder for a week nothing else can show is
+  // of no use to the UI.
+  const remindersQ = useQuery({
+    queryKey: ["timesheet_reminders"],
+    enabled: enabled && canManage,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("timesheet_reminders")
+        .select("user_id, week_start, sent_at")
+        .gte("week_start", toDateKey(oldestLoadedWeekStart()));
+      if (error) throw error;
+      return data;
+    },
+  });
+
+  /** Keyed `${userId}|${weekStart}` — presence means a reminder has already gone out for that week. */
+  const remindedWeeks = useMemo(
+    () => new Set((remindersQ.data ?? []).map((r) => `${r.user_id}|${r.week_start}`)),
+    [remindersQ.data],
+  );
+
+  // M47: unlike submitTimesheet's fire-and-forget notification, this is
+  // awaited and its failure surfaced — the reminder *is* the action, so
+  // "couldn't send" has to reach the manager rather than being swallowed.
+  // The RPC that records it lives inside the edge function (it needs the
+  // recipient's email, which the browser never sees), so there's one call
+  // here, not two.
+  const remindToSubmit = useCallback(
+    async (userId: string, weekStart: string) => {
+      const { data, error } = await supabase.functions.invoke("notify-timesheet-reminder", {
+        body: { user_id: userId, week_start: weekStart },
+      });
+      qc.invalidateQueries({ queryKey: ["timesheet_reminders"] });
+      qc.invalidateQueries({ queryKey: ["activity_log"] });
+      // A non-2xx from the function arrives as a FunctionsHttpError whose
+      // message is just "Edge Function returned a non-2xx status code" —
+      // the actual reason ("already been reminded", "already submitted") is
+      // in the response body, so it has to be read back out of the context.
+      if (error) {
+        const detail = await (error as { context?: Response }).context
+          ?.json()
+          .then((b: { error?: string }) => b?.error)
+          .catch(() => undefined);
+        throw new Error(detail || error.message);
+      }
+      // Secrets unset on the project — the function returns 200 with a
+      // reason rather than erroring, which would otherwise read as success.
+      if (data?.reason === "not configured") {
+        throw new Error("Email isn't configured for this workspace yet.");
+      }
+    },
+    [qc],
+  );
+
   return {
     timesheetsQ,
     reviewEntriesQ,
@@ -211,5 +269,7 @@ export function useTimesheetsData(enabled: boolean, uid: string | null) {
     timesheetForWeek,
     submitTimesheet,
     reviewTimesheet,
+    remindedWeeks,
+    remindToSubmit,
   };
 }

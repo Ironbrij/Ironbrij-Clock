@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Activity,
   AlertTriangle,
+  Bell,
   CalendarClock,
   CheckCheck,
   ChevronDown,
@@ -216,12 +217,24 @@ function statusBadgeVariant(status: string): "default" | "secondary" | "destruct
 }
 
 function WeekStatusPanel() {
-  const { activeMembers, currentUser, isAdmin, teams, timesheets, employeeHoursForRange } =
-    useWorkspace();
+  const {
+    activeMembers,
+    currentUser,
+    isAdmin,
+    teams,
+    timesheets,
+    employeeHoursForRange,
+    remindedWeeks,
+    remindToSubmit,
+  } = useWorkspace();
   const weekStart = useThisWeekStart();
   const weekKey = toDateKey(weekStart);
   const [search, setSearch] = useState("");
   const [teamFilter, setTeamFilter] = useState("all");
+  // M47: per-row, not a single shared flag — "Remind all" walks the list
+  // one at a time and each row should show its own progress (same reasoning
+  // as ApprovalsPanel's busyIds).
+  const [remindingIds, setRemindingIds] = useState<Set<string>>(new Set());
 
   const relevantMembers = useMemo(() => {
     const base = activeMembers.filter((m) => !m.pending && m.id !== currentUser.id);
@@ -281,16 +294,85 @@ function WeekStatusPanel() {
     });
   }, [filteredMembers, statusFor]);
 
+  // Only "Not submitted" is remindable: Draft and Rejected mean they've
+  // engaged with the week already, and chasing those reads as nagging
+  // rather than helping. Postgres allows both (they genuinely still need
+  // action) — this is the narrower, kinder default, not the rule itself.
+  const remindable = (id: string) =>
+    statusFor(id) === "Not submitted" && !remindedWeeks.has(`${id}|${weekKey}`);
+
+  const remind = async (id: string, name: string) => {
+    setRemindingIds((prev) => new Set(prev).add(id));
+    try {
+      await remindToSubmit(id, weekKey);
+      toast.success(`Reminder sent to ${name}`);
+    } catch (error) {
+      toast.error("Couldn't send that reminder", { description: (error as Error).message });
+    } finally {
+      setRemindingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+    }
+  };
+
+  // Sequential, one send per person, so a partial failure is reportable as
+  // a count rather than the whole batch failing together — same shape as
+  // the bulk-approve loop in ApprovalsPanel.
+  const remindAll = async () => {
+    const targets = sorted.filter((m) => remindable(m.id));
+    if (targets.length === 0) return;
+    setRemindingIds(new Set(targets.map((m) => m.id)));
+    let sent = 0;
+    for (const m of targets) {
+      try {
+        await remindToSubmit(m.id, weekKey);
+        sent++;
+      } catch {
+        // Counted below — one bad address shouldn't stop the rest.
+      }
+    }
+    setRemindingIds(new Set());
+    const failed = targets.length - sent;
+    if (sent > 0) {
+      toast.success(`${sent} reminder${sent === 1 ? "" : "s"} sent`, {
+        description:
+          failed > 0 ? `${failed} couldn't be sent — try those individually.` : undefined,
+      });
+    } else {
+      toast.error("Couldn't send those reminders", {
+        description: "Try one individually to see why.",
+      });
+    }
+  };
+
   if (relevantMembers.length === 0) return null;
+
+  const remindableCount = sorted.filter((m) => remindable(m.id)).length;
 
   return (
     <Card className="mb-4 shadow-card">
       <CardContent className="p-0">
-        <div className="border-b border-border px-6 py-3">
-          <h3 className="text-sm font-semibold">This week · {formatWeekRange(weekStart)}</h3>
-          <p className="text-xs text-muted-foreground">
-            Who's submitted their timesheet so far — not just what's waiting on you.
-          </p>
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-6 py-3">
+          <div>
+            <h3 className="text-sm font-semibold">This week · {formatWeekRange(weekStart)}</h3>
+            <p className="text-xs text-muted-foreground">
+              Who's submitted their timesheet so far — not just what's waiting on you.
+            </p>
+          </div>
+          {remindableCount > 0 && (
+            <Button
+              size="sm"
+              variant="outline"
+              className="gap-2"
+              disabled={remindingIds.size > 0}
+              onClick={() => void remindAll()}
+            >
+              <Bell className="h-3.5 w-3.5" />
+              Remind all {remindableCount}
+            </Button>
+          )}
         </div>
         {relevantMembers.length > 8 && (
           <div className="border-b border-border px-6 py-3">
@@ -325,6 +407,28 @@ function WeekStatusPanel() {
                   </span>
                 )}
                 <Badge variant={statusBadgeVariant(statusFor(m.id))}>{statusFor(m.id)}</Badge>
+                {statusFor(m.id) === "Not submitted" &&
+                  (remindedWeeks.has(`${m.id}|${weekKey}`) ? (
+                    // One per person per week, enforced in Postgres — say so
+                    // rather than offering a click that would just be refused.
+                    <span
+                      className="text-xs text-muted-foreground"
+                      title="Already reminded this week"
+                    >
+                      Reminded
+                    </span>
+                  ) : (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-7 gap-1.5 px-2 text-xs"
+                      disabled={remindingIds.has(m.id)}
+                      onClick={() => void remind(m.id, m.name)}
+                    >
+                      <Bell className="h-3.5 w-3.5" />
+                      Remind
+                    </Button>
+                  ))}
               </div>
             </li>
           ))}
@@ -692,6 +796,8 @@ function describeActivityEvent(
     }
     case "member_removed":
       return `${actor} removed ${target}'s access`;
+    case "timesheet_reminder_sent":
+      return `${actor} reminded ${target} to submit their timesheet for ${week(e.metadata.week_start)}`;
     case "time_entry_edited": {
       const day =
         typeof e.metadata.entry_date === "string"
@@ -727,6 +833,7 @@ const actionFilterLabels: Record<string, string> = {
   team_added: "Added to team",
   team_removed: "Removed from team",
   member_removed: "Access removed",
+  timesheet_reminder_sent: "Reminder sent",
   time_entry_edited: "Entry edited",
   time_entry_deleted: "Entry deleted",
 };

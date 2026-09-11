@@ -2,7 +2,15 @@ import { useCallback, useEffect, useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { throwIf } from "./utils";
-import type { WorkspaceClient } from "./types";
+import type { WorkspaceClient, WorkspaceClientProfile } from "./types";
+
+/** Maps the camelCase profile the forms deal in onto the clients table's own columns. */
+const profileColumns = (profile: WorkspaceClientProfile) => ({
+  basecamp_url: profile.basecampUrl,
+  contact_name: profile.contactName,
+  contact_email: profile.contactEmail,
+  subscription_hours: profile.subscriptionHours,
+});
 
 export function useClientsData(enabled: boolean) {
   const qc = useQueryClient();
@@ -60,9 +68,15 @@ export function useClientsData(enabled: boolean) {
     [clientsQ.data],
   );
 
+  // The profile is optional so a client can still be created from just a
+  // name (that's all the seed/import paths have), but the Clients tab now
+  // collects it up front rather than leaving every new client to be opened
+  // and edited a second time.
   const createClient = useCallback(
-    async (name: string) => {
-      const { error } = await supabase.from("clients").insert({ name: name.trim() });
+    async (name: string, profile?: WorkspaceClientProfile) => {
+      const { error } = await supabase
+        .from("clients")
+        .insert({ name: name.trim(), ...(profile ? profileColumns(profile) : {}) });
       throwIf(error);
       qc.invalidateQueries({ queryKey: ["clients"] });
     },
@@ -88,24 +102,8 @@ export function useClientsData(enabled: boolean) {
   );
 
   const updateClientProfile = useCallback(
-    async (
-      id: string,
-      profile: {
-        basecampUrl: string | null;
-        contactName: string | null;
-        contactEmail: string | null;
-        subscriptionHours: number | null;
-      },
-    ) => {
-      const { error } = await supabase
-        .from("clients")
-        .update({
-          basecamp_url: profile.basecampUrl,
-          contact_name: profile.contactName,
-          contact_email: profile.contactEmail,
-          subscription_hours: profile.subscriptionHours,
-        })
-        .eq("id", id);
+    async (id: string, profile: WorkspaceClientProfile) => {
+      const { error } = await supabase.from("clients").update(profileColumns(profile)).eq("id", id);
       throwIf(error);
       qc.invalidateQueries({ queryKey: ["clients"] });
     },
