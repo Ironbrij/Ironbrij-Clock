@@ -84,6 +84,8 @@ export type WorkspaceClient = {
   contactEmail: string | null;
   subscriptionHours: number | null;
 };
+/** The editable half of a client — everything but the name and active flag. Shared by createClient and updateClientProfile so the add and edit forms stay in step. */
+export type WorkspaceClientProfile = Omit<WorkspaceClient, "id" | "name" | "active">;
 import type { WeeklyScheduleDays } from "@/lib/time-utils";
 
 export type EmploymentType = "full_time" | "part_time";

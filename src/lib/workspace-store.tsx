@@ -25,6 +25,7 @@ import {
   type TimesheetStatus,
   type WorkspaceAnnouncement,
   type WorkspaceClient,
+  type WorkspaceClientProfile,
   type WorkspaceEmployment,
   type WorkspaceEntry,
   type WorkspaceMember,
@@ -76,6 +77,7 @@ export {
   type TimesheetStatus,
   type WorkspaceActivityEvent,
   type WorkspaceClient,
+  type WorkspaceClientProfile,
   type WorkspaceEmployment,
   type WorkspaceEntry,
   type WorkspaceMember,
@@ -114,18 +116,10 @@ type WorkspaceContextValue = {
   deleteTaskCategory: (id: string) => Promise<void>;
   /** The real clients table — every client, whether or not a project currently uses it. Distinct from useWorkspaceClients(), which groups by project usage for display. */
   clients: WorkspaceClient[];
-  createClient: (name: string) => Promise<void>;
+  createClient: (name: string, profile?: WorkspaceClientProfile) => Promise<void>;
   updateClient: (id: string, name: string) => Promise<void>;
   setClientActive: (id: string, active: boolean) => Promise<void>;
-  updateClientProfile: (
-    id: string,
-    profile: {
-      basecampUrl: string | null;
-      contactName: string | null;
-      contactEmail: string | null;
-      subscriptionHours: number | null;
-    },
-  ) => Promise<void>;
+  updateClientProfile: (id: string, profile: WorkspaceClientProfile) => Promise<void>;
   deleteClient: (id: string) => Promise<void>;
   settings: WorkspaceSettings;
   entries: WorkspaceEntry[];
