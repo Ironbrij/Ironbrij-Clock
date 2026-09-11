@@ -143,6 +143,9 @@ function TimerBar() {
     scopedTaskCategories,
     entries,
   );
+  const selectedBudget = selectedProject?.clientId
+    ? clientBudgets.get(selectedProject.clientId)
+    : undefined;
   const [task, setTask] = useState("");
   const [description, setDescription] = useState("");
   const [seconds, setSeconds] = useState(0);
@@ -382,6 +385,27 @@ function TimerBar() {
               Press <kbd className="rounded border border-border px-1 py-0.5 font-sans">Space</kbd>{" "}
               to {running ? "stop" : "start"}
             </span>
+            {/* The over-budget toast only fires at the moment a timer starts,
+                which is too late to be a decision aid — this keeps the
+                selected client's remaining subscription hours visible the
+                whole time one is running. Absent from the map means the
+                client has no cap set, not that they're at zero. */}
+            {selectedBudget && (
+              <span
+                className={`text-[11px] tabular-nums ${
+                  selectedBudget.isOver
+                    ? "font-medium text-destructive"
+                    : selectedBudget.isNearLimit
+                      ? "font-medium text-amber-600 dark:text-amber-400"
+                      : "text-muted-foreground"
+                }`}
+                title={`${formatHours(selectedBudget.renderedHours)} logged against a ${formatHours(selectedBudget.subscriptionHours)} allowance`}
+              >
+                {selectedBudget.isOver
+                  ? `${selectedProject!.client} is over by ${formatHours(-selectedBudget.remainingHours)}`
+                  : `${formatHours(selectedBudget.remainingHours)} left for ${selectedProject!.client}`}
+              </span>
+            )}
           </div>
           <Button
             size="icon"
