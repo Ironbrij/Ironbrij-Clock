@@ -31,6 +31,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
+import { BillingRatesTab } from "@/components/billing-rates-tab";
 import { CasualServiceTab } from "@/components/casual-service-tab";
 import { Combobox } from "@/components/combobox";
 import { EntryFormDialog } from "@/components/entry-form-dialog";
@@ -125,6 +126,7 @@ const sections: { id: string; label: string }[] = [
   { id: "approvals", label: "Approvals" },
   { id: "activity", label: "Activity" },
   { id: "casual", label: "Casual Service" },
+  { id: "rates", label: "Billing Rates" },
 ];
 
 function ManagePage() {
@@ -198,6 +200,8 @@ function ManagePage() {
         />
       ) : tab === "casual" ? (
         <CasualServiceTab />
+      ) : tab === "rates" ? (
+        <BillingRatesTab />
       ) : null}
     </AppShell>
   );

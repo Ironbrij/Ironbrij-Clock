@@ -18,6 +18,14 @@ import type {
   WorkspaceSettings,
 } from "./types";
 
+/**
+ * Row cap on `detailedEntriesForRange`. Exported because callers that
+ * derive money figures from those rows (Reports' Gross Profit tab) have to
+ * be able to tell a complete result from a truncated one — a silently
+ * short-changed total is worse than no total.
+ */
+export const DETAILED_ENTRIES_LIMIT = 5000;
+
 type TimeEntryUpdate = Database["public"]["Tables"]["time_entries"]["Update"];
 type TimeEntryRow = {
   id: string;
@@ -429,7 +437,7 @@ export function useTimeEntriesData(
         // Same reasoning as H25's cap on the personal entries fetch — an
         // explicit bound so a wide range across many people fails loudly
         // (a real bug to raise) instead of silently truncating.
-        .limit(5000);
+        .limit(DETAILED_ENTRIES_LIMIT);
       throwIf(error);
       return (data ?? []).map((e) => ({
         id: e.id,

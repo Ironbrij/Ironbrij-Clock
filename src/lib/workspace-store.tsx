@@ -24,6 +24,8 @@ import {
   type Team,
   type TimesheetStatus,
   type WorkspaceAnnouncement,
+  type WorkspaceBillingRate,
+  type WorkspaceBillingRateInput,
   type WorkspaceClient,
   type WorkspaceClientProfile,
   type WorkspaceEmployment,
@@ -37,6 +39,7 @@ import {
   type WeeklyScheduleDays,
 } from "@/lib/workspace/types";
 import { useAnnouncementsData } from "@/lib/workspace/use-announcements";
+import { useBillingRatesData } from "@/lib/workspace/use-billing-rates";
 import { useClientsData } from "@/lib/workspace/use-clients";
 import { useEmploymentData } from "@/lib/workspace/use-employment";
 import { useMembersData } from "@/lib/workspace/use-members";
@@ -45,6 +48,7 @@ import { useActivityLogData, type WorkspaceActivityEvent } from "@/lib/workspace
 import { useSettingsData } from "@/lib/workspace/use-settings";
 import { useTeamsData } from "@/lib/workspace/use-teams";
 import {
+  DETAILED_ENTRIES_LIMIT,
   useActiveTimersData,
   useMemberEntriesData,
   useTimeEntriesData,
@@ -60,6 +64,7 @@ import { useTaskCategoriesData } from "@/lib/workspace/use-task-categories";
 // internals are now spread across src/lib/workspace/*.
 export {
   currencies,
+  DETAILED_ENTRIES_LIMIT,
   dotColors,
   initialsFrom,
   nameFromEmail,
@@ -76,6 +81,8 @@ export {
   type Team,
   type TimesheetStatus,
   type WorkspaceActivityEvent,
+  type WorkspaceBillingRate,
+  type WorkspaceBillingRateInput,
   type WorkspaceClient,
   type WorkspaceClientProfile,
   type WorkspaceEmployment,
@@ -159,6 +166,11 @@ type WorkspaceContextValue = {
       weeklyScheduleDays?: WeeklyScheduleDays | null;
     },
   ) => Promise<void>;
+  /** M48: every effective-dated client invoice rate, for Manage → Billing Rates and Reports → Gross Profit — empty for anyone who isn't a manager/admin. Resolve one with `resolveInvoiceRate` (src/lib/gross-profit.ts) rather than reading it directly. */
+  billingRates: WorkspaceBillingRate[];
+  createBillingRate: (input: WorkspaceBillingRateInput) => Promise<void>;
+  updateBillingRate: (id: string, hourlyRate: number) => Promise<void>;
+  deleteBillingRate: (id: string) => Promise<void>;
   timesheetForWeek: (weekStart: Date) => WorkspaceTimesheet | undefined;
   submitTimesheet: (weekStart: Date) => Promise<void>;
   reviewTimesheet: (
@@ -366,6 +378,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     uid,
   );
 
+  const { billingRates, createBillingRate, updateBillingRate, deleteBillingRate } =
+    useBillingRatesData(enabled, canManage, uid);
+
   const { teamsQ, teams, createTeam, updateTeam, deleteTeam } = useTeamsData(enabled);
 
   const {
@@ -521,6 +536,10 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       deleteAnnouncement,
       employmentByUser,
       updateMemberEmployment,
+      billingRates,
+      createBillingRate,
+      updateBillingRate,
+      deleteBillingRate,
       timesheetForWeek,
       membersByTeam,
       teamMemberCount,
@@ -633,6 +652,10 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     deleteAnnouncement,
     employmentByUser,
     updateMemberEmployment,
+    billingRates,
+    createBillingRate,
+    updateBillingRate,
+    deleteBillingRate,
     timesheetForWeek,
     submitTimesheet,
     reviewTimesheet,

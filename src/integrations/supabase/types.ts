@@ -143,6 +143,61 @@ export type Database = {
           },
         ];
       };
+      billing_rates: {
+        Row: {
+          client_id: string;
+          created_at: string;
+          effective_from: string;
+          hourly_rate: number;
+          id: string;
+          updated_at: string;
+          updated_by: string | null;
+          user_id: string | null;
+        };
+        Insert: {
+          client_id: string;
+          created_at?: string;
+          effective_from: string;
+          hourly_rate: number;
+          id?: string;
+          updated_at?: string;
+          updated_by?: string | null;
+          user_id?: string | null;
+        };
+        Update: {
+          client_id?: string;
+          created_at?: string;
+          effective_from?: string;
+          hourly_rate?: number;
+          id?: string;
+          updated_at?: string;
+          updated_by?: string | null;
+          user_id?: string | null;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "billing_rates_client_id_fkey";
+            columns: ["client_id"];
+            isOneToOne: false;
+            referencedRelation: "clients";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "billing_rates_updated_by_fkey";
+            columns: ["updated_by"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "billing_rates_user_id_fkey";
+            columns: ["user_id"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       clients: {
         Row: {
           basecamp_url: string | null;
