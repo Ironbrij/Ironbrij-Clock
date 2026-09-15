@@ -116,6 +116,32 @@ export type WorkspaceBillingRate = {
 /** The editable half of a billing rate — what the add form collects. */
 export type WorkspaceBillingRateInput = Omit<WorkspaceBillingRate, "id">;
 
+/** M49: a VA placed with a client on a monthly retainer. Not an IronTrack user — placed VAs log no time here. */
+export type WorkspacePlacedVA = { id: string; fullName: string };
+
+/**
+ * M49: one VA↔client retainer placement. `endedOn` null means still live —
+ * that's the status, and it also bounds the daily accrual in
+ * src/lib/retainer.ts. Both amounts are null for the sheet's "N/A" rows.
+ * The management fee is derived (package − rate, or 0), never stored.
+ */
+export type WorkspacePlacement = {
+  id: string;
+  placedVaId: string;
+  clientId: string;
+  startedOn: string;
+  endedOn: string | null;
+  vaMonthlyRate: number | null;
+  clientPackageAmount: number | null;
+};
+
+/** The editable half of a placement — what the add/edit form collects. */
+export type WorkspacePlacementInput = Omit<WorkspacePlacement, "id" | "placedVaId"> & {
+  /** An existing placed VA's id, or a new name to create one from. */
+  placedVaId?: string;
+  placedVaName?: string;
+};
+
 export type WorkspaceTaskCategory = { id: string; name: string };
 
 export type WorkspaceSettings = {

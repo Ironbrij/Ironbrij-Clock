@@ -276,6 +276,24 @@ export type Database = {
           },
         ];
       };
+      placed_vas: {
+        Row: {
+          created_at: string;
+          full_name: string;
+          id: string;
+        };
+        Insert: {
+          created_at?: string;
+          full_name: string;
+          id?: string;
+        };
+        Update: {
+          created_at?: string;
+          full_name?: string;
+          id?: string;
+        };
+        Relationships: [];
+      };
       profiles: {
         Row: {
           avatar_url: string | null;
@@ -714,6 +732,67 @@ export type Database = {
           {
             foreignKeyName: "timesheets_user_id_fkey";
             columns: ["user_id"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      va_placements: {
+        Row: {
+          client_id: string;
+          client_package_amount: number | null;
+          created_at: string;
+          ended_on: string | null;
+          id: string;
+          placed_va_id: string;
+          started_on: string;
+          updated_at: string;
+          updated_by: string | null;
+          va_monthly_rate: number | null;
+        };
+        Insert: {
+          client_id: string;
+          client_package_amount?: number | null;
+          created_at?: string;
+          ended_on?: string | null;
+          id?: string;
+          placed_va_id: string;
+          started_on: string;
+          updated_at?: string;
+          updated_by?: string | null;
+          va_monthly_rate?: number | null;
+        };
+        Update: {
+          client_id?: string;
+          client_package_amount?: number | null;
+          created_at?: string;
+          ended_on?: string | null;
+          id?: string;
+          placed_va_id?: string;
+          started_on?: string;
+          updated_at?: string;
+          updated_by?: string | null;
+          va_monthly_rate?: number | null;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "va_placements_client_id_fkey";
+            columns: ["client_id"];
+            isOneToOne: false;
+            referencedRelation: "clients";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "va_placements_placed_va_id_fkey";
+            columns: ["placed_va_id"];
+            isOneToOne: false;
+            referencedRelation: "placed_vas";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "va_placements_updated_by_fkey";
+            columns: ["updated_by"];
             isOneToOne: false;
             referencedRelation: "profiles";
             referencedColumns: ["id"];

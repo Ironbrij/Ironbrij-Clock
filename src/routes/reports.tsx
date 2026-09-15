@@ -35,6 +35,7 @@ import {
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { billableHoursForCasualEntry } from "@/lib/casual-billing";
 import { grossProfitForEntry, resolveInvoiceRate } from "@/lib/gross-profit";
+import { retainerAccrualForRange } from "@/lib/retainer";
 import { formatHours, formatMinutes } from "@/lib/mock-data";
 import { addDays, formatWeekRange, fromDateKey, startOfWeek, toDateKey } from "@/lib/time-utils";
 import { DETAILED_ENTRIES_LIMIT, useWorkspace, type DetailedEntry } from "@/lib/workspace-store";
@@ -247,6 +248,8 @@ function Reports() {
     canManage,
     employmentByUser,
     billingRates,
+    placements,
+    placedVAs,
     projectHoursForRange,
     projectBillableHoursForRange,
     employeeHoursForRange,
@@ -1024,6 +1027,51 @@ function Reports() {
     { hours: 0, cost: 0, revenue: 0, profit: 0 },
   );
 
+  // M49: the retainer half of profitability. Monthly placements have no
+  // hours, so they can't join the hourly table above — a monthly fee
+  // spread across the range is a different kind of number. They get their
+  // own section, and the two profits are summed into a combined total.
+  //
+  // No double-counting: placed VAs aren't IronTrack users and log no time
+  // entries, so retainer cost and hourly wage cost never overlap.
+  // Placed VAs have no team — they aren't IronTrack members. Rather than
+  // show retainers unfiltered next to team-filtered hourly rows (which
+  // would make the combined total wrong for that team), the section is
+  // withheld entirely while a team filter is active, and says so.
+  const retainersApply = teamFilter === "all";
+
+  const retainerRows = (retainersApply ? placements : [])
+    .map((p) => ({
+      ...p,
+      ...retainerAccrualForRange(p, from, to),
+      vaLabel: placedVAs.find((v) => v.id === p.placedVaId)?.fullName ?? "Unknown VA",
+      clientLabel: clients.find((c) => c.id === p.clientId)?.name ?? "Unknown client",
+    }))
+    // A placement that wasn't live during the range isn't a zero row, it's
+    // simply not part of this report.
+    .filter((r) => r.days > 0)
+    .filter((r) => {
+      if (clientFilter === "all") return true;
+      if (clientFilter === "none") return false;
+      return r.clientId === clientFilter;
+    })
+    .sort((a, b) => b.profit - a.profit || a.clientLabel.localeCompare(b.clientLabel));
+
+  const retainerTotals = retainerRows.reduce(
+    (acc, r) => ({
+      cost: acc.cost + r.cost,
+      revenue: acc.revenue + r.revenue,
+      profit: acc.profit + r.profit,
+    }),
+    { cost: 0, revenue: 0, profit: 0 },
+  );
+
+  const combinedTotals = {
+    cost: profitGrandTotals.cost + retainerTotals.cost,
+    revenue: profitGrandTotals.revenue + retainerTotals.revenue,
+    profit: profitGrandTotals.profit + retainerTotals.profit,
+  };
+
   const totalDetailedPages = Math.max(1, Math.ceil(filteredDetailed.length / DETAILED_PAGE_SIZE));
   const currentDetailedPage = Math.min(detailedPage, totalDetailedPages);
   const pagedDetailed = filteredDetailed.slice(
@@ -1172,6 +1220,48 @@ function Reports() {
             `${from} to ${to}`,
           ],
         ]),
+        // M49: retainers appended as their own labelled block, then the
+        // combined total — the same thing the screen shows, in the same
+        // order, so an exported file and a screenshot can't disagree.
+        ...(retainersApply && retainerRows.length > 0
+          ? [
+              [],
+              ["Retainers (monthly placements accrued across the range)"],
+              [
+                "Client",
+                "VA",
+                "Days",
+                `Cost (${settings.currency})`,
+                `Revenue (${settings.currency})`,
+                `Management Fee (${settings.currency})`,
+              ],
+              ...retainerRows.map((r) => [
+                r.clientLabel,
+                r.vaLabel,
+                r.days,
+                r.cost.toFixed(2),
+                r.revenue.toFixed(2),
+                r.profit.toFixed(2),
+              ]),
+              [
+                "Retainer total",
+                "",
+                "",
+                retainerTotals.cost.toFixed(2),
+                retainerTotals.revenue.toFixed(2),
+                retainerTotals.profit.toFixed(2),
+              ],
+              [],
+              [
+                "Total profit (hourly + retainer)",
+                "",
+                "",
+                combinedTotals.cost.toFixed(2),
+                combinedTotals.revenue.toFixed(2),
+                combinedTotals.profit.toFixed(2),
+              ],
+            ]
+          : []),
       ]);
     } else if (view === "detailed") {
       // The full filtered set, not just the current page — pagination is a
@@ -2103,143 +2193,274 @@ function Reports() {
           </Card>
         </>
       ) : (
-        <Card className="shadow-card">
-          <CardContent className="overflow-x-auto p-0">
-            {profitTruncated && (
-              <p className="border-b border-border bg-destructive/10 px-5 py-3 text-sm text-destructive">
-                This range has more entries than a single report can load, so these totals would be
-                incomplete. Narrow the date range and try again.
-              </p>
-            )}
-            <table className="w-full min-w-[980px] text-sm">
-              <thead>
-                <tr className="border-b border-border text-xs uppercase tracking-wide text-muted-foreground">
-                  <th className="px-5 py-3 text-left font-medium">
-                    {profitGroupByLabels[profitGroupBy]}
-                  </th>
-                  <th className="px-5 py-3 text-left font-medium">Client</th>
-                  <th className="px-5 py-3 text-right font-medium">Hours</th>
-                  <th className="px-5 py-3 text-right font-medium">Pay Rate</th>
-                  <th className="px-5 py-3 text-right font-medium">Cost</th>
-                  <th className="px-5 py-3 text-right font-medium">Invoice Rate</th>
-                  <th className="px-5 py-3 text-right font-medium">Revenue</th>
-                  <th className="px-5 py-3 text-right font-medium">Gross Profit</th>
-                  <th className="px-5 py-3 text-right font-medium">Margin</th>
-                </tr>
-              </thead>
-              <tbody>
-                {profitTruncated ? null : profitGroups.length === 0 ? (
-                  <tr>
-                    <td colSpan={9} className="px-5 py-8 text-center text-sm text-muted-foreground">
-                      No tracked hours in this range.
-                    </td>
+        <>
+          <Card className="shadow-card">
+            <CardContent className="overflow-x-auto p-0">
+              {profitTruncated && (
+                <p className="border-b border-border bg-destructive/10 px-5 py-3 text-sm text-destructive">
+                  This range has more entries than a single report can load, so these totals would
+                  be incomplete. Narrow the date range and try again.
+                </p>
+              )}
+              <table className="w-full min-w-[980px] text-sm">
+                <thead>
+                  <tr className="border-b border-border text-xs uppercase tracking-wide text-muted-foreground">
+                    <th className="px-5 py-3 text-left font-medium">
+                      {profitGroupByLabels[profitGroupBy]}
+                    </th>
+                    <th className="px-5 py-3 text-left font-medium">Client</th>
+                    <th className="px-5 py-3 text-right font-medium">Hours</th>
+                    <th className="px-5 py-3 text-right font-medium">Pay Rate</th>
+                    <th className="px-5 py-3 text-right font-medium">Cost</th>
+                    <th className="px-5 py-3 text-right font-medium">Invoice Rate</th>
+                    <th className="px-5 py-3 text-right font-medium">Revenue</th>
+                    <th className="px-5 py-3 text-right font-medium">Gross Profit</th>
+                    <th className="px-5 py-3 text-right font-medium">Margin</th>
                   </tr>
+                </thead>
+                <tbody>
+                  {profitTruncated ? null : profitGroups.length === 0 ? (
+                    <tr>
+                      <td
+                        colSpan={9}
+                        className="px-5 py-8 text-center text-sm text-muted-foreground"
+                      >
+                        No tracked hours in this range.
+                      </td>
+                    </tr>
+                  ) : (
+                    profitGroups.map((g) => {
+                      // A group with a single client would repeat itself
+                      // exactly in the detail row below, so it collapses.
+                      const single = g.rows.length === 1;
+                      return (
+                        <Fragment key={g.key}>
+                          <tr className="border-b border-border bg-muted/30">
+                            <td className="px-5 py-3 font-semibold">{g.label}</td>
+                            <td className="px-5 py-3 text-muted-foreground">
+                              {single ? g.rows[0].clientLabel : `${g.rows.length} clients`}
+                            </td>
+                            <td className="px-5 py-3 text-right tabular-nums">
+                              {formatHours(g.hours)}
+                            </td>
+                            <td className="px-5 py-3" />
+                            <td className="px-5 py-3 text-right tabular-nums text-muted-foreground">
+                              {g.costKnown ? formatCurrency(g.cost, settings.currency) : "—"}
+                            </td>
+                            <td className="px-5 py-3" />
+                            <td className="px-5 py-3 text-right tabular-nums text-muted-foreground">
+                              {g.ratedHours > 0
+                                ? formatCurrency(g.revenue, settings.currency)
+                                : "—"}
+                            </td>
+                            <td className="px-5 py-3 text-right font-semibold tabular-nums">
+                              {formatCurrency(g.profit, settings.currency)}
+                            </td>
+                            <td className="px-5 py-3 text-right tabular-nums text-muted-foreground">
+                              {g.revenue > 0
+                                ? `${((g.profit / g.revenue) * 100).toFixed(1)}%`
+                                : "—"}
+                            </td>
+                          </tr>
+                          {!single &&
+                            g.rows.map((r) => (
+                              <tr
+                                key={r.key}
+                                className="border-b border-border last:border-0 hover:bg-muted/40"
+                              >
+                                <td className="px-5 py-3" />
+                                <td className="py-3 pl-9 pr-5">{r.clientLabel}</td>
+                                <td className="px-5 py-3 text-right tabular-nums">
+                                  {formatHours(r.hours)}
+                                </td>
+                                <td className="px-5 py-3 text-right tabular-nums text-muted-foreground">
+                                  {r.costKnown && r.hours > 0
+                                    ? formatCurrency(r.cost / r.hours, settings.currency)
+                                    : "—"}
+                                </td>
+                                <td className="px-5 py-3 text-right tabular-nums">
+                                  {r.costKnown ? formatCurrency(r.cost, settings.currency) : "—"}
+                                </td>
+                                <td className="px-5 py-3 text-right tabular-nums text-muted-foreground">
+                                  {r.ratedHours > 0 ? (
+                                    formatCurrency(r.revenue / r.ratedHours, settings.currency)
+                                  ) : (
+                                    <span title="No invoice rate on file for this client">—</span>
+                                  )}
+                                </td>
+                                <td className="px-5 py-3 text-right tabular-nums">
+                                  {r.ratedHours > 0
+                                    ? formatCurrency(r.revenue, settings.currency)
+                                    : "—"}
+                                </td>
+                                <td className="px-5 py-3 text-right tabular-nums">
+                                  {formatCurrency(r.profit, settings.currency)}
+                                </td>
+                                <td className="px-5 py-3 text-right tabular-nums text-muted-foreground">
+                                  {r.revenue > 0
+                                    ? `${((r.profit / r.revenue) * 100).toFixed(1)}%`
+                                    : "—"}
+                                </td>
+                              </tr>
+                            ))}
+                        </Fragment>
+                      );
+                    })
+                  )}
+                </tbody>
+                {!profitTruncated && profitGroups.length > 0 && (
+                  <tfoot>
+                    <tr className="border-t-2 border-border bg-muted/50">
+                      <td className="px-5 py-3 font-semibold">Total</td>
+                      <td className="px-5 py-3" />
+                      <td className="px-5 py-3 text-right font-semibold tabular-nums">
+                        {formatHours(profitGrandTotals.hours)}
+                      </td>
+                      <td className="px-5 py-3" />
+                      <td className="px-5 py-3 text-right font-semibold tabular-nums">
+                        {formatCurrency(profitGrandTotals.cost, settings.currency)}
+                      </td>
+                      <td className="px-5 py-3" />
+                      <td className="px-5 py-3 text-right font-semibold tabular-nums">
+                        {formatCurrency(profitGrandTotals.revenue, settings.currency)}
+                      </td>
+                      <td className="px-5 py-3 text-right font-semibold tabular-nums">
+                        {formatCurrency(profitGrandTotals.profit, settings.currency)}
+                      </td>
+                      <td className="px-5 py-3 text-right font-semibold tabular-nums">
+                        {profitGrandTotals.revenue > 0
+                          ? `${((profitGrandTotals.profit / profitGrandTotals.revenue) * 100).toFixed(1)}%`
+                          : "—"}
+                      </td>
+                    </tr>
+                  </tfoot>
+                )}
+              </table>
+            </CardContent>
+          </Card>
+
+          {/* M49: retainers sit in their own table because a monthly
+            placement has no hours — folding it into the hourly grid above
+            would leave that grid's Hours and blended-rate columns
+            meaningless. The combined total below is what ties them
+            together. */}
+          {!profitTruncated && (
+            <Card className="mt-6 shadow-card">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium text-muted-foreground">
+                  Retainers — monthly placements, accrued across this range
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="overflow-x-auto p-0">
+                {!retainersApply ? (
+                  <p className="px-5 py-6 text-sm text-muted-foreground">
+                    Retainers aren&apos;t shown while a team filter is on — placed VAs aren&apos;t
+                    IronTrack members, so they don&apos;t belong to a team. Clear the team filter to
+                    include them.
+                  </p>
+                ) : retainerRows.length === 0 ? (
+                  <p className="px-5 py-6 text-sm text-muted-foreground">
+                    No placements were live during this range.
+                  </p>
                 ) : (
-                  profitGroups.map((g) => {
-                    // A group with a single client would repeat itself
-                    // exactly in the detail row below, so it collapses.
-                    const single = g.rows.length === 1;
-                    return (
-                      <Fragment key={g.key}>
-                        <tr className="border-b border-border bg-muted/30">
-                          <td className="px-5 py-3 font-semibold">{g.label}</td>
-                          <td className="px-5 py-3 text-muted-foreground">
-                            {single ? g.rows[0].clientLabel : `${g.rows.length} clients`}
+                  <table className="w-full min-w-[820px] text-sm">
+                    <thead>
+                      <tr className="border-b border-border text-xs uppercase tracking-wide text-muted-foreground">
+                        <th className="px-5 py-3 text-left font-medium">Client</th>
+                        <th className="px-5 py-3 text-left font-medium">VA</th>
+                        <th className="px-5 py-3 text-right font-medium">Days</th>
+                        <th className="px-5 py-3 text-right font-medium">Cost</th>
+                        <th className="px-5 py-3 text-right font-medium">Revenue</th>
+                        <th className="px-5 py-3 text-right font-medium">Management Fee</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {retainerRows.map((r) => (
+                        <tr
+                          key={r.id}
+                          className="border-b border-border last:border-0 hover:bg-muted/40"
+                        >
+                          <td className="px-5 py-3 font-medium">{r.clientLabel}</td>
+                          <td className="px-5 py-3">{r.vaLabel}</td>
+                          <td className="px-5 py-3 text-right tabular-nums text-muted-foreground">
+                            {r.days}
                           </td>
                           <td className="px-5 py-3 text-right tabular-nums">
-                            {formatHours(g.hours)}
+                            {formatCurrency(r.cost, settings.currency)}
                           </td>
-                          <td className="px-5 py-3" />
-                          <td className="px-5 py-3 text-right tabular-nums text-muted-foreground">
-                            {g.costKnown ? formatCurrency(g.cost, settings.currency) : "—"}
-                          </td>
-                          <td className="px-5 py-3" />
-                          <td className="px-5 py-3 text-right tabular-nums text-muted-foreground">
-                            {g.ratedHours > 0 ? formatCurrency(g.revenue, settings.currency) : "—"}
+                          <td className="px-5 py-3 text-right tabular-nums">
+                            {formatCurrency(r.revenue, settings.currency)}
                           </td>
                           <td className="px-5 py-3 text-right font-semibold tabular-nums">
-                            {formatCurrency(g.profit, settings.currency)}
-                          </td>
-                          <td className="px-5 py-3 text-right tabular-nums text-muted-foreground">
-                            {g.revenue > 0 ? `${((g.profit / g.revenue) * 100).toFixed(1)}%` : "—"}
+                            {formatCurrency(r.profit, settings.currency)}
                           </td>
                         </tr>
-                        {!single &&
-                          g.rows.map((r) => (
-                            <tr
-                              key={r.key}
-                              className="border-b border-border last:border-0 hover:bg-muted/40"
-                            >
-                              <td className="px-5 py-3" />
-                              <td className="py-3 pl-9 pr-5">{r.clientLabel}</td>
-                              <td className="px-5 py-3 text-right tabular-nums">
-                                {formatHours(r.hours)}
-                              </td>
-                              <td className="px-5 py-3 text-right tabular-nums text-muted-foreground">
-                                {r.costKnown && r.hours > 0
-                                  ? formatCurrency(r.cost / r.hours, settings.currency)
-                                  : "—"}
-                              </td>
-                              <td className="px-5 py-3 text-right tabular-nums">
-                                {r.costKnown ? formatCurrency(r.cost, settings.currency) : "—"}
-                              </td>
-                              <td className="px-5 py-3 text-right tabular-nums text-muted-foreground">
-                                {r.ratedHours > 0 ? (
-                                  formatCurrency(r.revenue / r.ratedHours, settings.currency)
-                                ) : (
-                                  <span title="No invoice rate on file for this client">—</span>
-                                )}
-                              </td>
-                              <td className="px-5 py-3 text-right tabular-nums">
-                                {r.ratedHours > 0
-                                  ? formatCurrency(r.revenue, settings.currency)
-                                  : "—"}
-                              </td>
-                              <td className="px-5 py-3 text-right tabular-nums">
-                                {formatCurrency(r.profit, settings.currency)}
-                              </td>
-                              <td className="px-5 py-3 text-right tabular-nums text-muted-foreground">
-                                {r.revenue > 0
-                                  ? `${((r.profit / r.revenue) * 100).toFixed(1)}%`
-                                  : "—"}
-                              </td>
-                            </tr>
-                          ))}
-                      </Fragment>
-                    );
-                  })
+                      ))}
+                    </tbody>
+                    <tfoot>
+                      <tr className="border-t-2 border-border bg-muted/50">
+                        <td className="px-5 py-3 font-semibold" colSpan={3}>
+                          Retainer total
+                        </td>
+                        <td className="px-5 py-3 text-right font-semibold tabular-nums">
+                          {formatCurrency(retainerTotals.cost, settings.currency)}
+                        </td>
+                        <td className="px-5 py-3 text-right font-semibold tabular-nums">
+                          {formatCurrency(retainerTotals.revenue, settings.currency)}
+                        </td>
+                        <td className="px-5 py-3 text-right font-semibold tabular-nums">
+                          {formatCurrency(retainerTotals.profit, settings.currency)}
+                        </td>
+                      </tr>
+                    </tfoot>
+                  </table>
                 )}
-              </tbody>
-              {!profitTruncated && profitGroups.length > 0 && (
-                <tfoot>
-                  <tr className="border-t-2 border-border bg-muted/50">
-                    <td className="px-5 py-3 font-semibold">Total</td>
-                    <td className="px-5 py-3" />
-                    <td className="px-5 py-3 text-right font-semibold tabular-nums">
-                      {formatHours(profitGrandTotals.hours)}
-                    </td>
-                    <td className="px-5 py-3" />
-                    <td className="px-5 py-3 text-right font-semibold tabular-nums">
-                      {formatCurrency(profitGrandTotals.cost, settings.currency)}
-                    </td>
-                    <td className="px-5 py-3" />
-                    <td className="px-5 py-3 text-right font-semibold tabular-nums">
-                      {formatCurrency(profitGrandTotals.revenue, settings.currency)}
-                    </td>
-                    <td className="px-5 py-3 text-right font-semibold tabular-nums">
-                      {formatCurrency(profitGrandTotals.profit, settings.currency)}
-                    </td>
-                    <td className="px-5 py-3 text-right font-semibold tabular-nums">
-                      {profitGrandTotals.revenue > 0
-                        ? `${((profitGrandTotals.profit / profitGrandTotals.revenue) * 100).toFixed(1)}%`
+              </CardContent>
+            </Card>
+          )}
+
+          {!profitTruncated && retainersApply && (
+            <Card className="mt-6 shadow-card">
+              <CardContent className="flex flex-wrap items-center justify-between gap-4 px-5 py-4">
+                <div>
+                  <p className="text-sm font-semibold">Total profit — hourly and retainer</p>
+                  <p className="text-xs text-muted-foreground">
+                    {formatCurrency(profitGrandTotals.profit, settings.currency)} hourly +{" "}
+                    {formatCurrency(retainerTotals.profit, settings.currency)} retainer
+                  </p>
+                </div>
+                <div className="flex items-center gap-8 tabular-nums">
+                  <div className="text-right">
+                    <p className="text-xs text-muted-foreground">Cost</p>
+                    <p className="font-semibold">
+                      {formatCurrency(combinedTotals.cost, settings.currency)}
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-xs text-muted-foreground">Revenue</p>
+                    <p className="font-semibold">
+                      {formatCurrency(combinedTotals.revenue, settings.currency)}
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-xs text-muted-foreground">Gross profit</p>
+                    <p className="text-lg font-semibold">
+                      {formatCurrency(combinedTotals.profit, settings.currency)}
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-xs text-muted-foreground">Margin</p>
+                    <p className="font-semibold">
+                      {combinedTotals.revenue > 0
+                        ? `${((combinedTotals.profit / combinedTotals.revenue) * 100).toFixed(1)}%`
                         : "—"}
-                    </td>
-                  </tr>
-                </tfoot>
-              )}
-            </table>
-          </CardContent>
-        </Card>
+                    </p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+        </>
       )}
     </AppShell>
   );
