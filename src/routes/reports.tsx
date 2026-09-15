@@ -34,12 +34,14 @@ import {
 } from "@/components/ui/select";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { billableHoursForCasualEntry } from "@/lib/casual-billing";
+import { grossProfitForEntry, resolveInvoiceRate } from "@/lib/gross-profit";
 import { formatHours, formatMinutes } from "@/lib/mock-data";
 import { addDays, formatWeekRange, fromDateKey, startOfWeek, toDateKey } from "@/lib/time-utils";
-import { useWorkspace, type DetailedEntry } from "@/lib/workspace-store";
+import { DETAILED_ENTRIES_LIMIT, useWorkspace, type DetailedEntry } from "@/lib/workspace-store";
 import {
   CASUAL_SERVICE_CATEGORY_LABELS,
   dotColors,
+  NO_CLIENT,
   type CasualServiceCategory,
   type WorkspaceTag,
 } from "@/lib/workspace/types";
@@ -81,6 +83,12 @@ const casualGroupByLabels: Record<"client" | "va" | "day" | "week", string> = {
   va: "VA",
   day: "Day",
   week: "Week",
+};
+
+const profitGroupByLabels: Record<"va" | "client" | "team", string> = {
+  va: "VA",
+  client: "Client",
+  team: "Team",
 };
 
 // Same dimension names, phrased for the chart title ("Billable hours by
@@ -157,7 +165,9 @@ function downloadCsv(filename: string, rows: (string | number)[][]) {
 }
 
 function Reports() {
-  const [view, setView] = useState<"project" | "employee" | "detailed" | "casual">("project");
+  const [view, setView] = useState<"project" | "employee" | "detailed" | "casual" | "profit">(
+    "project",
+  );
   const [preset, setPreset] = useState<RangePreset>("this_month");
   const todayKey = toDateKey(new Date());
   const [customFrom, setCustomFrom] = useState(todayKey);
@@ -221,6 +231,12 @@ function Reports() {
     null,
   );
 
+  // M48: gross profit — cost vs revenue over the same entries, grouped by
+  // whoever's margin is being questioned. Like the casual tab, the rows
+  // derive from `detailedEntries` rather than a separate fetch, since the
+  // per-line increment rounding has to be applied before summing.
+  const [profitGroupBy, setProfitGroupBy] = useState<"va" | "client" | "team">("va");
+
   const {
     projects,
     teams,
@@ -230,6 +246,7 @@ function Reports() {
     settings,
     canManage,
     employmentByUser,
+    billingRates,
     projectHoursForRange,
     projectBillableHoursForRange,
     employeeHoursForRange,
@@ -840,6 +857,173 @@ function Reports() {
     Math.ceil(casualGroupChartData.length / CASUAL_CHART_MAX_TICKS) - 1,
   );
 
+  // M48: gross profit, derived from the same `detailedEntries` the
+  // Detailed and Casual tabs already use. Unlike the casual rollup this
+  // does NOT drop entries with a null service_category — margin covers all
+  // tracked work, retainer included, not just the casual program.
+  const profitEntries = (detailedEntries ?? [])
+    .map((e) => {
+      const project = projects.find((p) => p.id === e.projectId);
+      const member = members.find((m) => m.id === e.userId);
+      return {
+        ...e,
+        employeeTeamIds: member?.teamIds ?? [],
+        clientId: project?.clientId ?? null,
+      };
+    })
+    .filter((r) => teamFilter === "all" || r.employeeTeamIds.includes(teamFilter))
+    .filter((r) => {
+      if (clientFilter === "all") return true;
+      if (clientFilter === "none") return r.clientId === null;
+      return r.clientId === clientFilter;
+    });
+
+  // Per entry, never on a pre-summed total — the casual increment rounds
+  // each task line up on its own (see gross-profit.ts).
+  const pricedProfitEntries = profitEntries.map((e) => {
+    const payRate = employmentByUser.get(e.userId)?.hourlyRate ?? null;
+    const invoiceRate = e.clientId
+      ? resolveInvoiceRate(billingRates, e.clientId, e.userId, e.date)
+      : null;
+    const money = grossProfitForEntry(e, {
+      payRate,
+      invoiceRate,
+      incrementHours: settings.casualBillingIncrementHours,
+    });
+    return { ...e, ...money, payRate, invoiceRate };
+  });
+
+  type ProfitRow = {
+    key: string;
+    groupKey: string;
+    groupLabel: string;
+    clientLabel: string;
+    hours: number;
+    cost: number;
+    revenue: number;
+    profit: number;
+    /** Hours that actually produced revenue — the denominator for a blended invoice rate. */
+    ratedHours: number;
+    /** Chargeable hours with no invoice rate on file, so the row is knowingly incomplete. */
+    unpricedHours: number;
+    costKnown: boolean;
+  };
+
+  const profitRows: ProfitRow[] = (() => {
+    const map = new Map<string, ProfitRow>();
+    for (const e of pricedProfitEntries) {
+      const clientLabel = e.clientId
+        ? (clients.find((c) => c.id === e.clientId)?.name ?? "Unknown client")
+        : NO_CLIENT;
+      // A VA on two teams contributes to both — team membership is
+      // many-to-many here, the same semantics the rest of the app accepts.
+      // Grand totals below are computed from the entries directly, so this
+      // never double-counts into them.
+      const groups: { key: string; label: string }[] =
+        profitGroupBy === "va"
+          ? [
+              {
+                key: e.userId,
+                label: members.find((m) => m.id === e.userId)?.name ?? "Former member",
+              },
+            ]
+          : profitGroupBy === "client"
+            ? [{ key: e.clientId ?? "none", label: clientLabel }]
+            : e.employeeTeamIds.length > 0
+              ? e.employeeTeamIds.map((tid) => ({
+                  key: tid,
+                  label: teams.find((t) => t.id === tid)?.name ?? "Unknown team",
+                }))
+              : [{ key: "none", label: "No team" }];
+
+      for (const group of groups) {
+        const key = `${group.key}::${e.clientId ?? "none"}`;
+        const row = map.get(key) ?? {
+          key,
+          groupKey: group.key,
+          groupLabel: group.label,
+          clientLabel,
+          hours: 0,
+          cost: 0,
+          revenue: 0,
+          profit: 0,
+          ratedHours: 0,
+          unpricedHours: 0,
+          costKnown: false,
+        };
+        row.hours += e.hours;
+        row.cost += e.cost ?? 0;
+        row.revenue += e.revenue ?? 0;
+        row.profit += e.profit;
+        if (e.cost !== null) row.costKnown = true;
+        if (e.revenue !== null) row.ratedHours += e.hours;
+        else if (e.billable && e.serviceCategory !== "ironbrij" && e.clientId) {
+          row.unpricedHours += e.hours;
+        }
+        map.set(key, row);
+      }
+    }
+    return Array.from(map.values());
+  })();
+
+  type ProfitGroup = {
+    key: string;
+    label: string;
+    rows: ProfitRow[];
+    hours: number;
+    cost: number;
+    revenue: number;
+    profit: number;
+    ratedHours: number;
+    unpricedHours: number;
+    costKnown: boolean;
+  };
+
+  const profitGroups: ProfitGroup[] = (() => {
+    const map = new Map<string, ProfitGroup>();
+    for (const row of profitRows) {
+      const group = map.get(row.groupKey) ?? {
+        key: row.groupKey,
+        label: row.groupLabel,
+        rows: [],
+        hours: 0,
+        cost: 0,
+        revenue: 0,
+        profit: 0,
+        ratedHours: 0,
+        unpricedHours: 0,
+        costKnown: false,
+      };
+      group.rows.push(row);
+      group.hours += row.hours;
+      group.cost += row.cost;
+      group.revenue += row.revenue;
+      group.profit += row.profit;
+      group.ratedHours += row.ratedHours;
+      group.unpricedHours += row.unpricedHours;
+      group.costKnown = group.costKnown || row.costKnown;
+      map.set(row.groupKey, group);
+    }
+    for (const group of map.values()) {
+      group.rows.sort((a, b) => b.profit - a.profit || b.hours - a.hours);
+    }
+    // Most profitable first — "where is the margin coming from" is the
+    // question this tab gets opened for.
+    return Array.from(map.values()).sort((a, b) => b.profit - a.profit || b.hours - a.hours);
+  })();
+
+  // Straight from the entries, so a VA counted under two teams above still
+  // only contributes once here.
+  const profitGrandTotals = pricedProfitEntries.reduce(
+    (acc, e) => ({
+      hours: acc.hours + e.hours,
+      cost: acc.cost + (e.cost ?? 0),
+      revenue: acc.revenue + (e.revenue ?? 0),
+      profit: acc.profit + e.profit,
+    }),
+    { hours: 0, cost: 0, revenue: 0, profit: 0 },
+  );
+
   const totalDetailedPages = Math.max(1, Math.ceil(filteredDetailed.length / DETAILED_PAGE_SIZE));
   const currentDetailedPage = Math.min(detailedPage, totalDetailedPages);
   const pagedDetailed = filteredDetailed.slice(
@@ -856,6 +1040,11 @@ function Reports() {
         : view === "casual"
           ? loadingDetailed || loadingCasual
           : loadingDetailed;
+  // M48: gross profit reads `detailedEntries`, which detailedEntriesForRange
+  // caps. A truncated money report is worse than none, so hitting the cap
+  // suppresses the numbers rather than quietly under-reporting them.
+  const profitTruncated =
+    view === "profit" && (detailedEntries?.length ?? 0) >= DETAILED_ENTRIES_LIMIT;
   const total =
     view === "project"
       ? projectRows.reduce((s, r) => s + r.hours, 0)
@@ -863,7 +1052,9 @@ function Reports() {
         ? employeeRows.reduce((s, r) => s + r.hours, 0)
         : view === "casual"
           ? casualTotalBillableHours
-          : filteredDetailed.reduce((s, r) => s + r.hours, 0);
+          : view === "profit"
+            ? profitGrandTotals.hours
+            : filteredDetailed.reduce((s, r) => s + r.hours, 0);
   // H17: only meaningful on the employee view — a project or a raw entry
   // list has no single per-row rate to sum against.
   const totalAmount =
@@ -934,6 +1125,52 @@ function Reports() {
           r.overtime == null ? "N/A" : r.overtime.toFixed(2),
           r.amount == null ? "No rate set" : r.amount.toFixed(2),
           `${from} to ${to}`,
+        ]),
+      ]);
+    } else if (view === "profit") {
+      downloadCsv(`ironbrij-gross-profit-by-${profitGroupBy}_${clientLabel}_${from}_to_${to}.csv`, [
+        [
+          profitGroupByLabels[profitGroupBy],
+          "Client",
+          "Hours",
+          `Pay Rate (${settings.currency})`,
+          `Cost (${settings.currency})`,
+          `Invoice Rate (${settings.currency})`,
+          `Revenue (${settings.currency})`,
+          `Gross Profit (${settings.currency})`,
+          "Margin %",
+          "Unpriced Hours",
+          "Date range",
+        ],
+        // Flattened in the order shown on screen, each group's subtotal
+        // following its own rows, same as the casual export.
+        ...profitGroups.flatMap((g) => [
+          ...g.rows.map((r) => [
+            g.label,
+            r.clientLabel,
+            r.hours.toFixed(2),
+            r.costKnown && r.hours > 0 ? (r.cost / r.hours).toFixed(2) : "No rate set",
+            r.costKnown ? r.cost.toFixed(2) : "No rate set",
+            r.ratedHours > 0 ? (r.revenue / r.ratedHours).toFixed(2) : "No rate set",
+            r.ratedHours > 0 ? r.revenue.toFixed(2) : "No rate set",
+            r.profit.toFixed(2),
+            r.revenue > 0 ? ((r.profit / r.revenue) * 100).toFixed(1) : "",
+            r.unpricedHours.toFixed(2),
+            `${from} to ${to}`,
+          ]),
+          [
+            `${g.label} — total`,
+            "",
+            g.hours.toFixed(2),
+            "",
+            g.costKnown ? g.cost.toFixed(2) : "No rate set",
+            "",
+            g.ratedHours > 0 ? g.revenue.toFixed(2) : "No rate set",
+            g.profit.toFixed(2),
+            g.revenue > 0 ? ((g.profit / g.revenue) * 100).toFixed(1) : "",
+            g.unpricedHours.toFixed(2),
+            `${from} to ${to}`,
+          ],
         ]),
       ]);
     } else if (view === "detailed") {
@@ -1079,6 +1316,7 @@ function Reports() {
               <TabsTrigger value="employee">By employee</TabsTrigger>
               <TabsTrigger value="detailed">Detailed</TabsTrigger>
               <TabsTrigger value="casual">Casual Service</TabsTrigger>
+              <TabsTrigger value="profit">Gross Profit</TabsTrigger>
             </TabsList>
           </Tabs>
         )}
@@ -1144,6 +1382,30 @@ function Reports() {
       {/* M46: Group by + category filter only apply to the Casual Service
           view, same reasoning the Detailed-only row above already
           establishes for keeping tab-specific filters off the shared row. */}
+      {view === "profit" && (
+        <div className="mb-6 flex flex-wrap items-center gap-3">
+          <Select
+            value={profitGroupBy}
+            onValueChange={(v) => setProfitGroupBy(v as "va" | "client" | "team")}
+          >
+            <SelectTrigger className="w-40">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="va">Group by VA</SelectItem>
+              <SelectItem value="client">Group by client</SelectItem>
+              <SelectItem value="team">Group by team</SelectItem>
+            </SelectContent>
+          </Select>
+          <p className="text-xs text-muted-foreground">
+            Cost and revenue both use the rounded billing hours. Work with no invoice rate on file
+            counts as cost only.
+            {profitGroupBy === "team" &&
+              " Someone on more than one team is counted under each — group totals will add up to more than the grand total."}
+          </p>
+        </div>
+      )}
+
       {view === "casual" && (
         <div className="mb-6 flex flex-wrap items-center gap-3">
           <Select
@@ -1592,7 +1854,7 @@ function Reports() {
             </div>
           )}
         </>
-      ) : (
+      ) : view === "casual" ? (
         <>
           {/* M46: KPI row — the workbook's Dashboard KPI cards. Delta vs
               last week only renders for the this_week preset (see
@@ -1840,6 +2102,144 @@ function Reports() {
             </CardContent>
           </Card>
         </>
+      ) : (
+        <Card className="shadow-card">
+          <CardContent className="overflow-x-auto p-0">
+            {profitTruncated && (
+              <p className="border-b border-border bg-destructive/10 px-5 py-3 text-sm text-destructive">
+                This range has more entries than a single report can load, so these totals would be
+                incomplete. Narrow the date range and try again.
+              </p>
+            )}
+            <table className="w-full min-w-[980px] text-sm">
+              <thead>
+                <tr className="border-b border-border text-xs uppercase tracking-wide text-muted-foreground">
+                  <th className="px-5 py-3 text-left font-medium">
+                    {profitGroupByLabels[profitGroupBy]}
+                  </th>
+                  <th className="px-5 py-3 text-left font-medium">Client</th>
+                  <th className="px-5 py-3 text-right font-medium">Hours</th>
+                  <th className="px-5 py-3 text-right font-medium">Pay Rate</th>
+                  <th className="px-5 py-3 text-right font-medium">Cost</th>
+                  <th className="px-5 py-3 text-right font-medium">Invoice Rate</th>
+                  <th className="px-5 py-3 text-right font-medium">Revenue</th>
+                  <th className="px-5 py-3 text-right font-medium">Gross Profit</th>
+                  <th className="px-5 py-3 text-right font-medium">Margin</th>
+                </tr>
+              </thead>
+              <tbody>
+                {profitTruncated ? null : profitGroups.length === 0 ? (
+                  <tr>
+                    <td colSpan={9} className="px-5 py-8 text-center text-sm text-muted-foreground">
+                      No tracked hours in this range.
+                    </td>
+                  </tr>
+                ) : (
+                  profitGroups.map((g) => {
+                    // A group with a single client would repeat itself
+                    // exactly in the detail row below, so it collapses.
+                    const single = g.rows.length === 1;
+                    return (
+                      <Fragment key={g.key}>
+                        <tr className="border-b border-border bg-muted/30">
+                          <td className="px-5 py-3 font-semibold">{g.label}</td>
+                          <td className="px-5 py-3 text-muted-foreground">
+                            {single ? g.rows[0].clientLabel : `${g.rows.length} clients`}
+                          </td>
+                          <td className="px-5 py-3 text-right tabular-nums">
+                            {formatHours(g.hours)}
+                          </td>
+                          <td className="px-5 py-3" />
+                          <td className="px-5 py-3 text-right tabular-nums text-muted-foreground">
+                            {g.costKnown ? formatCurrency(g.cost, settings.currency) : "—"}
+                          </td>
+                          <td className="px-5 py-3" />
+                          <td className="px-5 py-3 text-right tabular-nums text-muted-foreground">
+                            {g.ratedHours > 0 ? formatCurrency(g.revenue, settings.currency) : "—"}
+                          </td>
+                          <td className="px-5 py-3 text-right font-semibold tabular-nums">
+                            {formatCurrency(g.profit, settings.currency)}
+                          </td>
+                          <td className="px-5 py-3 text-right tabular-nums text-muted-foreground">
+                            {g.revenue > 0 ? `${((g.profit / g.revenue) * 100).toFixed(1)}%` : "—"}
+                          </td>
+                        </tr>
+                        {!single &&
+                          g.rows.map((r) => (
+                            <tr
+                              key={r.key}
+                              className="border-b border-border last:border-0 hover:bg-muted/40"
+                            >
+                              <td className="px-5 py-3" />
+                              <td className="py-3 pl-9 pr-5">{r.clientLabel}</td>
+                              <td className="px-5 py-3 text-right tabular-nums">
+                                {formatHours(r.hours)}
+                              </td>
+                              <td className="px-5 py-3 text-right tabular-nums text-muted-foreground">
+                                {r.costKnown && r.hours > 0
+                                  ? formatCurrency(r.cost / r.hours, settings.currency)
+                                  : "—"}
+                              </td>
+                              <td className="px-5 py-3 text-right tabular-nums">
+                                {r.costKnown ? formatCurrency(r.cost, settings.currency) : "—"}
+                              </td>
+                              <td className="px-5 py-3 text-right tabular-nums text-muted-foreground">
+                                {r.ratedHours > 0 ? (
+                                  formatCurrency(r.revenue / r.ratedHours, settings.currency)
+                                ) : (
+                                  <span title="No invoice rate on file for this client">—</span>
+                                )}
+                              </td>
+                              <td className="px-5 py-3 text-right tabular-nums">
+                                {r.ratedHours > 0
+                                  ? formatCurrency(r.revenue, settings.currency)
+                                  : "—"}
+                              </td>
+                              <td className="px-5 py-3 text-right tabular-nums">
+                                {formatCurrency(r.profit, settings.currency)}
+                              </td>
+                              <td className="px-5 py-3 text-right tabular-nums text-muted-foreground">
+                                {r.revenue > 0
+                                  ? `${((r.profit / r.revenue) * 100).toFixed(1)}%`
+                                  : "—"}
+                              </td>
+                            </tr>
+                          ))}
+                      </Fragment>
+                    );
+                  })
+                )}
+              </tbody>
+              {!profitTruncated && profitGroups.length > 0 && (
+                <tfoot>
+                  <tr className="border-t-2 border-border bg-muted/50">
+                    <td className="px-5 py-3 font-semibold">Total</td>
+                    <td className="px-5 py-3" />
+                    <td className="px-5 py-3 text-right font-semibold tabular-nums">
+                      {formatHours(profitGrandTotals.hours)}
+                    </td>
+                    <td className="px-5 py-3" />
+                    <td className="px-5 py-3 text-right font-semibold tabular-nums">
+                      {formatCurrency(profitGrandTotals.cost, settings.currency)}
+                    </td>
+                    <td className="px-5 py-3" />
+                    <td className="px-5 py-3 text-right font-semibold tabular-nums">
+                      {formatCurrency(profitGrandTotals.revenue, settings.currency)}
+                    </td>
+                    <td className="px-5 py-3 text-right font-semibold tabular-nums">
+                      {formatCurrency(profitGrandTotals.profit, settings.currency)}
+                    </td>
+                    <td className="px-5 py-3 text-right font-semibold tabular-nums">
+                      {profitGrandTotals.revenue > 0
+                        ? `${((profitGrandTotals.profit / profitGrandTotals.revenue) * 100).toFixed(1)}%`
+                        : "—"}
+                    </td>
+                  </tr>
+                </tfoot>
+              )}
+            </table>
+          </CardContent>
+        </Card>
       )}
     </AppShell>
   );

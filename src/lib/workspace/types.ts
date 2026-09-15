@@ -99,6 +99,23 @@ export type WorkspaceEmployment = {
   weeklyScheduleDays: WeeklyScheduleDays | null;
 };
 
+/**
+ * M48: one effective-dated invoice rate — what a client is charged per hour.
+ * `userId` null is the client's default; a non-null `userId` is a per-VA
+ * override for that client, which wins over the default.
+ */
+export type WorkspaceBillingRate = {
+  id: string;
+  clientId: string;
+  userId: string | null;
+  hourlyRate: number;
+  /** Date key (YYYY-MM-DD) this rate starts applying from. */
+  effectiveFrom: string;
+};
+
+/** The editable half of a billing rate — what the add form collects. */
+export type WorkspaceBillingRateInput = Omit<WorkspaceBillingRate, "id">;
+
 export type WorkspaceTaskCategory = { id: string; name: string };
 
 export type WorkspaceSettings = {
