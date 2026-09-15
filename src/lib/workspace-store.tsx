@@ -31,6 +31,9 @@ import {
   type WorkspaceEmployment,
   type WorkspaceEntry,
   type WorkspaceMember,
+  type WorkspacePlacedVA,
+  type WorkspacePlacement,
+  type WorkspacePlacementInput,
   type WorkspaceProject,
   type WorkspaceSettings,
   type WorkspaceTag,
@@ -41,6 +44,7 @@ import {
 import { useAnnouncementsData } from "@/lib/workspace/use-announcements";
 import { useBillingRatesData } from "@/lib/workspace/use-billing-rates";
 import { useClientsData } from "@/lib/workspace/use-clients";
+import { usePlacementsData } from "@/lib/workspace/use-placements";
 import { useEmploymentData } from "@/lib/workspace/use-employment";
 import { useMembersData } from "@/lib/workspace/use-members";
 import { useProjectsData } from "@/lib/workspace/use-projects";
@@ -88,6 +92,9 @@ export {
   type WorkspaceEmployment,
   type WorkspaceEntry,
   type WorkspaceMember,
+  type WorkspacePlacedVA,
+  type WorkspacePlacement,
+  type WorkspacePlacementInput,
   type WorkspaceProject,
   type WorkspaceSettings,
   type WorkspaceAnnouncement,
@@ -171,6 +178,21 @@ type WorkspaceContextValue = {
   createBillingRate: (input: WorkspaceBillingRateInput) => Promise<void>;
   updateBillingRate: (id: string, hourlyRate: number) => Promise<void>;
   deleteBillingRate: (id: string) => Promise<void>;
+  /** M49: VA↔client retainer placements, for Manage → Placements and the retainer half of Reports → Gross Profit — empty for anyone who isn't a manager/admin. Accrue one with `retainerAccrualForRange` (src/lib/retainer.ts). */
+  placements: WorkspacePlacement[];
+  /** The people named on those placements. Not IronTrack members — they log no time here. */
+  placedVAs: WorkspacePlacedVA[];
+  createPlacement: (input: WorkspacePlacementInput) => Promise<void>;
+  updatePlacement: (
+    id: string,
+    patch: {
+      startedOn?: string;
+      endedOn?: string | null;
+      vaMonthlyRate?: number | null;
+      clientPackageAmount?: number | null;
+    },
+  ) => Promise<void>;
+  deletePlacement: (id: string) => Promise<void>;
   timesheetForWeek: (weekStart: Date) => WorkspaceTimesheet | undefined;
   submitTimesheet: (weekStart: Date) => Promise<void>;
   reviewTimesheet: (
@@ -381,6 +403,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const { billingRates, createBillingRate, updateBillingRate, deleteBillingRate } =
     useBillingRatesData(enabled, canManage, uid);
 
+  const { placements, placedVAs, createPlacement, updatePlacement, deletePlacement } =
+    usePlacementsData(enabled, canManage, uid);
+
   const { teamsQ, teams, createTeam, updateTeam, deleteTeam } = useTeamsData(enabled);
 
   const {
@@ -540,6 +565,11 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       createBillingRate,
       updateBillingRate,
       deleteBillingRate,
+      placements,
+      placedVAs,
+      createPlacement,
+      updatePlacement,
+      deletePlacement,
       timesheetForWeek,
       membersByTeam,
       teamMemberCount,
@@ -656,6 +686,11 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     createBillingRate,
     updateBillingRate,
     deleteBillingRate,
+    placements,
+    placedVAs,
+    createPlacement,
+    updatePlacement,
+    deletePlacement,
     timesheetForWeek,
     submitTimesheet,
     reviewTimesheet,
