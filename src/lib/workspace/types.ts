@@ -97,6 +97,12 @@ export type WorkspaceEmployment = {
   /** Legacy single free-text note — superseded by weeklyScheduleDays, kept only as a fallback to seed it. */
   weeklySchedule: string | null;
   weeklyScheduleDays: WeeklyScheduleDays | null;
+  /** M50: a non-null salary is what makes a member salaried — their cost is this flat weekly figure rather than hours x hourlyRate. */
+  weeklySalary: number | null;
+  /** First day weeklySalary applies. Always set when weeklySalary is. */
+  salaryFrom: string | null;
+  /** Last day weeklySalary applies; null means still employed. */
+  salaryTo: string | null;
 };
 
 /**

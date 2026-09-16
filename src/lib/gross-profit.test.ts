@@ -90,6 +90,7 @@ describe("grossProfitForEntry", () => {
       payRate: 6,
       invoiceRate: 18,
       incrementHours: 0.25,
+      salaried: false,
     });
     expect(result.hours).toBeCloseTo(1.75);
     expect(result.cost).toBeCloseTo(10.5);
@@ -102,7 +103,7 @@ describe("grossProfitForEntry", () => {
     // $18.68 invoiced. Hours are already an exact increment multiple here.
     const result = grossProfitForEntry(
       entry({ minutes: 19.25 * 60, serviceCategory: "paid_casual" }),
-      { payRate: 6, invoiceRate: 18.68, incrementHours: 0.25 },
+      { payRate: 6, invoiceRate: 18.68, incrementHours: 0.25, salaried: false },
     );
     expect(result.cost).toBeCloseTo(115.5);
     expect(result.revenue).toBeCloseTo(359.59);
@@ -114,6 +115,7 @@ describe("grossProfitForEntry", () => {
       payRate: 6,
       invoiceRate: 18,
       incrementHours: 0.25,
+      salaried: false,
     });
     expect(result.hours).toBeCloseTo(100 / 60);
   });
@@ -125,6 +127,7 @@ describe("grossProfitForEntry", () => {
       payRate: 6,
       invoiceRate: 18,
       incrementHours: 0.25,
+      salaried: false,
     });
     expect(result.cost).toBeCloseTo(12);
     expect(result.revenue).toBeNull();
@@ -136,6 +139,7 @@ describe("grossProfitForEntry", () => {
       payRate: 6,
       invoiceRate: 18,
       incrementHours: 0.25,
+      salaried: false,
     });
     expect(result.cost).toBeCloseTo(12);
     expect(result.revenue).toBeNull();
@@ -147,6 +151,7 @@ describe("grossProfitForEntry", () => {
       payRate: 6,
       invoiceRate: null,
       incrementHours: 0.25,
+      salaried: false,
     });
     expect(result.cost).toBeCloseTo(12);
     expect(result.revenue).toBeNull();
@@ -160,6 +165,7 @@ describe("grossProfitForEntry", () => {
       payRate: null,
       invoiceRate: 18,
       incrementHours: 0.25,
+      salaried: false,
     });
     expect(result.cost).toBeNull();
     expect(result.revenue).toBeCloseTo(36);
@@ -171,10 +177,47 @@ describe("grossProfitForEntry", () => {
       payRate: 6,
       invoiceRate: 18,
       incrementHours: 0.25,
+      salaried: false,
     });
     expect(result.hours).toBe(0);
     expect(result.cost).toBe(0);
     expect(result.revenue).toBe(0);
     expect(result.profit).toBe(0);
+  });
+
+  it("costs a salaried member's hours at zero, so payroll isn't charged twice", () => {
+    // Their real cost is the fixed weekly figure the report's salary block
+    // charges once per week; billing it per entry as well would double-count.
+    const result = grossProfitForEntry(entry({ minutes: 120, serviceCategory: "paid_casual" }), {
+      payRate: 6,
+      invoiceRate: 18,
+      incrementHours: 0.25,
+      salaried: true,
+    });
+    expect(result.cost).toBe(0);
+    expect(result.costBasis).toBe("salary");
+    expect(result.revenue).toBeCloseTo(36);
+    expect(result.profit).toBeCloseTo(36);
+  });
+
+  it("distinguishes a salaried member from one with no rate on file", () => {
+    // Both leave the hourly cost column empty, but one is accounted for
+    // elsewhere and the other is missing data.
+    const salaried = grossProfitForEntry(entry({ minutes: 60 }), {
+      payRate: null,
+      invoiceRate: 18,
+      incrementHours: 0.25,
+      salaried: true,
+    });
+    const unpriced = grossProfitForEntry(entry({ minutes: 60 }), {
+      payRate: null,
+      invoiceRate: 18,
+      incrementHours: 0.25,
+      salaried: false,
+    });
+    expect(salaried.costBasis).toBe("salary");
+    expect(salaried.cost).toBe(0);
+    expect(unpriced.costBasis).toBe("unpriced");
+    expect(unpriced.cost).toBeNull();
   });
 });

@@ -1048,11 +1048,12 @@ function ScheduleTab() {
           <table className="w-full text-left text-sm">
             <thead className="border-b text-xs uppercase text-muted-foreground">
               <tr>
-                <th className="px-4 py-2.5">Name</th>
-                <th className="px-4 py-2.5">Type</th>
-                <th className="px-4 py-2.5">Timezone</th>
-                <th className="px-4 py-2.5">Weekly schedule</th>
-                <th className="px-4 py-2.5">Hourly rate ({settings.currency})</th>
+                <th className="px-3 py-2.5">Name</th>
+                <th className="px-3 py-2.5">Type</th>
+                <th className="px-3 py-2.5">Timezone</th>
+                <th className="px-3 py-2.5">Weekly schedule</th>
+                <th className="px-3 py-2.5">Hourly rate ({settings.currency})</th>
+                <th className="px-3 py-2.5">Weekly salary ({settings.currency})</th>
               </tr>
             </thead>
             <tbody className="divide-y">
@@ -1069,7 +1070,7 @@ function ScheduleTab() {
               ))}
               {filteredMembers.length === 0 && (
                 <tr>
-                  <td colSpan={5} className="px-4 py-10 text-center text-sm text-muted-foreground">
+                  <td colSpan={6} className="px-4 py-10 text-center text-sm text-muted-foreground">
                     No one to show here yet.
                   </td>
                 </tr>
@@ -1114,6 +1115,9 @@ function ScheduleRow({
       employmentType?: EmploymentType;
       hourlyRate?: number | null;
       weeklyScheduleDays?: WeeklyScheduleDays | null;
+      weeklySalary?: number | null;
+      salaryFrom?: string | null;
+      salaryTo?: string | null;
     },
   ) => Promise<void>;
   orgTimezone: string;
@@ -1124,6 +1128,11 @@ function ScheduleRow({
   const [rate, setRate] = useState(
     employment?.hourlyRate != null ? String(employment.hourlyRate) : "",
   );
+  const [salary, setSalary] = useState(
+    employment?.weeklySalary != null ? String(employment.weeklySalary) : "",
+  );
+  const [salaryFrom, setSalaryFrom] = useState(employment?.salaryFrom ?? "");
+  const [salaryTo, setSalaryTo] = useState(employment?.salaryTo ?? "");
   const [savingType, setSavingType] = useState(false);
   const [savingTz, setSavingTz] = useState(false);
   const [savingSchedule, setSavingSchedule] = useState(false);
@@ -1131,10 +1140,23 @@ function ScheduleRow({
   useEffect(() => {
     setDays(initialScheduleDays(employment));
     setRate(employment?.hourlyRate != null ? String(employment.hourlyRate) : "");
+    setSalary(employment?.weeklySalary != null ? String(employment.weeklySalary) : "");
+    setSalaryFrom(employment?.salaryFrom ?? "");
+    setSalaryTo(employment?.salaryTo ?? "");
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [employment?.weeklyScheduleDays, employment?.weeklySchedule, employment?.hourlyRate]);
+  }, [
+    employment?.weeklyScheduleDays,
+    employment?.weeklySchedule,
+    employment?.hourlyRate,
+    employment?.weeklySalary,
+    employment?.salaryFrom,
+    employment?.salaryTo,
+  ]);
 
   const employmentType = employment?.employmentType ?? "full_time";
+  // A salary set means cost comes from the flat weekly figure, so the hourly
+  // rate stops being used — visible right where it's entered.
+  const isSalaried = employment?.weeklySalary != null;
 
   const saveType = async (type: EmploymentType) => {
     setSavingType(true);
@@ -1225,9 +1247,58 @@ function ScheduleRow({
     }
   };
 
+  const revertSalary = () => {
+    setSalary(employment?.weeklySalary != null ? String(employment.weeklySalary) : "");
+    setSalaryFrom(employment?.salaryFrom ?? "");
+    setSalaryTo(employment?.salaryTo ?? "");
+  };
+
+  const saveSalary = async () => {
+    const trimmed = salary.trim();
+    const parsed = trimmed === "" ? null : Number(trimmed);
+    if (trimmed !== "" && (Number.isNaN(parsed) || (parsed ?? 0) < 0)) {
+      toast.error("Salary must be a positive number");
+      revertSalary();
+      return;
+    }
+    const from = salaryFrom.trim() === "" ? null : salaryFrom.trim();
+    const to = salaryTo.trim() === "" ? null : salaryTo.trim();
+    // The DB enforces both of these too; catching them here just gives a
+    // specific message instead of a constraint-violation string.
+    if (parsed !== null && from === null) {
+      toast.error("A weekly salary needs a start date", {
+        description: "Without one it can't be prorated across a report range.",
+      });
+      return;
+    }
+    if (from !== null && to !== null && to < from) {
+      toast.error("The salary end date can't be before the start date");
+      return;
+    }
+    if (
+      parsed === (employment?.weeklySalary ?? null) &&
+      from === (employment?.salaryFrom ?? null) &&
+      to === (employment?.salaryTo ?? null)
+    ) {
+      return;
+    }
+    try {
+      // Clearing the amount clears its dates too, so a blank row can't keep
+      // a stale range hanging off nothing.
+      await updateMemberEmployment(member.id, {
+        weeklySalary: parsed,
+        salaryFrom: parsed === null ? null : from,
+        salaryTo: parsed === null ? null : to,
+      });
+    } catch (error) {
+      toast.error("Couldn't save salary", { description: (error as Error).message });
+      revertSalary();
+    }
+  };
+
   return (
     <tr className="transition-colors hover:bg-accent/40">
-      <td className="px-4 py-2.5">
+      <td className="px-3 py-2.5">
         <div className="flex items-center gap-2">
           <Avatar className="h-7 w-7 shrink-0">
             <AvatarImage src={member.avatarUrl ?? undefined} alt={member.name} />
@@ -1236,7 +1307,7 @@ function ScheduleRow({
           <span className="font-medium">{member.name}</span>
         </div>
       </td>
-      <td className="px-4 py-2.5">
+      <td className="px-3 py-2.5">
         <Select
           value={employmentType}
           onValueChange={(v) => void saveType(v as EmploymentType)}
@@ -1251,7 +1322,7 @@ function ScheduleRow({
           </SelectContent>
         </Select>
       </td>
-      <td className="px-4 py-2.5">
+      <td className="px-3 py-2.5">
         {isAdmin ? (
           <Combobox
             options={timezoneOptions}
@@ -1260,18 +1331,18 @@ function ScheduleRow({
             disabled={savingTz}
             placeholder="Set timezone"
             searchPlaceholder="Search timezones…"
-            triggerClassName="h-8 w-64 text-xs"
+            triggerClassName="h-8 w-44 text-xs"
           />
         ) : (
           <span className="text-xs text-muted-foreground">{member.timezone}</span>
         )}
       </td>
-      <td className="px-4 py-2.5">
+      <td className="px-3 py-2.5">
         <Popover>
           <PopoverTrigger asChild>
             <button
               type="button"
-              className="flex w-56 items-center gap-1.5 rounded-md border border-transparent px-2 py-1 text-left text-xs hover:border-border hover:bg-accent/40"
+              className="flex w-44 items-center gap-1.5 rounded-md border border-transparent px-2 py-1 text-left text-xs hover:border-border hover:bg-accent/40"
             >
               <Pencil className="h-3 w-3 shrink-0 text-muted-foreground" />
               <span className="truncate">{summarizeWeeklyScheduleDays(days)}</span>
@@ -1347,7 +1418,7 @@ function ScheduleRow({
           </PopoverContent>
         </Popover>
       </td>
-      <td className="px-4 py-2.5">
+      <td className="px-3 py-2.5">
         <Input
           type="number"
           min="0"
@@ -1357,8 +1428,79 @@ function ScheduleRow({
           onBlur={() => void saveRate()}
           onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
           placeholder="0.00"
-          className="h-8 w-28"
+          className="h-8 w-24"
+          disabled={isSalaried}
+          title={
+            isSalaried
+              ? "Not used while a weekly salary is set — this member's cost is the flat salary."
+              : undefined
+          }
         />
+      </td>
+      <td className="px-3 py-2.5">
+        <div className="flex items-center gap-1.5">
+          <Input
+            type="number"
+            min="0"
+            step="0.01"
+            value={salary}
+            onChange={(e) => setSalary(e.target.value)}
+            onBlur={() => void saveSalary()}
+            onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
+            placeholder="0.00"
+            className="h-8 w-24"
+          />
+          <Popover>
+            <PopoverTrigger asChild>
+              {/* Icon-only: spelling the range out here pushed the table
+                past its container. The dates are one click away, and the
+                tooltip says what they are without opening it. */}
+              <Button
+                variant="ghost"
+                size="icon"
+                aria-label="Salary dates"
+                title={
+                  salaryFrom === ""
+                    ? "Set the dates this salary applies"
+                    : `Salary ${salaryFrom} → ${salaryTo || "now"}`
+                }
+                className={`h-8 w-8 shrink-0 ${
+                  salaryFrom === "" ? "text-muted-foreground" : "text-foreground"
+                }`}
+              >
+                <CalendarClock className="h-4 w-4" />
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-64 space-y-3" align="end">
+              <div className="space-y-1.5">
+                <Label htmlFor={`salary-from-${member.id}`}>Salary starts</Label>
+                <Input
+                  id={`salary-from-${member.id}`}
+                  type="date"
+                  value={salaryFrom}
+                  onChange={(e) => setSalaryFrom(e.target.value)}
+                  onBlur={() => void saveSalary()}
+                  className="h-8"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor={`salary-to-${member.id}`}>Salary ends</Label>
+                <Input
+                  id={`salary-to-${member.id}`}
+                  type="date"
+                  value={salaryTo}
+                  onChange={(e) => setSalaryTo(e.target.value)}
+                  onBlur={() => void saveSalary()}
+                  className="h-8"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Leave blank while they're still employed. Setting it stops the salary from that
+                  date without changing earlier weeks.
+                </p>
+              </div>
+            </PopoverContent>
+          </Popover>
+        </div>
       </td>
     </tr>
   );

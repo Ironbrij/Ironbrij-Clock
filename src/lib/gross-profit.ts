@@ -67,6 +67,12 @@ export type EntryProfit = {
   revenue: number | null;
   /** Never null — unpriced work is $0 profit (cost-only), not unknown profit. */
   profit: number;
+  /**
+   * M50: why `cost` is what it is. "salary" and "unpriced" both leave nothing
+   * in the hourly cost column but mean opposite things — one is accounted for
+   * elsewhere, the other is missing data — and the report has to say which.
+   */
+  costBasis: "hourly" | "salary" | "unpriced";
 };
 
 /**
@@ -89,13 +95,23 @@ export type EntryProfit = {
  * actually chargeable, and a resolved rate. Internal work therefore lands
  * as cost-only with zero profit rather than being dropped — its wages
  * still have to show up somewhere for the totals to mean anything.
+ *
+ * M50: a salaried member's hours cost nothing *here*. Their real cost is a
+ * fixed weekly figure that has no relationship to hours logged, so it is
+ * charged once per week in the report's salary block. Billing it per entry as
+ * well would count the same payroll twice.
  */
 export function grossProfitForEntry(
   entry: { minutes: number; billable: boolean; serviceCategory: CasualServiceCategory | null },
-  opts: { payRate: number | null; invoiceRate: number | null; incrementHours: number },
+  opts: {
+    payRate: number | null;
+    invoiceRate: number | null;
+    incrementHours: number;
+    salaried: boolean;
+  },
 ): EntryProfit {
   const hours = billableHoursForCasualEntry(entry, entry.serviceCategory, opts.incrementHours);
-  const cost = opts.payRate === null ? null : hours * opts.payRate;
+  const cost = opts.salaried ? 0 : opts.payRate === null ? null : hours * opts.payRate;
 
   // 'ironbrij' is casual work that is tracked but never charged — the same
   // exclusion billableHoursForCasualEntry already applies to its rounding.
@@ -107,5 +123,6 @@ export function grossProfitForEntry(
     cost,
     revenue,
     profit: revenue === null ? 0 : revenue - (cost ?? 0),
+    costBasis: opts.salaried ? "salary" : opts.payRate === null ? "unpriced" : "hourly",
   };
 }
