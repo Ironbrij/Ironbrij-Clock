@@ -171,6 +171,9 @@ type WorkspaceContextValue = {
       hourlyRate?: number | null;
       weeklySchedule?: string | null;
       weeklyScheduleDays?: WeeklyScheduleDays | null;
+      weeklySalary?: number | null;
+      salaryFrom?: string | null;
+      salaryTo?: string | null;
     },
   ) => Promise<void>;
   /** M48: every effective-dated client invoice rate, for Manage → Billing Rates and Reports → Gross Profit — empty for anyone who isn't a manager/admin. Resolve one with `resolveInvoiceRate` (src/lib/gross-profit.ts) rather than reading it directly. */

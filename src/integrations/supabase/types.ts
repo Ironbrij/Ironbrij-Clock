@@ -235,27 +235,36 @@ export type Database = {
         Row: {
           employment_type: string;
           hourly_rate: number | null;
+          salary_from: string | null;
+          salary_to: string | null;
           updated_at: string;
           updated_by: string | null;
           user_id: string;
+          weekly_salary: number | null;
           weekly_schedule: string | null;
           weekly_schedule_days: Json | null;
         };
         Insert: {
           employment_type?: string;
           hourly_rate?: number | null;
+          salary_from?: string | null;
+          salary_to?: string | null;
           updated_at?: string;
           updated_by?: string | null;
           user_id: string;
+          weekly_salary?: number | null;
           weekly_schedule?: string | null;
           weekly_schedule_days?: Json | null;
         };
         Update: {
           employment_type?: string;
           hourly_rate?: number | null;
+          salary_from?: string | null;
+          salary_to?: string | null;
           updated_at?: string;
           updated_by?: string | null;
           user_id?: string;
+          weekly_salary?: number | null;
           weekly_schedule?: string | null;
           weekly_schedule_days?: Json | null;
         };

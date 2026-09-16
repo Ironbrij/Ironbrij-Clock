@@ -32,7 +32,9 @@ export function useEmploymentData(enabled: boolean, canManage: boolean, uid: str
     queryFn: async () => {
       const { data, error } = await supabase
         .from("member_employment")
-        .select("user_id, employment_type, hourly_rate, weekly_schedule, weekly_schedule_days");
+        .select(
+          "user_id, employment_type, hourly_rate, weekly_schedule, weekly_schedule_days, weekly_salary, salary_from, salary_to",
+        );
       if (error) throw error;
       return data;
     },
@@ -47,6 +49,9 @@ export function useEmploymentData(enabled: boolean, canManage: boolean, uid: str
         hourlyRate: row.hourly_rate,
         weeklySchedule: row.weekly_schedule,
         weeklyScheduleDays: (row.weekly_schedule_days as WeeklyScheduleDays | null) ?? null,
+        weeklySalary: row.weekly_salary,
+        salaryFrom: row.salary_from,
+        salaryTo: row.salary_to,
       });
     }
     return map;
@@ -60,6 +65,9 @@ export function useEmploymentData(enabled: boolean, canManage: boolean, uid: str
         hourlyRate?: number | null;
         weeklySchedule?: string | null;
         weeklyScheduleDays?: WeeklyScheduleDays | null;
+        weeklySalary?: number | null;
+        salaryFrom?: string | null;
+        salaryTo?: string | null;
       },
     ) => {
       const existing = employmentByUser.get(userId);
@@ -76,6 +84,13 @@ export function useEmploymentData(enabled: boolean, canManage: boolean, uid: str
           patch.weeklyScheduleDays !== undefined
             ? patch.weeklyScheduleDays
             : (existing?.weeklyScheduleDays ?? null),
+        // This is a whole-row upsert, so every column has to be re-sent from
+        // `existing` or an unrelated edit silently wipes it.
+        weekly_salary:
+          patch.weeklySalary !== undefined ? patch.weeklySalary : (existing?.weeklySalary ?? null),
+        salary_from:
+          patch.salaryFrom !== undefined ? patch.salaryFrom : (existing?.salaryFrom ?? null),
+        salary_to: patch.salaryTo !== undefined ? patch.salaryTo : (existing?.salaryTo ?? null),
         updated_at: new Date().toISOString(),
         updated_by: uid,
       });

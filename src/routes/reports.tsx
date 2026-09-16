@@ -36,6 +36,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { billableHoursForCasualEntry } from "@/lib/casual-billing";
 import { grossProfitForEntry, resolveInvoiceRate } from "@/lib/gross-profit";
 import { retainerAccrualForRange } from "@/lib/retainer";
+import { salaryAccrualForWeek, weeksInRange } from "@/lib/weekly-salary";
 import { formatHours, formatMinutes } from "@/lib/mock-data";
 import { addDays, formatWeekRange, fromDateKey, startOfWeek, toDateKey } from "@/lib/time-utils";
 import { DETAILED_ENTRIES_LIMIT, useWorkspace, type DetailedEntry } from "@/lib/workspace-store";
@@ -884,7 +885,11 @@ function Reports() {
   // Per entry, never on a pre-summed total — the casual increment rounds
   // each task line up on its own (see gross-profit.ts).
   const pricedProfitEntries = profitEntries.map((e) => {
-    const payRate = employmentByUser.get(e.userId)?.hourlyRate ?? null;
+    const employment = employmentByUser.get(e.userId);
+    const payRate = employment?.hourlyRate ?? null;
+    // M50: a salaried member's cost is their flat weekly figure, charged once
+    // per week in the salary block below — never per entry, or it doubles.
+    const salaried = employment?.weeklySalary != null;
     const invoiceRate = e.clientId
       ? resolveInvoiceRate(billingRates, e.clientId, e.userId, e.date)
       : null;
@@ -892,6 +897,7 @@ function Reports() {
       payRate,
       invoiceRate,
       incrementHours: settings.casualBillingIncrementHours,
+      salaried,
     });
     return { ...e, ...money, payRate, invoiceRate };
   });
@@ -910,6 +916,8 @@ function Reports() {
     /** Chargeable hours with no invoice rate on file, so the row is knowingly incomplete. */
     unpricedHours: number;
     costKnown: boolean;
+    /** M50: hours worked by salaried staff, whose cost sits in the salary block rather than here. */
+    salariedHours: number;
   };
 
   const profitRows: ProfitRow[] = (() => {
@@ -953,12 +961,17 @@ function Reports() {
           ratedHours: 0,
           unpricedHours: 0,
           costKnown: false,
+          salariedHours: 0,
         };
         row.hours += e.hours;
         row.cost += e.cost ?? 0;
         row.revenue += e.revenue ?? 0;
         row.profit += e.profit;
-        if (e.cost !== null) row.costKnown = true;
+        // Only hourly work makes the cost column meaningful. Salaried work
+        // costs 0 here by design, so counting it would render a real-looking
+        // $0.00 where the honest answer is "charged in the salary block".
+        if (e.costBasis === "hourly") row.costKnown = true;
+        if (e.costBasis === "salary") row.salariedHours += e.hours;
         if (e.revenue !== null) row.ratedHours += e.hours;
         else if (e.billable && e.serviceCategory !== "ironbrij" && e.clientId) {
           row.unpricedHours += e.hours;
@@ -980,6 +993,7 @@ function Reports() {
     ratedHours: number;
     unpricedHours: number;
     costKnown: boolean;
+    salariedHours: number;
   };
 
   const profitGroups: ProfitGroup[] = (() => {
@@ -996,6 +1010,7 @@ function Reports() {
         ratedHours: 0,
         unpricedHours: 0,
         costKnown: false,
+        salariedHours: 0,
       };
       group.rows.push(row);
       group.hours += row.hours;
@@ -1005,6 +1020,7 @@ function Reports() {
       group.ratedHours += row.ratedHours;
       group.unpricedHours += row.unpricedHours;
       group.costKnown = group.costKnown || row.costKnown;
+      group.salariedHours += row.salariedHours;
       map.set(row.groupKey, group);
     }
     for (const group of map.values()) {
@@ -1066,10 +1082,79 @@ function Reports() {
     { cost: 0, revenue: 0, profit: 0 },
   );
 
+  // M50: the workbook's Net Loss line — casual gross profit against the fixed
+  // weekly salary bill, week by week, because "did casual work cover payroll"
+  // is a weekly question even when the report range isn't.
+  //
+  // Withheld under a client filter, for the same reason retainers are withheld
+  // under a team filter: payroll is a whole-company bill, not work done for one
+  // client, so netting it against a single client's margin would be nonsense.
+  const salariesApply = clientFilter === "all";
+
+  const salariedMembers = (salariesApply ? members : [])
+    .filter((m) => teamFilter === "all" || m.teamIds.includes(teamFilter))
+    .flatMap((m) => {
+      const employment = employmentByUser.get(m.id);
+      return employment && employment.weeklySalary !== null ? [employment] : [];
+    });
+
+  const salaryWeeks = (() => {
+    if (salariedMembers.length === 0) return [];
+    // Same Monday-start bucketing the Casual tab already groups by.
+    const profitByWeek = new Map<string, number>();
+    for (const e of pricedProfitEntries) {
+      const key = toDateKey(startOfWeek(fromDateKey(e.date)));
+      profitByWeek.set(key, (profitByWeek.get(key) ?? 0) + e.profit);
+    }
+    return (
+      weeksInRange(from, to)
+        .map((week) => {
+          let salary = 0;
+          let headcount = 0;
+          for (const employment of salariedMembers) {
+            const accrual = salaryAccrualForWeek(employment, week);
+            if (accrual.days > 0) headcount += 1;
+            salary += accrual.salary;
+          }
+          const hourlyProfit = profitByWeek.get(week.weekStart) ?? 0;
+          return {
+            ...week,
+            label: formatWeekRange(fromDateKey(week.weekStart)),
+            salary,
+            headcount,
+            hourlyProfit,
+            net: hourlyProfit - salary,
+          };
+        })
+        // A week where nobody was salaried and nothing was earned isn't a zero
+        // row, it simply isn't part of this report.
+        .filter((w) => w.salary > 0 || w.hourlyProfit !== 0)
+    );
+  })();
+
+  const salaryTotals = salaryWeeks.reduce(
+    (acc, w) => ({
+      salary: acc.salary + w.salary,
+      hourlyProfit: acc.hourlyProfit + w.hourlyProfit,
+      net: acc.net + w.net,
+    }),
+    { salary: 0, hourlyProfit: 0, net: 0 },
+  );
+
+  // An empty-looking cost cell means one of two opposite things: nobody has
+  // entered a pay rate, or the person is salaried and charged in the block
+  // below. Saying "—" for both would hide a real gap behind a handled one.
+  const costCellLabel = (r: { costKnown: boolean; cost: number; salariedHours: number }) => {
+    if (!r.costKnown) return r.salariedHours > 0 ? "Salary" : "—";
+    return r.salariedHours > 0
+      ? `${formatCurrency(r.cost, settings.currency)} + salary`
+      : formatCurrency(r.cost, settings.currency);
+  };
+
   const combinedTotals = {
-    cost: profitGrandTotals.cost + retainerTotals.cost,
+    cost: profitGrandTotals.cost + retainerTotals.cost + salaryTotals.salary,
     revenue: profitGrandTotals.revenue + retainerTotals.revenue,
-    profit: profitGrandTotals.profit + retainerTotals.profit,
+    profit: profitGrandTotals.profit + retainerTotals.profit - salaryTotals.salary,
   };
 
   const totalDetailedPages = Math.max(1, Math.ceil(filteredDetailed.length / DETAILED_PAGE_SIZE));
@@ -1197,8 +1282,12 @@ function Reports() {
             g.label,
             r.clientLabel,
             r.hours.toFixed(2),
-            r.costKnown && r.hours > 0 ? (r.cost / r.hours).toFixed(2) : "No rate set",
-            r.costKnown ? r.cost.toFixed(2) : "No rate set",
+            r.costKnown && r.hours > 0
+              ? (r.cost / r.hours).toFixed(2)
+              : r.salariedHours > 0
+                ? "Salary"
+                : "No rate set",
+            r.costKnown ? r.cost.toFixed(2) : r.salariedHours > 0 ? "Salary" : "No rate set",
             r.ratedHours > 0 ? (r.revenue / r.ratedHours).toFixed(2) : "No rate set",
             r.ratedHours > 0 ? r.revenue.toFixed(2) : "No rate set",
             r.profit.toFixed(2),
@@ -1211,7 +1300,7 @@ function Reports() {
             "",
             g.hours.toFixed(2),
             "",
-            g.costKnown ? g.cost.toFixed(2) : "No rate set",
+            g.costKnown ? g.cost.toFixed(2) : g.salariedHours > 0 ? "Salary" : "No rate set",
             "",
             g.ratedHours > 0 ? g.revenue.toFixed(2) : "No rate set",
             g.profit.toFixed(2),
@@ -1251,9 +1340,43 @@ function Reports() {
                 retainerTotals.revenue.toFixed(2),
                 retainerTotals.profit.toFixed(2),
               ],
+            ]
+          : []),
+        ...(salariesApply && salaryWeeks.length > 0
+          ? [
+              [],
+              ["Weekly salaries (fixed payroll, prorated by days in range)"],
+              [
+                "Week",
+                "Days",
+                "People",
+                `Gross profit (${settings.currency})`,
+                `Salaries (${settings.currency})`,
+                `Net (${settings.currency})`,
+              ],
+              ...salaryWeeks.map((w) => [
+                w.label,
+                w.days,
+                w.headcount,
+                w.hourlyProfit.toFixed(2),
+                w.salary.toFixed(2),
+                w.net.toFixed(2),
+              ]),
+              [
+                "Range total",
+                "",
+                "",
+                salaryTotals.hourlyProfit.toFixed(2),
+                salaryTotals.salary.toFixed(2),
+                salaryTotals.net.toFixed(2),
+              ],
+            ]
+          : []),
+        ...(retainersApply
+          ? [
               [],
               [
-                "Total profit (hourly + retainer)",
+                "Total profit (hourly + retainer − salaries)",
                 "",
                 "",
                 combinedTotals.cost.toFixed(2),
@@ -2245,7 +2368,7 @@ function Reports() {
                             </td>
                             <td className="px-5 py-3" />
                             <td className="px-5 py-3 text-right tabular-nums text-muted-foreground">
-                              {g.costKnown ? formatCurrency(g.cost, settings.currency) : "—"}
+                              {costCellLabel(g)}
                             </td>
                             <td className="px-5 py-3" />
                             <td className="px-5 py-3 text-right tabular-nums text-muted-foreground">
@@ -2279,7 +2402,7 @@ function Reports() {
                                     : "—"}
                                 </td>
                                 <td className="px-5 py-3 text-right tabular-nums">
-                                  {r.costKnown ? formatCurrency(r.cost, settings.currency) : "—"}
+                                  {costCellLabel(r)}
                                 </td>
                                 <td className="px-5 py-3 text-right tabular-nums text-muted-foreground">
                                   {r.ratedHours > 0 ? (
@@ -2419,14 +2542,111 @@ function Reports() {
             </Card>
           )}
 
+          {/* M50: the workbook's Net Loss line. Weekly rather than one lump
+            because the question is "did casual work cover payroll this
+            week" — a range total averages a bad week away against a good
+            one, which is exactly what the accounts team is looking for. */}
+          {!profitTruncated && (
+            <Card className="mt-6 shadow-card">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium text-muted-foreground">
+                  Weekly salaries — fixed payroll against gross profit
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="overflow-x-auto p-0">
+                {!salariesApply ? (
+                  <p className="px-5 py-6 text-sm text-muted-foreground">
+                    Salaries aren&apos;t shown while a client filter is on — payroll is a
+                    whole-company bill, not work done for one client. Clear the client filter to
+                    include it.
+                  </p>
+                ) : salaryWeeks.length === 0 ? (
+                  <p className="px-5 py-6 text-sm text-muted-foreground">
+                    Nobody had a weekly salary during this range. Set one in Manage → Schedule to
+                    see payroll netted off here.
+                  </p>
+                ) : (
+                  <table className="w-full min-w-[720px] text-sm">
+                    <thead>
+                      <tr className="border-b border-border text-xs uppercase tracking-wide text-muted-foreground">
+                        <th className="px-5 py-3 text-left font-medium">Week</th>
+                        <th className="px-5 py-3 text-right font-medium">Days</th>
+                        <th className="px-5 py-3 text-right font-medium">People</th>
+                        <th className="px-5 py-3 text-right font-medium">Gross profit</th>
+                        <th className="px-5 py-3 text-right font-medium">Salaries</th>
+                        <th className="px-5 py-3 text-right font-medium">Net</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {salaryWeeks.map((w) => (
+                        <tr
+                          key={w.weekStart}
+                          className="border-b border-border last:border-0 hover:bg-muted/40"
+                        >
+                          <td className="px-5 py-3 font-medium">{w.label}</td>
+                          {/* A short leading or trailing week is shown as short
+                            so it doesn't read as a payroll discrepancy. */}
+                          <td className="px-5 py-3 text-right tabular-nums text-muted-foreground">
+                            {w.days < 7 ? `${w.days}/7` : w.days}
+                          </td>
+                          <td className="px-5 py-3 text-right tabular-nums text-muted-foreground">
+                            {w.headcount}
+                          </td>
+                          <td className="px-5 py-3 text-right tabular-nums">
+                            {formatCurrency(w.hourlyProfit, settings.currency)}
+                          </td>
+                          <td className="px-5 py-3 text-right tabular-nums">
+                            {formatCurrency(w.salary, settings.currency)}
+                          </td>
+                          <td
+                            className={`px-5 py-3 text-right font-semibold tabular-nums ${
+                              w.net < 0 ? "text-destructive" : ""
+                            }`}
+                          >
+                            {formatCurrency(w.net, settings.currency)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot>
+                      <tr className="border-t-2 border-border bg-muted/50">
+                        <td className="px-5 py-3 font-semibold" colSpan={3}>
+                          Range total
+                        </td>
+                        <td className="px-5 py-3 text-right font-semibold tabular-nums">
+                          {formatCurrency(salaryTotals.hourlyProfit, settings.currency)}
+                        </td>
+                        <td className="px-5 py-3 text-right font-semibold tabular-nums">
+                          {formatCurrency(salaryTotals.salary, settings.currency)}
+                        </td>
+                        <td
+                          className={`px-5 py-3 text-right font-semibold tabular-nums ${
+                            salaryTotals.net < 0 ? "text-destructive" : ""
+                          }`}
+                        >
+                          {formatCurrency(salaryTotals.net, settings.currency)}
+                        </td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
           {!profitTruncated && retainersApply && (
             <Card className="mt-6 shadow-card">
               <CardContent className="flex flex-wrap items-center justify-between gap-4 px-5 py-4">
                 <div>
-                  <p className="text-sm font-semibold">Total profit — hourly and retainer</p>
+                  <p className="text-sm font-semibold">
+                    Total profit — hourly and retainer, after salaries
+                  </p>
                   <p className="text-xs text-muted-foreground">
                     {formatCurrency(profitGrandTotals.profit, settings.currency)} hourly +{" "}
                     {formatCurrency(retainerTotals.profit, settings.currency)} retainer
+                    {salaryTotals.salary > 0
+                      ? ` − ${formatCurrency(salaryTotals.salary, settings.currency)} salaries`
+                      : ""}
                   </p>
                 </div>
                 <div className="flex items-center gap-8 tabular-nums">
