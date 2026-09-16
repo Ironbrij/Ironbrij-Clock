@@ -27,6 +27,10 @@ dist-ssr
 .wrangler/
 .dev.vars
 
+# Rollback snapshots written by the one-time duplicate-entry cleanup; they hold
+# real time-entry rows for every user, so they stay out of git.
+duplicate-merge-backup-*.json
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
