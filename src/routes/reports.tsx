@@ -39,7 +39,12 @@ import { retainerAccrualForRange } from "@/lib/retainer";
 import { salaryAccrualForWeek, weeksInRange } from "@/lib/weekly-salary";
 import { formatHours, formatMinutes } from "@/lib/mock-data";
 import { addDays, formatWeekRange, fromDateKey, startOfWeek, toDateKey } from "@/lib/time-utils";
-import { DETAILED_ENTRIES_LIMIT, useWorkspace, type DetailedEntry } from "@/lib/workspace-store";
+import {
+  DETAILED_ENTRIES_LIMIT,
+  useClientBudgets,
+  useWorkspace,
+  type DetailedEntry,
+} from "@/lib/workspace-store";
 import {
   CASUAL_SERVICE_CATEGORY_LABELS,
   dotColors,
@@ -125,6 +130,47 @@ const EMPLOYMENT_LABELS: Record<EmploymentType | "unset", string> = {
 
 /** Fixed presentation order for the P&L split — not whatever order the entries happened to arrive in. */
 const EMPLOYMENT_ORDER: (EmploymentType | "unset")[] = ["full_time", "part_time", "unset"];
+
+/**
+ * M51: who a report is being produced for.
+ *
+ *   - `all` — everything, with full cost and margin. The default, and
+ *     exactly what these tabs showed before M51.
+ *   - `internal` — internal work only, at raw tracked hours.
+ *   - `client` — client-facing work only, at billed hours, with every cost,
+ *     rate, wage and margin figure removed rather than merely hidden.
+ */
+type ReportAudience = "all" | "internal" | "client";
+
+const AUDIENCE_LABELS: Record<ReportAudience, string> = {
+  all: "All work",
+  internal: "Internal only",
+  client: "Client-facing only",
+};
+
+/**
+ * M51: what counts as internal.
+ *
+ * Deliberately **not** keyed on `is_billable`, which is the obvious-looking
+ * choice and is wrong here. The Ironbrij project is itself flagged billable,
+ * so every internal entry logged against it carries `is_billable = true` —
+ * keying on that would sweep the company's own internal work straight into
+ * a client-facing report. The two honest signals are the entry's service
+ * category and whether it belongs to a client at all.
+ */
+const isInternalWork = (e: {
+  serviceCategory: CasualServiceCategory | null;
+  clientId: string | null;
+}) => e.serviceCategory === "ironbrij" || e.clientId === null;
+
+/** Keeps only the rows the chosen audience should ever see. */
+function filterByAudience<
+  T extends { serviceCategory: CasualServiceCategory | null; clientId: string | null },
+>(rows: T[], audience: ReportAudience): T[] {
+  if (audience === "all") return rows;
+  const wantInternal = audience === "internal";
+  return rows.filter((r) => isInternalWork(r) === wantInternal);
+}
 
 // Same dimension names, phrased for the chart title ("Billable hours by
 // client/VA/day/week") rather than a table column header.
@@ -272,6 +318,11 @@ function Reports() {
   // per-line increment rounding has to be applied before summing.
   const [profitGroupBy, setProfitGroupBy] = useState<ProfitGroupBy>("va");
 
+  // M51: shared by the three tabs derived from `detailedEntries`. The
+  // Project and Employee tabs come from SQL aggregates with no service
+  // category in them, so they can't honour this and don't offer it.
+  const [audience, setAudience] = useState<ReportAudience>("all");
+
   const {
     projects,
     teams,
@@ -292,6 +343,7 @@ function Reports() {
     detailedEntriesForRange,
     casualClientLastServiceForAll,
   } = useWorkspace();
+  const clientBudgets = useClientBudgets();
 
   const { from, to } = useMemo(() => {
     if (preset === "custom") {
@@ -607,7 +659,7 @@ function Reports() {
     };
   });
 
-  const filteredDetailed = detailedRows
+  const filteredDetailed = filterByAudience(detailedRows, audience)
     .filter((r) => teamFilter === "all" || r.employeeTeamIds.includes(teamFilter))
     .filter((r) => {
       if (clientFilter === "all") return true;
@@ -654,6 +706,7 @@ function Reports() {
         };
       })
       .filter((r) => r.serviceCategory !== null)
+      .filter((r) => audience === "all" || isInternalWork(r) === (audience === "internal"))
       .filter((r) => teamFilter === "all" || r.employeeTeamIds.includes(teamFilter))
       .filter((r) => {
         if (clientFilter === "all") return true;
@@ -913,6 +966,7 @@ function Reports() {
         clientId: project?.clientId ?? null,
       };
     })
+    .filter((r) => audience === "all" || isInternalWork(r) === (audience === "internal"))
     .filter((r) => teamFilter === "all" || r.employeeTeamIds.includes(teamFilter))
     .filter((r) => {
       if (clientFilter === "all") return true;
@@ -1296,6 +1350,68 @@ function Reports() {
 
   const pnlCost = (r: { hourlyWages: number; salary: number }) => r.hourlyWages + r.salary;
 
+  /**
+   * M51: the client-facing deliverable — "export without cost, gross profit
+   * for clients / name, hours, task name, remaining hours".
+   *
+   * Built as its own projection rather than as the profit table with columns
+   * hidden. That is the whole safety property: this type has no cost, rate,
+   * wage or margin field at all, so a column added to `ProfitRow` later
+   * cannot accidentally surface in something sent to a client. Hiding cells
+   * in a shared table would make that a one-line mistake away.
+   *
+   * Sourced from `filteredDetailed` with internal work removed
+   * unconditionally — not via `audience`. Every other filter the person set
+   * still applies, but internal work can never appear here even if the
+   * audience control says "All work".
+   */
+  type ClientFacingRow = {
+    key: string;
+    employeeName: string;
+    clientLabel: string;
+    task: string;
+    billedHours: number;
+    /** Null when this client has no subscription allowance to draw down. */
+    remainingHours: number | null;
+  };
+
+  const clientFacingRows: ClientFacingRow[] = (() => {
+    const map = new Map<string, ClientFacingRow>();
+    for (const e of filteredDetailed) {
+      if (isInternalWork(e)) continue;
+      const key = `${e.userId}::${e.clientId ?? "none"}::${e.task}`;
+      const row = map.get(key) ?? {
+        key,
+        employeeName: e.employeeName,
+        clientLabel: e.clientId
+          ? (clients.find((c) => c.id === e.clientId)?.name ?? "Unknown client")
+          : NO_CLIENT,
+        task: e.task || "—",
+        billedHours: 0,
+        // Confirmed as the client's subscription allowance less everything
+        // ever rendered against it — deliberately not scoped to this
+        // report's date range, so it reads as a standing balance rather
+        // than resetting each period.
+        remainingHours: e.clientId ? (clientBudgets.get(e.clientId)?.remainingHours ?? null) : null,
+      };
+      // Per line, before summing — same reasoning as everywhere else the
+      // increment is applied.
+      row.billedHours += billableHoursForCasualEntry(e, e.serviceCategory, billingOpts);
+      map.set(key, row);
+    }
+    return Array.from(map.values()).sort(
+      (a, b) =>
+        a.clientLabel.localeCompare(b.clientLabel) ||
+        a.employeeName.localeCompare(b.employeeName) ||
+        b.billedHours - a.billedHours,
+    );
+  })();
+
+  const clientFacingTotalHours = clientFacingRows.reduce((s, r) => s + r.billedHours, 0);
+
+  /** True when the Gross Profit tab should render the client-safe view instead of the margin table. */
+  const showClientFacing = view === "profit" && audience === "client";
+
   // An empty-looking cost cell means one of two opposite things: nobody has
   // entered a pay rate, or the person is salaried and charged in the block
   // below. Saying "—" for both would hide a real gap behind a handled one.
@@ -1333,8 +1449,11 @@ function Reports() {
   // suppresses the numbers rather than quietly under-reporting them.
   const profitTruncated =
     view === "profit" && (detailedEntries?.length ?? 0) >= DETAILED_ENTRIES_LIMIT;
-  const total =
-    view === "project"
+  const total = showClientFacing
+    ? // M51: the client view's headline has to be the invoiced figure, not
+      // the tracked one, or it contradicts the only column beneath it.
+      clientFacingTotalHours
+    : view === "project"
       ? projectRows.reduce((s, r) => s + r.hours, 0)
       : view === "employee"
         ? employeeRows.reduce((s, r) => s + r.hours, 0)
@@ -1414,6 +1533,24 @@ function Reports() {
           r.amount == null ? "No rate set" : r.amount.toFixed(2),
           `${from} to ${to}`,
         ]),
+      ]);
+    } else if (showClientFacing) {
+      // M51: the client deliverable. Built only from `clientFacingRows`,
+      // which has no cost, rate or margin field to leak — see its own
+      // comment for why that is a projection rather than hidden columns.
+      downloadCsv(`ironbrij-client-hours_${clientLabel}_${from}_to_${to}.csv`, [
+        ["Name", "Client", "Task", "Hours", "Remaining Hours", "Date range"],
+        ...clientFacingRows.map((r) => [
+          r.employeeName,
+          r.clientLabel,
+          r.task,
+          r.billedHours.toFixed(2),
+          // A client with no subscription allowance has no balance to
+          // report, which is not the same as a balance of zero.
+          r.remainingHours == null ? "No allowance set" : r.remainingHours.toFixed(2),
+          `${from} to ${to}`,
+        ]),
+        ["Total", "", "", clientFacingTotalHours.toFixed(2), "", `${from} to ${to}`],
       ]);
     } else if (view === "profit") {
       downloadCsv(`ironbrij-gross-profit-by-${profitGroupBy}_${clientLabel}_${from}_to_${to}.csv`, [
@@ -1795,6 +1932,45 @@ function Reports() {
               </SelectContent>
             </Select>
           )}
+        </div>
+      )}
+
+      {/* M51: the audience control. Offered on the three tabs derived from
+          `detailedEntries` — the Project and Employee tabs come from SQL
+          aggregates with no service category in them, so they genuinely
+          cannot honour it and don't pretend to. */}
+      {(view === "detailed" || view === "casual" || view === "profit") && (
+        <div className="mb-6 flex flex-wrap items-center gap-3">
+          <Select value={audience} onValueChange={(v) => setAudience(v as ReportAudience)}>
+            <SelectTrigger className="w-52">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {(Object.keys(AUDIENCE_LABELS) as ReportAudience[]).map((key) => (
+                <SelectItem key={key} value={key}>
+                  {AUDIENCE_LABELS[key]}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <p className="text-xs text-muted-foreground">
+            {audience === "client" ? (
+              <>
+                Client-facing work only, at billed hours. Every cost, pay rate, wage and margin
+                figure is left out of both the table and the export.
+              </>
+            ) : audience === "internal" ? (
+              <>
+                Ironbrij-category work and work with no client, at raw tracked hours — never
+                uplifted, since none of it is invoiced.
+              </>
+            ) : (
+              <>
+                Everything, with full cost and margin. Switch to Client-facing to produce something
+                safe to send out.
+              </>
+            )}
+          </p>
         </div>
       )}
 
@@ -2530,6 +2706,86 @@ function Reports() {
             </CardContent>
           </Card>
         </>
+      ) : showClientFacing ? (
+        /* M51: the client-facing view. A separate table fed by a separate
+           projection, so there is no cost or margin value in scope here to
+           be shown by accident. */
+        <Card className="shadow-card">
+          <CardHeader>
+            <CardTitle className="text-base">Client hours · {rangeLabel}</CardTitle>
+            <p className="text-xs text-muted-foreground">
+              Safe to send out — no cost, pay rate or margin figures. Hours are what's invoiced
+              {settings.clientBillingUpliftPct > 0
+                ? `, including the ${settings.clientBillingUpliftPct}% uplift on casual work, rounded up`
+                : ", rounded up"}
+              . Remaining hours are the client's whole subscription allowance less everything ever
+              rendered against it, not just this range.
+            </p>
+          </CardHeader>
+          <CardContent className="overflow-x-auto p-0">
+            {profitTruncated && (
+              <p className="border-b border-border bg-destructive/10 px-5 py-3 text-sm text-destructive">
+                This range has more entries than a single report can load, so these totals would be
+                incomplete. Narrow the date range and try again.
+              </p>
+            )}
+            <table className="w-full min-w-[720px] text-sm">
+              <thead>
+                <tr className="border-b border-border text-xs uppercase tracking-wide text-muted-foreground">
+                  <th className="px-5 py-3 text-left font-medium">Name</th>
+                  <th className="px-5 py-3 text-left font-medium">Client</th>
+                  <th className="px-5 py-3 text-left font-medium">Task</th>
+                  <th className="px-5 py-3 text-right font-medium">Hours</th>
+                  <th className="px-5 py-3 text-right font-medium">Remaining Hours</th>
+                </tr>
+              </thead>
+              <tbody>
+                {profitTruncated ? null : clientFacingRows.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} className="px-5 py-8 text-center text-sm text-muted-foreground">
+                      No client-facing work in this range.
+                    </td>
+                  </tr>
+                ) : (
+                  clientFacingRows.map((r) => (
+                    <tr key={r.key} className="border-b border-border last:border-0">
+                      <td className="px-5 py-3 font-medium">{r.employeeName}</td>
+                      <td className="px-5 py-3">{r.clientLabel}</td>
+                      <td className="px-5 py-3 text-muted-foreground">{r.task}</td>
+                      <td className="px-5 py-3 text-right tabular-nums">
+                        {formatHours(r.billedHours)}
+                      </td>
+                      <td className="px-5 py-3 text-right tabular-nums text-muted-foreground">
+                        {r.remainingHours == null ? (
+                          <span title="This client has no subscription allowance set">—</span>
+                        ) : r.remainingHours < 0 ? (
+                          <span className="text-destructive">
+                            {formatHours(Math.abs(r.remainingHours))} over
+                          </span>
+                        ) : (
+                          formatHours(r.remainingHours)
+                        )}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+              {!profitTruncated && clientFacingRows.length > 0 && (
+                <tfoot>
+                  <tr className="border-t-2 border-border bg-muted/50">
+                    <td className="px-5 py-3 font-semibold">Total</td>
+                    <td className="px-5 py-3" />
+                    <td className="px-5 py-3" />
+                    <td className="px-5 py-3 text-right font-semibold tabular-nums">
+                      {formatHours(clientFacingTotalHours)}
+                    </td>
+                    <td className="px-5 py-3" />
+                  </tr>
+                </tfoot>
+              )}
+            </table>
+          </CardContent>
+        </Card>
       ) : (
         <>
           {/* M51: profit and loss by employment type. Sits above the main
