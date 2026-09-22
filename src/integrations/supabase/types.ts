@@ -892,14 +892,14 @@ export type Database = {
       delete_tag: { Args: { _tag_id: string }; Returns: undefined };
       description_required: { Args: never; Returns: boolean };
       employee_billable_hours_range: {
-        Args: { _from: string; _to: string };
+        Args: { _from: string; _to: string; _tag_id?: string | null };
         Returns: {
           minutes: number;
           user_id: string;
         }[];
       };
       employee_client_hours_range: {
-        Args: { _from: string; _to: string };
+        Args: { _from: string; _to: string; _tag_id?: string | null };
         Returns: {
           client_id: string;
           minutes: number;
@@ -907,7 +907,7 @@ export type Database = {
         }[];
       };
       employee_hours_range: {
-        Args: { _from: string; _to: string };
+        Args: { _from: string; _to: string; _tag_id?: string | null };
         Returns: {
           minutes: number;
           user_id: string;
@@ -925,7 +925,7 @@ export type Database = {
       is_approved: { Args: { _user_id: string }; Returns: boolean };
       manual_entry_allowed: { Args: never; Returns: boolean };
       project_billable_hours_range: {
-        Args: { _from: string; _to: string; _team_id?: string | null };
+        Args: { _from: string; _to: string; _team_id?: string | null; _tag_id?: string | null };
         Returns: {
           billable_minutes: number;
           project_id: string;
@@ -940,7 +940,7 @@ export type Database = {
         }[];
       };
       project_hours_range: {
-        Args: { _from: string; _to: string; _team_id?: string | null };
+        Args: { _from: string; _to: string; _team_id?: string | null; _tag_id?: string | null };
         Returns: {
           minutes: number;
           project_id: string;

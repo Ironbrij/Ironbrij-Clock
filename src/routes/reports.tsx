@@ -255,6 +255,18 @@ function Reports() {
   const [customTo, setCustomTo] = useState(todayKey);
   const [teamFilter, setTeamFilter] = useState("all");
   const [clientFilter, setClientFilter] = useState("all");
+  /**
+   * M51: one tag filter for every tab, rather than the separate
+   * Detailed-only and Casual-only pickers this replaces.
+   *
+   * Promoted to the shared row because it now reaches the Project and
+   * Employee tabs too, and those read pre-aggregated SUMs from SQL — their
+   * filtering happens server-side via the RPCs' new `_tag_id`, so a
+   * per-tab picker would have meant three separate controls doing the same
+   * thing by three different mechanisms. A single selection also survives
+   * switching tabs, which the per-tab ones did not.
+   */
+  const [tagFilter, setTagFilter] = useState("all");
 
   const [projSortKey, setProjSortKey] = useState<ProjectSortKey>("hours");
   const [projAsc, setProjAsc] = useState(false);
@@ -286,7 +298,6 @@ function Reports() {
   const [loadingDetailed, setLoadingDetailed] = useState(true);
   const [projectFilter, setProjectFilter] = useState("all");
   const [employeeFilter, setEmployeeFilter] = useState("all");
-  const [detailedTagFilter, setDetailedTagFilter] = useState("all");
   const [detailedSearch, setDetailedSearch] = useState("");
   const [detailedPage, setDetailedPage] = useState(1);
 
@@ -300,7 +311,6 @@ function Reports() {
   const [casualCategoryFilter, setCasualCategoryFilter] = useState<"all" | CasualServiceCategory>(
     "all",
   );
-  const [casualTagFilter, setCasualTagFilter] = useState("all");
   // Billable hours descending by default — "who owes the most this period"
   // is the question this tab gets opened for.
   const [casualSortKey, setCasualSortKey] = useState<CasualSortKey>("billableHours");
@@ -361,9 +371,13 @@ function Reports() {
     let cancelled = false;
     setLoadingProject(true);
     const scopedTeam = teamFilter === "all" ? undefined : teamFilter;
+    // M51: tag scoping happens server-side for this tab — these are
+    // pre-aggregated SUMs, so there are no per-entry tags left to filter
+    // by the time the rows reach the client.
+    const scopedTag = tagFilter === "all" ? undefined : tagFilter;
     Promise.all([
-      projectHoursForRange(from, to, scopedTeam),
-      projectBillableHoursForRange(from, to, scopedTeam),
+      projectHoursForRange(from, to, scopedTeam, scopedTag),
+      projectBillableHoursForRange(from, to, scopedTeam, scopedTag),
     ])
       .then(([totals, billable]) => {
         if (cancelled) return;
@@ -385,7 +399,7 @@ function Reports() {
     return () => {
       cancelled = true;
     };
-  }, [from, to, teamFilter, projectHoursForRange, projectBillableHoursForRange]);
+  }, [from, to, teamFilter, tagFilter, projectHoursForRange, projectBillableHoursForRange]);
 
   // Only fetched for managers/admins — a plain Member's own row is all
   // they'd get back anyway (see the migration for why), so there's
@@ -397,10 +411,12 @@ function Reports() {
     }
     let cancelled = false;
     setLoadingEmployee(true);
+    // Same server-side tag scoping as the Project tab above.
+    const scopedTag = tagFilter === "all" ? undefined : tagFilter;
     Promise.all([
-      employeeHoursForRange(from, to),
-      employeeBillableHoursForRange(from, to),
-      employeeClientHoursForRange(from, to),
+      employeeHoursForRange(from, to, scopedTag),
+      employeeBillableHoursForRange(from, to, scopedTag),
+      employeeClientHoursForRange(from, to, scopedTag),
     ])
       .then(([totals, billable, byClient]) => {
         if (cancelled) return;
@@ -431,6 +447,7 @@ function Reports() {
     from,
     to,
     canManage,
+    tagFilter,
     employeeHoursForRange,
     employeeBillableHoursForRange,
     employeeClientHoursForRange,
@@ -521,7 +538,7 @@ function Reports() {
     clientFilter,
     projectFilter,
     employeeFilter,
-    detailedTagFilter,
+    tagFilter,
     detailedSearch,
   ]);
 
@@ -668,7 +685,7 @@ function Reports() {
     })
     .filter((r) => projectFilter === "all" || r.projectId === projectFilter)
     .filter((r) => employeeFilter === "all" || r.userId === employeeFilter)
-    .filter((r) => detailedTagFilter === "all" || r.tagIds.includes(detailedTagFilter))
+    .filter((r) => tagFilter === "all" || r.tagIds.includes(tagFilter))
     .filter((r) => {
       const q = detailedSearch.trim().toLowerCase();
       if (!q) return true;
@@ -714,7 +731,7 @@ function Reports() {
         return r.clientId === clientFilter;
       })
       .filter((r) => casualCategoryFilter === "all" || r.serviceCategory === casualCategoryFilter)
-      .filter((r) => casualTagFilter === "all" || r.entryTagIds.includes(casualTagFilter));
+      .filter((r) => tagFilter === "all" || r.entryTagIds.includes(tagFilter));
   }
 
   const casualEntries = joinAndFilterCasualEntries(detailedEntries ?? []);
@@ -968,6 +985,7 @@ function Reports() {
     })
     .filter((r) => audience === "all" || isInternalWork(r) === (audience === "internal"))
     .filter((r) => teamFilter === "all" || r.employeeTeamIds.includes(teamFilter))
+    .filter((r) => tagFilter === "all" || r.tagIds.includes(tagFilter))
     .filter((r) => {
       if (clientFilter === "all") return true;
       if (clientFilter === "none") return r.clientId === null;
@@ -1502,8 +1520,16 @@ function Reports() {
         : clientFilter === "none"
           ? "no-client"
           : (clients.find((c) => c.id === clientFilter)?.name.replace(/\s+/g, "-") ?? "client");
+    // M51: a tag-filtered export is a different document from an unfiltered
+    // one, and nothing inside the file distinguishes them — so the filename
+    // has to, the same way the client filter already does. Empty when no tag
+    // is selected, so unfiltered filenames are unchanged.
+    const tagLabel =
+      tagFilter === "all"
+        ? ""
+        : `_tag-${tags.find((t) => t.id === tagFilter)?.name.replace(/\s+/g, "-") ?? "unknown"}`;
     if (view === "project") {
-      downloadCsv(`ironbrij-hours-by-project_${clientLabel}_${from}_to_${to}.csv`, [
+      downloadCsv(`ironbrij-hours-by-project_${clientLabel}${tagLabel}_${from}_to_${to}.csv`, [
         ["Project", "Team", "Hours", "Billable Hours", "Date range"],
         ...sortedProjects.map((r) => [
           r.name,
@@ -1514,7 +1540,7 @@ function Reports() {
         ]),
       ]);
     } else if (view === "employee") {
-      downloadCsv(`ironbrij-hours-by-employee_${clientLabel}_${from}_to_${to}.csv`, [
+      downloadCsv(`ironbrij-hours-by-employee_${clientLabel}${tagLabel}_${from}_to_${to}.csv`, [
         [
           "Employee",
           "Team",
@@ -1538,7 +1564,7 @@ function Reports() {
       // M51: the client deliverable. Built only from `clientFacingRows`,
       // which has no cost, rate or margin field to leak — see its own
       // comment for why that is a projection rather than hidden columns.
-      downloadCsv(`ironbrij-client-hours_${clientLabel}_${from}_to_${to}.csv`, [
+      downloadCsv(`ironbrij-client-hours_${clientLabel}${tagLabel}_${from}_to_${to}.csv`, [
         ["Name", "Client", "Task", "Hours", "Remaining Hours", "Date range"],
         ...clientFacingRows.map((r) => [
           r.employeeName,
@@ -1553,186 +1579,189 @@ function Reports() {
         ["Total", "", "", clientFacingTotalHours.toFixed(2), "", `${from} to ${to}`],
       ]);
     } else if (view === "profit") {
-      downloadCsv(`ironbrij-gross-profit-by-${profitGroupBy}_${clientLabel}_${from}_to_${to}.csv`, [
+      downloadCsv(
+        `ironbrij-gross-profit-by-${profitGroupBy}_${clientLabel}${tagLabel}_${from}_to_${to}.csv`,
         [
-          profitGroupByLabels[profitGroupBy],
-          "Client",
-          // M51: both hour figures, side by side and labelled, because the
-          // whole margin story is the difference between them. A single
-          // "Hours" column would leave a reader unable to tell whether the
-          // wages or the invoice had been computed from it.
-          "Actual Hours",
-          "Billed Hours",
-          `Pay Rate (${settings.currency})`,
-          `Actual Wages (${settings.currency})`,
-          `Invoice Rate (${settings.currency})`,
-          `Revenue (${settings.currency})`,
-          `Gross Profit (${settings.currency})`,
-          "Margin %",
-          "Unpriced Hours",
-          "Date range",
-        ],
-        // Flattened in the order shown on screen, each group's subtotal
-        // following its own rows, same as the casual export.
-        ...profitGroups.flatMap((g) => [
-          ...g.rows.map((r) => [
-            g.label,
-            r.clientLabel,
-            r.actualHours.toFixed(2),
-            r.billedHours.toFixed(2),
-            // The blended pay rate divides cost by actual hours, since that
-            // is what cost was computed from. Dividing by billed hours here
-            // would print a rate 20% below what the VA is really paid.
-            r.costKnown && r.actualHours > 0
-              ? (r.cost / r.actualHours).toFixed(2)
-              : r.salariedHours > 0
-                ? "Salary"
-                : "No rate set",
-            r.costKnown ? r.cost.toFixed(2) : r.salariedHours > 0 ? "Salary" : "No rate set",
-            r.ratedHours > 0 ? (r.revenue / r.ratedHours).toFixed(2) : "No rate set",
-            r.ratedHours > 0 ? r.revenue.toFixed(2) : "No rate set",
-            r.profit.toFixed(2),
-            r.revenue > 0 ? ((r.profit / r.revenue) * 100).toFixed(1) : "",
-            r.unpricedHours.toFixed(2),
-            `${from} to ${to}`,
-          ]),
           [
-            `${g.label} — total`,
-            "",
-            g.actualHours.toFixed(2),
-            g.billedHours.toFixed(2),
-            "",
-            g.costKnown ? g.cost.toFixed(2) : g.salariedHours > 0 ? "Salary" : "No rate set",
-            "",
-            g.ratedHours > 0 ? g.revenue.toFixed(2) : "No rate set",
-            g.profit.toFixed(2),
-            g.revenue > 0 ? ((g.profit / g.revenue) * 100).toFixed(1) : "",
-            g.unpricedHours.toFixed(2),
-            `${from} to ${to}`,
+            profitGroupByLabels[profitGroupBy],
+            "Client",
+            // M51: both hour figures, side by side and labelled, because the
+            // whole margin story is the difference between them. A single
+            // "Hours" column would leave a reader unable to tell whether the
+            // wages or the invoice had been computed from it.
+            "Actual Hours",
+            "Billed Hours",
+            `Pay Rate (${settings.currency})`,
+            `Actual Wages (${settings.currency})`,
+            `Invoice Rate (${settings.currency})`,
+            `Revenue (${settings.currency})`,
+            `Gross Profit (${settings.currency})`,
+            "Margin %",
+            "Unpriced Hours",
+            "Date range",
           ],
-        ]),
-        // M51: the profit-and-loss split, appended as its own block for
-        // the same reason retainers and salaries already are — the screen
-        // shows it, so the export has to, or the two disagree.
-        ...(pnlByEmployment.length > 0
-          ? [
-              [],
-              ["Profit & loss by employment type"],
-              [
-                "Employment type",
-                "Actual Hours",
-                "Billed Hours",
-                `Actual Wages (${settings.currency})`,
-                `Salary (${settings.currency})`,
-                `Total Cost (${settings.currency})`,
-                `Revenue (${settings.currency})`,
-                `Gross Profit (${settings.currency})`,
-              ],
-              ...pnlByEmployment.map((r) => [
-                // The asterisk the table shows can't survive a CSV, so the
-                // gap it flags is spelled out in the row itself.
-                r.hasUnpricedWork ? `${r.label} (some work has no pay rate)` : r.label,
-                r.actualHours.toFixed(2),
-                r.billedHours.toFixed(2),
-                r.hourlyWages.toFixed(2),
-                r.salary.toFixed(2),
-                pnlCost(r).toFixed(2),
-                r.revenue.toFixed(2),
-                (r.revenue - pnlCost(r)).toFixed(2),
-              ]),
-              [
-                "P&L total",
-                pnlTotals.actualHours.toFixed(2),
-                pnlTotals.billedHours.toFixed(2),
-                pnlTotals.hourlyWages.toFixed(2),
-                pnlTotals.salary.toFixed(2),
-                pnlCost(pnlTotals).toFixed(2),
-                pnlTotals.revenue.toFixed(2),
-                (pnlTotals.revenue - pnlCost(pnlTotals)).toFixed(2),
-              ],
-            ]
-          : []),
-        // M49: retainers appended as their own labelled block, then the
-        // combined total — the same thing the screen shows, in the same
-        // order, so an exported file and a screenshot can't disagree.
-        ...(retainersApply && retainerRows.length > 0
-          ? [
-              [],
-              ["Retainers (monthly placements accrued across the range)"],
-              [
-                "Client",
-                "VA",
-                "Days",
-                `Cost (${settings.currency})`,
-                `Revenue (${settings.currency})`,
-                `Management Fee (${settings.currency})`,
-              ],
-              ...retainerRows.map((r) => [
-                r.clientLabel,
-                r.vaLabel,
-                r.days,
-                r.cost.toFixed(2),
-                r.revenue.toFixed(2),
-                r.profit.toFixed(2),
-              ]),
-              [
-                "Retainer total",
-                "",
-                "",
-                retainerTotals.cost.toFixed(2),
-                retainerTotals.revenue.toFixed(2),
-                retainerTotals.profit.toFixed(2),
-              ],
-            ]
-          : []),
-        ...(salariesApply && salaryWeeks.length > 0
-          ? [
-              [],
-              ["Weekly salaries (fixed payroll, prorated by days in range)"],
-              [
-                "Week",
-                "Days",
-                "People",
-                `Gross profit (${settings.currency})`,
-                `Salaries (${settings.currency})`,
-                `Net (${settings.currency})`,
-              ],
-              ...salaryWeeks.map((w) => [
-                w.label,
-                w.days,
-                w.headcount,
-                w.hourlyProfit.toFixed(2),
-                w.salary.toFixed(2),
-                w.net.toFixed(2),
-              ]),
-              [
-                "Range total",
-                "",
-                "",
-                salaryTotals.hourlyProfit.toFixed(2),
-                salaryTotals.salary.toFixed(2),
-                salaryTotals.net.toFixed(2),
-              ],
-            ]
-          : []),
-        ...(retainersApply
-          ? [
-              [],
-              [
-                "Total profit (hourly + retainer − salaries)",
-                "",
-                "",
-                combinedTotals.cost.toFixed(2),
-                combinedTotals.revenue.toFixed(2),
-                combinedTotals.profit.toFixed(2),
-              ],
-            ]
-          : []),
-      ]);
+          // Flattened in the order shown on screen, each group's subtotal
+          // following its own rows, same as the casual export.
+          ...profitGroups.flatMap((g) => [
+            ...g.rows.map((r) => [
+              g.label,
+              r.clientLabel,
+              r.actualHours.toFixed(2),
+              r.billedHours.toFixed(2),
+              // The blended pay rate divides cost by actual hours, since that
+              // is what cost was computed from. Dividing by billed hours here
+              // would print a rate 20% below what the VA is really paid.
+              r.costKnown && r.actualHours > 0
+                ? (r.cost / r.actualHours).toFixed(2)
+                : r.salariedHours > 0
+                  ? "Salary"
+                  : "No rate set",
+              r.costKnown ? r.cost.toFixed(2) : r.salariedHours > 0 ? "Salary" : "No rate set",
+              r.ratedHours > 0 ? (r.revenue / r.ratedHours).toFixed(2) : "No rate set",
+              r.ratedHours > 0 ? r.revenue.toFixed(2) : "No rate set",
+              r.profit.toFixed(2),
+              r.revenue > 0 ? ((r.profit / r.revenue) * 100).toFixed(1) : "",
+              r.unpricedHours.toFixed(2),
+              `${from} to ${to}`,
+            ]),
+            [
+              `${g.label} — total`,
+              "",
+              g.actualHours.toFixed(2),
+              g.billedHours.toFixed(2),
+              "",
+              g.costKnown ? g.cost.toFixed(2) : g.salariedHours > 0 ? "Salary" : "No rate set",
+              "",
+              g.ratedHours > 0 ? g.revenue.toFixed(2) : "No rate set",
+              g.profit.toFixed(2),
+              g.revenue > 0 ? ((g.profit / g.revenue) * 100).toFixed(1) : "",
+              g.unpricedHours.toFixed(2),
+              `${from} to ${to}`,
+            ],
+          ]),
+          // M51: the profit-and-loss split, appended as its own block for
+          // the same reason retainers and salaries already are — the screen
+          // shows it, so the export has to, or the two disagree.
+          ...(pnlByEmployment.length > 0
+            ? [
+                [],
+                ["Profit & loss by employment type"],
+                [
+                  "Employment type",
+                  "Actual Hours",
+                  "Billed Hours",
+                  `Actual Wages (${settings.currency})`,
+                  `Salary (${settings.currency})`,
+                  `Total Cost (${settings.currency})`,
+                  `Revenue (${settings.currency})`,
+                  `Gross Profit (${settings.currency})`,
+                ],
+                ...pnlByEmployment.map((r) => [
+                  // The asterisk the table shows can't survive a CSV, so the
+                  // gap it flags is spelled out in the row itself.
+                  r.hasUnpricedWork ? `${r.label} (some work has no pay rate)` : r.label,
+                  r.actualHours.toFixed(2),
+                  r.billedHours.toFixed(2),
+                  r.hourlyWages.toFixed(2),
+                  r.salary.toFixed(2),
+                  pnlCost(r).toFixed(2),
+                  r.revenue.toFixed(2),
+                  (r.revenue - pnlCost(r)).toFixed(2),
+                ]),
+                [
+                  "P&L total",
+                  pnlTotals.actualHours.toFixed(2),
+                  pnlTotals.billedHours.toFixed(2),
+                  pnlTotals.hourlyWages.toFixed(2),
+                  pnlTotals.salary.toFixed(2),
+                  pnlCost(pnlTotals).toFixed(2),
+                  pnlTotals.revenue.toFixed(2),
+                  (pnlTotals.revenue - pnlCost(pnlTotals)).toFixed(2),
+                ],
+              ]
+            : []),
+          // M49: retainers appended as their own labelled block, then the
+          // combined total — the same thing the screen shows, in the same
+          // order, so an exported file and a screenshot can't disagree.
+          ...(retainersApply && retainerRows.length > 0
+            ? [
+                [],
+                ["Retainers (monthly placements accrued across the range)"],
+                [
+                  "Client",
+                  "VA",
+                  "Days",
+                  `Cost (${settings.currency})`,
+                  `Revenue (${settings.currency})`,
+                  `Management Fee (${settings.currency})`,
+                ],
+                ...retainerRows.map((r) => [
+                  r.clientLabel,
+                  r.vaLabel,
+                  r.days,
+                  r.cost.toFixed(2),
+                  r.revenue.toFixed(2),
+                  r.profit.toFixed(2),
+                ]),
+                [
+                  "Retainer total",
+                  "",
+                  "",
+                  retainerTotals.cost.toFixed(2),
+                  retainerTotals.revenue.toFixed(2),
+                  retainerTotals.profit.toFixed(2),
+                ],
+              ]
+            : []),
+          ...(salariesApply && salaryWeeks.length > 0
+            ? [
+                [],
+                ["Weekly salaries (fixed payroll, prorated by days in range)"],
+                [
+                  "Week",
+                  "Days",
+                  "People",
+                  `Gross profit (${settings.currency})`,
+                  `Salaries (${settings.currency})`,
+                  `Net (${settings.currency})`,
+                ],
+                ...salaryWeeks.map((w) => [
+                  w.label,
+                  w.days,
+                  w.headcount,
+                  w.hourlyProfit.toFixed(2),
+                  w.salary.toFixed(2),
+                  w.net.toFixed(2),
+                ]),
+                [
+                  "Range total",
+                  "",
+                  "",
+                  salaryTotals.hourlyProfit.toFixed(2),
+                  salaryTotals.salary.toFixed(2),
+                  salaryTotals.net.toFixed(2),
+                ],
+              ]
+            : []),
+          ...(retainersApply
+            ? [
+                [],
+                [
+                  "Total profit (hourly + retainer − salaries)",
+                  "",
+                  "",
+                  combinedTotals.cost.toFixed(2),
+                  combinedTotals.revenue.toFixed(2),
+                  combinedTotals.profit.toFixed(2),
+                ],
+              ]
+            : []),
+        ],
+      );
     } else if (view === "detailed") {
       // The full filtered set, not just the current page — pagination is a
       // display convenience, not a limit on what the export should contain.
-      downloadCsv(`ironbrij-detailed-entries_${clientLabel}_${from}_to_${to}.csv`, [
+      downloadCsv(`ironbrij-detailed-entries_${clientLabel}${tagLabel}_${from}_to_${to}.csv`, [
         ["Date", "Employee", "Project", "Tags", "Task", "Description", "Hours", "Billable"],
         ...filteredDetailed.map((r) => [
           r.date,
@@ -1747,7 +1776,7 @@ function Reports() {
       ]);
     } else {
       downloadCsv(
-        `ironbrij-casual-service-by-${casualGroupBy}_${clientLabel}_${from}_to_${to}.csv`,
+        `ironbrij-casual-service-by-${casualGroupBy}_${clientLabel}${tagLabel}_${from}_to_${to}.csv`,
         [
           [
             casualGroupByLabels[casualGroupBy],
@@ -1862,6 +1891,26 @@ function Reports() {
           searchPlaceholder="Search clients…"
           triggerClassName="w-48"
         />
+        {/* M51: one tag picker for every tab, replacing the separate
+            Detailed-only and Casual-only ones. On the Project and Employee
+            tabs this re-runs their RPCs with a _tag_id rather than
+            filtering rows here — those tabs only ever see pre-summed
+            totals. */}
+        {tags.length > 0 && (
+          <Select value={tagFilter} onValueChange={setTagFilter}>
+            <SelectTrigger className="w-44">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All tags</SelectItem>
+              {tags.map((t) => (
+                <SelectItem key={t.id} value={t.id}>
+                  {t.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
         {canManage && (
           <Tabs
             value={view}
@@ -1917,21 +1966,6 @@ function Reports() {
             searchPlaceholder="Search employees…"
             triggerClassName="w-48"
           />
-          {tags.length > 0 && (
-            <Select value={detailedTagFilter} onValueChange={setDetailedTagFilter}>
-              <SelectTrigger className="w-44">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All tags</SelectItem>
-                {tags.map((t) => (
-                  <SelectItem key={t.id} value={t.id}>
-                    {t.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          )}
         </div>
       )}
 
@@ -2038,21 +2072,6 @@ function Reports() {
               ))}
             </SelectContent>
           </Select>
-          {tags.length > 0 && (
-            <Select value={casualTagFilter} onValueChange={setCasualTagFilter}>
-              <SelectTrigger className="w-44">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All tags</SelectItem>
-                {tags.map((t) => (
-                  <SelectItem key={t.id} value={t.id}>
-                    {t.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          )}
         </div>
       )}
 

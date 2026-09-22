@@ -217,27 +217,32 @@ type WorkspaceContextValue = {
     from: string,
     to: string,
     teamId?: string,
+    tagId?: string,
   ) => Promise<{ projectId: string; minutes: number }[]>;
   /** M28: billable-only hours by project, for Reports' billable/non-billable split — summed from time_entries.is_billable, not projects.is_billable. Same optional teamId scoping as projectHoursForRange. */
   projectBillableHoursForRange: (
     from: string,
     to: string,
     teamId?: string,
+    tagId?: string,
   ) => Promise<{ projectId: string; minutes: number }[]>;
   /** Hours by employee for an arbitrary date range — scoped server-side to self/admin/manager's-team, unlike the project version. */
   employeeHoursForRange: (
     from: string,
     to: string,
+    tagId?: string,
   ) => Promise<{ userId: string; minutes: number }[]>;
   /** H17: billable-only hours by employee, for Reports' $ column — hours * hourly_rate has to use billable hours specifically, not the total from employeeHoursForRange. */
   employeeBillableHoursForRange: (
     from: string,
     to: string,
+    tagId?: string,
   ) => Promise<{ userId: string; minutes: number }[]>;
   /** Hours by employee, broken down per client, for the Reports client filter. clientId is null for entries with no client attached. */
   employeeClientHoursForRange: (
     from: string,
     to: string,
+    tagId?: string,
   ) => Promise<{ userId: string; clientId: string | null; minutes: number }[]>;
   /** Entries carrying a given tag — relies entirely on time_entries' own RLS (self/admin/manager-shares-team) for who can see what, same as everywhere else. */
   entriesForTag: (tagId: string) => Promise<
