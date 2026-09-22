@@ -1388,6 +1388,8 @@ function Reports() {
     employeeName: string;
     clientLabel: string;
     task: string;
+    /** The description the person actually typed on the entry. Empty when they left it blank. */
+    description: string;
     billedHours: number;
     /** Null when this client has no subscription allowance to draw down. */
     remainingHours: number | null;
@@ -1397,7 +1399,13 @@ function Reports() {
     const map = new Map<string, ClientFacingRow>();
     for (const e of filteredDetailed) {
       if (isInternalWork(e)) continue;
-      const key = `${e.userId}::${e.clientId ?? "none"}::${e.task}`;
+      // Description is part of the grouping key, not just displayed: a VA's
+      // "Design" work for a client is several distinct pieces of work, and
+      // collapsing them onto one line would throw away the very detail this
+      // column exists to show. It does mean more rows than the task-only
+      // grouping this replaces.
+      const description = e.description.trim();
+      const key = `${e.userId}::${e.clientId ?? "none"}::${e.task}::${description}`;
       const row = map.get(key) ?? {
         key,
         employeeName: e.employeeName,
@@ -1405,6 +1413,7 @@ function Reports() {
           ? (clients.find((c) => c.id === e.clientId)?.name ?? "Unknown client")
           : NO_CLIENT,
         task: e.task || "—",
+        description,
         billedHours: 0,
         // Confirmed as the client's subscription allowance less everything
         // ever rendered against it — deliberately not scoped to this
@@ -1421,6 +1430,7 @@ function Reports() {
       (a, b) =>
         a.clientLabel.localeCompare(b.clientLabel) ||
         a.employeeName.localeCompare(b.employeeName) ||
+        a.task.localeCompare(b.task) ||
         b.billedHours - a.billedHours,
     );
   })();
@@ -1565,18 +1575,19 @@ function Reports() {
       // which has no cost, rate or margin field to leak — see its own
       // comment for why that is a projection rather than hidden columns.
       downloadCsv(`ironbrij-client-hours_${clientLabel}${tagLabel}_${from}_to_${to}.csv`, [
-        ["Name", "Client", "Task", "Hours", "Remaining Hours", "Date range"],
+        ["Name", "Client", "Task", "Description", "Hours", "Remaining Hours", "Date range"],
         ...clientFacingRows.map((r) => [
           r.employeeName,
           r.clientLabel,
           r.task,
+          r.description,
           r.billedHours.toFixed(2),
           // A client with no subscription allowance has no balance to
           // report, which is not the same as a balance of zero.
           r.remainingHours == null ? "No allowance set" : r.remainingHours.toFixed(2),
           `${from} to ${to}`,
         ]),
-        ["Total", "", "", clientFacingTotalHours.toFixed(2), "", `${from} to ${to}`],
+        ["Total", "", "", "", clientFacingTotalHours.toFixed(2), "", `${from} to ${to}`],
       ]);
     } else if (view === "profit") {
       downloadCsv(
@@ -2748,12 +2759,13 @@ function Reports() {
                 incomplete. Narrow the date range and try again.
               </p>
             )}
-            <table className="w-full min-w-[720px] text-sm">
+            <table className="w-full min-w-[900px] text-sm">
               <thead>
                 <tr className="border-b border-border text-xs uppercase tracking-wide text-muted-foreground">
                   <th className="px-5 py-3 text-left font-medium">Name</th>
                   <th className="px-5 py-3 text-left font-medium">Client</th>
                   <th className="px-5 py-3 text-left font-medium">Task</th>
+                  <th className="px-5 py-3 text-left font-medium">Description</th>
                   <th className="px-5 py-3 text-right font-medium">Hours</th>
                   <th className="px-5 py-3 text-right font-medium">Remaining Hours</th>
                 </tr>
@@ -2761,7 +2773,7 @@ function Reports() {
               <tbody>
                 {profitTruncated ? null : clientFacingRows.length === 0 ? (
                   <tr>
-                    <td colSpan={5} className="px-5 py-8 text-center text-sm text-muted-foreground">
+                    <td colSpan={6} className="px-5 py-8 text-center text-sm text-muted-foreground">
                       No client-facing work in this range.
                     </td>
                   </tr>
@@ -2771,6 +2783,9 @@ function Reports() {
                       <td className="px-5 py-3 font-medium">{r.employeeName}</td>
                       <td className="px-5 py-3">{r.clientLabel}</td>
                       <td className="px-5 py-3 text-muted-foreground">{r.task}</td>
+                      <td className="max-w-xs px-5 py-3 text-muted-foreground">
+                        {r.description || <span title="No description was entered">—</span>}
+                      </td>
                       <td className="px-5 py-3 text-right tabular-nums">
                         {formatHours(r.billedHours)}
                       </td>
@@ -2793,6 +2808,7 @@ function Reports() {
                 <tfoot>
                   <tr className="border-t-2 border-border bg-muted/50">
                     <td className="px-5 py-3 font-semibold">Total</td>
+                    <td className="px-5 py-3" />
                     <td className="px-5 py-3" />
                     <td className="px-5 py-3" />
                     <td className="px-5 py-3 text-right font-semibold tabular-nums">
