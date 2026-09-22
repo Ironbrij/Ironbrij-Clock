@@ -540,12 +540,20 @@ function Reports() {
   // already-loaded projects/members arrays rather than a DB join — same
   // pattern ApprovalEntries/projectById already use for the Approvals
   // expand-row.
+  // M51: the two billing settings always travel together — the uplift is
+  // meaningless without knowing what rounds it, and vice versa. Passing them
+  // as one object is what stops a call site applying one and not the other.
+  const billingOpts = {
+    incrementHours: settings.casualBillingIncrementHours,
+    upliftPct: settings.clientBillingUpliftPct,
+  };
+
   const detailedRows = (detailedEntries ?? []).map((e) => {
     const project = projects.find((p) => p.id === e.projectId);
     const member = members.find((m) => m.id === e.userId);
     return {
       ...e,
-      hours: e.minutes / 60,
+      hours: e.seconds / 3600,
       projectName: project?.name ?? "No project",
       projectColor: project?.color ?? "var(--muted-foreground)",
       // Team filter means "logged by that team's members," not "the
@@ -553,12 +561,13 @@ function Reports() {
       // team, so this is every team they're in, not a single value.
       employeeTeamIds: member?.teamIds ?? [],
       clientId: project?.clientId ?? null,
-      // Tags live on the project, not the entry — same join the Casual
-      // Service tab uses.
+      // M51: the entry's own tag_ids, matching what the tag filter now
+      // selects on — see joinAndFilterCasualEntries. Showing the project's
+      // current tags while filtering on the entry's historical ones would
+      // let a row display a tag it can't be filtered by, and vice versa.
       projectTags: tags
-        .filter((t) => project?.tagIds.includes(t.id))
+        .filter((t) => e.tagIds.includes(t.id))
         .sort((a, b) => a.name.localeCompare(b.name)),
-      projectTagIds: project?.tagIds ?? [],
       employeeName: member?.name ?? "Former member",
       employeeInitials: member?.initials ?? "—",
       employeeAvatarUrl: member?.avatarUrl ?? null,
@@ -574,7 +583,7 @@ function Reports() {
     })
     .filter((r) => projectFilter === "all" || r.projectId === projectFilter)
     .filter((r) => employeeFilter === "all" || r.userId === employeeFilter)
-    .filter((r) => detailedTagFilter === "all" || r.projectTagIds.includes(detailedTagFilter))
+    .filter((r) => detailedTagFilter === "all" || r.tagIds.includes(detailedTagFilter))
     .filter((r) => {
       const q = detailedSearch.trim().toLowerCase();
       if (!q) return true;
@@ -602,9 +611,13 @@ function Reports() {
           // Detailed tab's employeeTeamIds — not the entry's project's team.
           employeeTeamIds: member?.teamIds ?? [],
           clientId: project?.clientId ?? null,
-          // Tags live on the project, not the entry itself — see
-          // projects.tsx's own tagIds filter for the same join.
-          projectTagIds: project?.tagIds ?? [],
+          // M51: tags now come off the entry's own tag_ids, which are
+          // copied from the project when the entry is logged. That is what
+          // the product owner confirmed the filter should mean: how the
+          // work was tagged *at the time*, so retagging a project doesn't
+          // silently rewrite last quarter's report. An entry logged before
+          // a tag was added to its project therefore won't match it.
+          entryTagIds: e.tagIds,
         };
       })
       .filter((r) => r.serviceCategory !== null)
@@ -615,18 +628,14 @@ function Reports() {
         return r.clientId === clientFilter;
       })
       .filter((r) => casualCategoryFilter === "all" || r.serviceCategory === casualCategoryFilter)
-      .filter((r) => casualTagFilter === "all" || r.projectTagIds.includes(casualTagFilter));
+      .filter((r) => casualTagFilter === "all" || r.entryTagIds.includes(casualTagFilter));
   }
 
   const casualEntries = joinAndFilterCasualEntries(detailedEntries ?? []);
   const lastWeekCasualEntries = joinAndFilterCasualEntries(lastWeekDetailedEntries ?? []);
 
   const casualBillableTotal = (entries: typeof casualEntries) =>
-    entries.reduce(
-      (s, e) =>
-        s + billableHoursForCasualEntry(e, e.serviceCategory, settings.casualBillingIncrementHours),
-      0,
-    );
+    entries.reduce((s, e) => s + billableHoursForCasualEntry(e, e.serviceCategory, billingOpts), 0);
 
   // M46: KPI row — Active Clients/VAs always reflect the real distinct
   // count regardless of which Group by dimension is selected below (a
@@ -679,14 +688,10 @@ function Reports() {
         tagIds: new Set<string>(),
       };
       existing.entryCount += 1;
-      existing.rawHours += e.minutes / 60;
-      existing.billableHours += billableHoursForCasualEntry(
-        e,
-        category,
-        settings.casualBillingIncrementHours,
-      );
+      existing.rawHours += e.seconds / 3600;
+      existing.billableHours += billableHoursForCasualEntry(e, category, billingOpts);
       if (e.vaPaidAt) existing.paidCount += 1;
-      e.projectTagIds.forEach((id) => existing.tagIds.add(id));
+      e.entryTagIds.forEach((id) => existing.tagIds.add(id));
       groups.set(key, existing);
     }
     return Array.from(groups.values())
@@ -896,7 +901,7 @@ function Reports() {
     const money = grossProfitForEntry(e, {
       payRate,
       invoiceRate,
-      incrementHours: settings.casualBillingIncrementHours,
+      ...billingOpts,
       salaried,
     });
     return { ...e, ...money, payRate, invoiceRate };
@@ -907,16 +912,19 @@ function Reports() {
     groupKey: string;
     groupLabel: string;
     clientLabel: string;
-    hours: number;
+    /** M51: hours actually tracked — the basis for `cost`, and what the internal view shows. */
+    actualHours: number;
+    /** M51: hours invoiced — uplifted and rounded up. The basis for `revenue`. */
+    billedHours: number;
     cost: number;
     revenue: number;
     profit: number;
-    /** Hours that actually produced revenue — the denominator for a blended invoice rate. */
+    /** Billed hours that actually produced revenue — the denominator for a blended invoice rate. */
     ratedHours: number;
-    /** Chargeable hours with no invoice rate on file, so the row is knowingly incomplete. */
+    /** Chargeable billed hours with no invoice rate on file, so the row is knowingly incomplete. */
     unpricedHours: number;
     costKnown: boolean;
-    /** M50: hours worked by salaried staff, whose cost sits in the salary block rather than here. */
+    /** M50: actual hours worked by salaried staff, whose cost sits in the salary block rather than here. */
     salariedHours: number;
   };
 
@@ -954,7 +962,8 @@ function Reports() {
           groupKey: group.key,
           groupLabel: group.label,
           clientLabel,
-          hours: 0,
+          actualHours: 0,
+          billedHours: 0,
           cost: 0,
           revenue: 0,
           profit: 0,
@@ -963,7 +972,8 @@ function Reports() {
           costKnown: false,
           salariedHours: 0,
         };
-        row.hours += e.hours;
+        row.actualHours += e.actualHours;
+        row.billedHours += e.billedHours;
         row.cost += e.cost ?? 0;
         row.revenue += e.revenue ?? 0;
         row.profit += e.profit;
@@ -971,10 +981,15 @@ function Reports() {
         // costs 0 here by design, so counting it would render a real-looking
         // $0.00 where the honest answer is "charged in the salary block".
         if (e.costBasis === "hourly") row.costKnown = true;
-        if (e.costBasis === "salary") row.salariedHours += e.hours;
-        if (e.revenue !== null) row.ratedHours += e.hours;
+        // M51: salaried and unpriced hours describe what the *cost* side is
+        // missing, so they count actual hours — the figure that side is
+        // computed from. ratedHours/unpricedHours describe the revenue side
+        // and stay in billed hours, or a blended invoice rate divided by
+        // them would come out uplifted by 20%.
+        if (e.costBasis === "salary") row.salariedHours += e.actualHours;
+        if (e.revenue !== null) row.ratedHours += e.billedHours;
         else if (e.billable && e.serviceCategory !== "ironbrij" && e.clientId) {
-          row.unpricedHours += e.hours;
+          row.unpricedHours += e.billedHours;
         }
         map.set(key, row);
       }
@@ -986,7 +1001,8 @@ function Reports() {
     key: string;
     label: string;
     rows: ProfitRow[];
-    hours: number;
+    actualHours: number;
+    billedHours: number;
     cost: number;
     revenue: number;
     profit: number;
@@ -1003,7 +1019,8 @@ function Reports() {
         key: row.groupKey,
         label: row.groupLabel,
         rows: [],
-        hours: 0,
+        actualHours: 0,
+        billedHours: 0,
         cost: 0,
         revenue: 0,
         profit: 0,
@@ -1013,7 +1030,8 @@ function Reports() {
         salariedHours: 0,
       };
       group.rows.push(row);
-      group.hours += row.hours;
+      group.actualHours += row.actualHours;
+      group.billedHours += row.billedHours;
       group.cost += row.cost;
       group.revenue += row.revenue;
       group.profit += row.profit;
@@ -1024,23 +1042,26 @@ function Reports() {
       map.set(row.groupKey, group);
     }
     for (const group of map.values()) {
-      group.rows.sort((a, b) => b.profit - a.profit || b.hours - a.hours);
+      group.rows.sort((a, b) => b.profit - a.profit || b.actualHours - a.actualHours);
     }
     // Most profitable first — "where is the margin coming from" is the
     // question this tab gets opened for.
-    return Array.from(map.values()).sort((a, b) => b.profit - a.profit || b.hours - a.hours);
+    return Array.from(map.values()).sort(
+      (a, b) => b.profit - a.profit || b.actualHours - a.actualHours,
+    );
   })();
 
   // Straight from the entries, so a VA counted under two teams above still
   // only contributes once here.
   const profitGrandTotals = pricedProfitEntries.reduce(
     (acc, e) => ({
-      hours: acc.hours + e.hours,
+      actualHours: acc.actualHours + e.actualHours,
+      billedHours: acc.billedHours + e.billedHours,
       cost: acc.cost + (e.cost ?? 0),
       revenue: acc.revenue + (e.revenue ?? 0),
       profit: acc.profit + e.profit,
     }),
-    { hours: 0, cost: 0, revenue: 0, profit: 0 },
+    { actualHours: 0, billedHours: 0, cost: 0, revenue: 0, profit: 0 },
   );
 
   // M49: the retainer half of profitability. Monthly placements have no
@@ -1186,7 +1207,7 @@ function Reports() {
         : view === "casual"
           ? casualTotalBillableHours
           : view === "profit"
-            ? profitGrandTotals.hours
+            ? profitGrandTotals.actualHours
             : filteredDetailed.reduce((s, r) => s + r.hours, 0);
   // H17: only meaningful on the employee view — a project or a raw entry
   // list has no single per-row rate to sum against.
@@ -1265,9 +1286,14 @@ function Reports() {
         [
           profitGroupByLabels[profitGroupBy],
           "Client",
-          "Hours",
+          // M51: both hour figures, side by side and labelled, because the
+          // whole margin story is the difference between them. A single
+          // "Hours" column would leave a reader unable to tell whether the
+          // wages or the invoice had been computed from it.
+          "Actual Hours",
+          "Billed Hours",
           `Pay Rate (${settings.currency})`,
-          `Cost (${settings.currency})`,
+          `Actual Wages (${settings.currency})`,
           `Invoice Rate (${settings.currency})`,
           `Revenue (${settings.currency})`,
           `Gross Profit (${settings.currency})`,
@@ -1281,9 +1307,13 @@ function Reports() {
           ...g.rows.map((r) => [
             g.label,
             r.clientLabel,
-            r.hours.toFixed(2),
-            r.costKnown && r.hours > 0
-              ? (r.cost / r.hours).toFixed(2)
+            r.actualHours.toFixed(2),
+            r.billedHours.toFixed(2),
+            // The blended pay rate divides cost by actual hours, since that
+            // is what cost was computed from. Dividing by billed hours here
+            // would print a rate 20% below what the VA is really paid.
+            r.costKnown && r.actualHours > 0
+              ? (r.cost / r.actualHours).toFixed(2)
               : r.salariedHours > 0
                 ? "Salary"
                 : "No rate set",
@@ -1298,7 +1328,8 @@ function Reports() {
           [
             `${g.label} — total`,
             "",
-            g.hours.toFixed(2),
+            g.actualHours.toFixed(2),
+            g.billedHours.toFixed(2),
             "",
             g.costKnown ? g.cost.toFixed(2) : g.salariedHours > 0 ? "Salary" : "No rate set",
             "",
@@ -1412,7 +1443,7 @@ function Reports() {
             "Tags",
             "Entries",
             "Raw Hours",
-            "Billable Hours (rounded)",
+            "Billable Hours (uplifted & rounded)",
             "Paid",
             "Unpaid",
             "Date range",
@@ -2157,10 +2188,14 @@ function Reports() {
             <CardHeader>
               <CardTitle className="text-base">Casual Service · {rangeLabel}</CardTitle>
               <p className="text-xs text-muted-foreground">
-                Ad-hoc work billed outside the standard subscription retainer. "Billable Hours" is
-                rounded up to the workspace's casual-billing increment for every category except
-                Ironbrij (internal, never billed) — raw tracked hours are shown alongside for
-                reference and are never overwritten.
+                Ad-hoc work billed outside the standard subscription retainer. "Billable Hours" adds
+                the workspace's client billing uplift
+                {settings.clientBillingUpliftPct > 0
+                  ? ` (${settings.clientBillingUpliftPct}%)`
+                  : ""}{" "}
+                and then rounds up to the billing increment, for every category except Ironbrij
+                (internal, never billed) — raw tracked hours are shown alongside for reference and
+                are never overwritten.
               </p>
             </CardHeader>
             <CardContent className="overflow-x-auto p-0">
@@ -2332,9 +2367,15 @@ function Reports() {
                       {profitGroupByLabels[profitGroupBy]}
                     </th>
                     <th className="px-5 py-3 text-left font-medium">Client</th>
-                    <th className="px-5 py-3 text-right font-medium">Hours</th>
+                    {/* M51: "Actual" and "Billed" rather than one "Hours"
+                        column — the gap between them is the uplift, and
+                        which one a money column was computed from is the
+                        difference between a correct figure and a 20%
+                        error. */}
+                    <th className="px-5 py-3 text-right font-medium">Actual Hours</th>
+                    <th className="px-5 py-3 text-right font-medium">Billed Hours</th>
                     <th className="px-5 py-3 text-right font-medium">Pay Rate</th>
-                    <th className="px-5 py-3 text-right font-medium">Cost</th>
+                    <th className="px-5 py-3 text-right font-medium">Actual Wages</th>
                     <th className="px-5 py-3 text-right font-medium">Invoice Rate</th>
                     <th className="px-5 py-3 text-right font-medium">Revenue</th>
                     <th className="px-5 py-3 text-right font-medium">Gross Profit</th>
@@ -2345,7 +2386,7 @@ function Reports() {
                   {profitTruncated ? null : profitGroups.length === 0 ? (
                     <tr>
                       <td
-                        colSpan={9}
+                        colSpan={10}
                         className="px-5 py-8 text-center text-sm text-muted-foreground"
                       >
                         No tracked hours in this range.
@@ -2364,7 +2405,10 @@ function Reports() {
                               {single ? g.rows[0].clientLabel : `${g.rows.length} clients`}
                             </td>
                             <td className="px-5 py-3 text-right tabular-nums">
-                              {formatHours(g.hours)}
+                              {formatHours(g.actualHours)}
+                            </td>
+                            <td className="px-5 py-3 text-right tabular-nums">
+                              {formatHours(g.billedHours)}
                             </td>
                             <td className="px-5 py-3" />
                             <td className="px-5 py-3 text-right tabular-nums text-muted-foreground">
@@ -2394,11 +2438,18 @@ function Reports() {
                                 <td className="px-5 py-3" />
                                 <td className="py-3 pl-9 pr-5">{r.clientLabel}</td>
                                 <td className="px-5 py-3 text-right tabular-nums">
-                                  {formatHours(r.hours)}
+                                  {formatHours(r.actualHours)}
+                                </td>
+                                <td className="px-5 py-3 text-right tabular-nums">
+                                  {formatHours(r.billedHours)}
                                 </td>
                                 <td className="px-5 py-3 text-right tabular-nums text-muted-foreground">
-                                  {r.costKnown && r.hours > 0
-                                    ? formatCurrency(r.cost / r.hours, settings.currency)
+                                  {/* Divided by actual hours, matching what
+                                      cost is computed from — billed hours
+                                      here would understate the rate by the
+                                      uplift. */}
+                                  {r.costKnown && r.actualHours > 0
+                                    ? formatCurrency(r.cost / r.actualHours, settings.currency)
                                     : "—"}
                                 </td>
                                 <td className="px-5 py-3 text-right tabular-nums">
@@ -2437,7 +2488,10 @@ function Reports() {
                       <td className="px-5 py-3 font-semibold">Total</td>
                       <td className="px-5 py-3" />
                       <td className="px-5 py-3 text-right font-semibold tabular-nums">
-                        {formatHours(profitGrandTotals.hours)}
+                        {formatHours(profitGrandTotals.actualHours)}
+                      </td>
+                      <td className="px-5 py-3 text-right font-semibold tabular-nums">
+                        {formatHours(profitGrandTotals.billedHours)}
                       </td>
                       <td className="px-5 py-3" />
                       <td className="px-5 py-3 text-right font-semibold tabular-nums">

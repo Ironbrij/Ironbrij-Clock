@@ -2,6 +2,11 @@
 // easy to silently break — which rate wins when several apply, and which
 // hours each side of the margin is computed on. Same scoped pure-function
 // reasoning casual-billing.test.ts and time-utils.test.ts already give.
+//
+// M51: the second of those rules changed. Cost is now computed on actual
+// tracked hours while revenue is computed on uplifted, rounded hours, so
+// the "same hours both sides" assertions below became "different hours,
+// and here is exactly which".
 import { describe, expect, it } from "vitest";
 import { grossProfitForEntry, resolveInvoiceRate, type BillingRate } from "./gross-profit";
 
@@ -77,82 +82,86 @@ describe("resolveInvoiceRate", () => {
 });
 
 const entry = (over: Partial<Parameters<typeof grossProfitForEntry>[0]>) => ({
-  minutes: 60,
+  seconds: 3600,
   billable: true,
   serviceCategory: null,
   ...over,
 });
 
+/** The workspace defaults: 20% client uplift, rounded up to 0.25h. */
+const opts = (over: Partial<Parameters<typeof grossProfitForEntry>[1]> = {}) => ({
+  payRate: 6,
+  invoiceRate: 18,
+  incrementHours: 0.25,
+  upliftPct: 20,
+  salaried: false,
+  ...over,
+});
+
+const hours = (h: number) => h * 3600;
+
 describe("grossProfitForEntry", () => {
-  it("computes cost, revenue and profit from the same rounded hours", () => {
-    // 100 minutes = 1.6667h -> 1.75h at a 0.25h increment. Both sides use 1.75.
-    const result = grossProfitForEntry(entry({ minutes: 100, serviceCategory: "paid_casual" }), {
-      payRate: 6,
-      invoiceRate: 18,
-      incrementHours: 0.25,
-      salaried: false,
-    });
-    expect(result.hours).toBeCloseTo(1.75);
-    expect(result.cost).toBeCloseTo(10.5);
-    expect(result.revenue).toBeCloseTo(31.5);
-    expect(result.profit).toBeCloseTo(21);
-  });
-
-  it("reproduces a real line from the CS Profit sheet", () => {
-    // Jose -> Carol Stimpson, week of Sep 7 2026: 19.25h at $6.00 paid and
-    // $18.68 invoiced. Hours are already an exact increment multiple here.
+  it("costs actual hours and invoices uplifted, rounded hours (M51)", () => {
+    // 6.10h actual. Uplifted 7.32h, rounded up to 7.50h billed.
+    // Cost 6.10 x $6 = $36.60. Revenue 7.50 x $18 = $135.00.
     const result = grossProfitForEntry(
-      entry({ minutes: 19.25 * 60, serviceCategory: "paid_casual" }),
-      { payRate: 6, invoiceRate: 18.68, incrementHours: 0.25, salaried: false },
+      entry({ seconds: hours(6.1), serviceCategory: "paid_casual" }),
+      opts(),
     );
-    expect(result.cost).toBeCloseTo(115.5);
-    expect(result.revenue).toBeCloseTo(359.59);
-    expect(result.profit).toBeCloseTo(244.09);
+    expect(result.actualHours).toBeCloseTo(6.1);
+    expect(result.billedHours).toBeCloseTo(7.5);
+    expect(result.cost).toBeCloseTo(36.6);
+    expect(result.revenue).toBeCloseTo(135);
+    expect(result.profit).toBeCloseTo(98.4);
   });
 
-  it("leaves a non-casual entry's hours unrounded", () => {
-    const result = grossProfitForEntry(entry({ minutes: 100 }), {
-      payRate: 6,
-      invoiceRate: 18,
-      incrementHours: 0.25,
-      salaried: false,
-    });
-    expect(result.hours).toBeCloseTo(100 / 60);
+  it("puts the whole uplift into the margin, not into cost", () => {
+    // The gap between the two hour figures is exactly what M51 exists to
+    // create — it must never leak back into what the VA is paid.
+    const withUplift = grossProfitForEntry(
+      entry({ seconds: hours(4), serviceCategory: "paid_casual" }),
+      opts(),
+    );
+    const withoutUplift = grossProfitForEntry(
+      entry({ seconds: hours(4), serviceCategory: "paid_casual" }),
+      opts({ upliftPct: 0 }),
+    );
+    expect(withUplift.cost).toBeCloseTo(withoutUplift.cost!);
+    expect(withUplift.revenue).toBeGreaterThan(withoutUplift.revenue!);
+  });
+
+  it("leaves non-casual work billed at exactly its actual hours", () => {
+    // M51's scope was confirmed as the three casual categories only, so
+    // regular client work must show identical figures on both sides.
+    const result = grossProfitForEntry(entry({ seconds: hours(1.7) }), opts());
+    expect(result.actualHours).toBeCloseTo(1.7);
+    expect(result.billedHours).toBeCloseTo(1.7);
+    expect(result.cost).toBeCloseTo(10.2);
+    expect(result.revenue).toBeCloseTo(30.6);
   });
 
   it("counts 'ironbrij' work as cost-only with zero profit", () => {
     // Internal work is tracked but never charged, so it carries wages and
     // no revenue — it must still appear, or the wage total stops tying out.
-    const result = grossProfitForEntry(entry({ minutes: 120, serviceCategory: "ironbrij" }), {
-      payRate: 6,
-      invoiceRate: 18,
-      incrementHours: 0.25,
-      salaried: false,
-    });
+    const result = grossProfitForEntry(
+      entry({ seconds: hours(2), serviceCategory: "ironbrij" }),
+      opts(),
+    );
+    expect(result.billedHours).toBeCloseTo(2);
     expect(result.cost).toBeCloseTo(12);
     expect(result.revenue).toBeNull();
     expect(result.profit).toBe(0);
   });
 
   it("counts a non-billable entry as cost-only with zero profit", () => {
-    const result = grossProfitForEntry(entry({ minutes: 120, billable: false }), {
-      payRate: 6,
-      invoiceRate: 18,
-      incrementHours: 0.25,
-      salaried: false,
-    });
+    const result = grossProfitForEntry(entry({ seconds: hours(2), billable: false }), opts());
     expect(result.cost).toBeCloseTo(12);
     expect(result.revenue).toBeNull();
     expect(result.profit).toBe(0);
   });
 
   it("counts an unpriced client as cost-only with zero profit", () => {
-    const result = grossProfitForEntry(entry({ minutes: 120 }), {
-      payRate: 6,
-      invoiceRate: null,
-      incrementHours: 0.25,
-      salaried: false,
-    });
+    const result = grossProfitForEntry(entry({ seconds: hours(2) }), opts({ invoiceRate: null }));
     expect(result.cost).toBeCloseTo(12);
     expect(result.revenue).toBeNull();
     expect(result.profit).toBe(0);
@@ -161,60 +170,53 @@ describe("grossProfitForEntry", () => {
   it("reports revenue with a null cost when the VA has no pay rate set", () => {
     // Distinct from a zero rate: nobody has entered one, so the margin is
     // revenue against an unknown cost rather than against nothing.
-    const result = grossProfitForEntry(entry({ minutes: 120 }), {
-      payRate: null,
-      invoiceRate: 18,
-      incrementHours: 0.25,
-      salaried: false,
-    });
+    const result = grossProfitForEntry(entry({ seconds: hours(2) }), opts({ payRate: null }));
     expect(result.cost).toBeNull();
     expect(result.revenue).toBeCloseTo(36);
     expect(result.profit).toBeCloseTo(36);
   });
 
-  it("handles a zero-minute entry", () => {
-    const result = grossProfitForEntry(entry({ minutes: 0 }), {
-      payRate: 6,
-      invoiceRate: 18,
-      incrementHours: 0.25,
-      salaried: false,
-    });
-    expect(result.hours).toBe(0);
+  it("handles a zero-length entry", () => {
+    const result = grossProfitForEntry(entry({ seconds: 0 }), opts());
+    expect(result.actualHours).toBe(0);
+    expect(result.billedHours).toBe(0);
     expect(result.cost).toBe(0);
     expect(result.revenue).toBe(0);
     expect(result.profit).toBe(0);
   });
 
+  it("prices a sub-minute casual entry that M51 stopped rounding to a minute", () => {
+    // 20 seconds actual. Cost is a rounding error; revenue is a full
+    // increment, because that is the smallest unit the client is charged.
+    const result = grossProfitForEntry(
+      entry({ seconds: 20, serviceCategory: "paid_casual" }),
+      opts(),
+    );
+    expect(result.actualHours).toBeCloseTo(20 / 3600);
+    expect(result.billedHours).toBeCloseTo(0.25);
+    expect(result.revenue).toBeCloseTo(4.5);
+  });
+
   it("costs a salaried member's hours at zero, so payroll isn't charged twice", () => {
     // Their real cost is the fixed weekly figure the report's salary block
     // charges once per week; billing it per entry as well would double-count.
-    const result = grossProfitForEntry(entry({ minutes: 120, serviceCategory: "paid_casual" }), {
-      payRate: 6,
-      invoiceRate: 18,
-      incrementHours: 0.25,
-      salaried: true,
-    });
+    const result = grossProfitForEntry(
+      entry({ seconds: hours(2), serviceCategory: "paid_casual" }),
+      opts({ salaried: true }),
+    );
     expect(result.cost).toBe(0);
     expect(result.costBasis).toBe("salary");
-    expect(result.revenue).toBeCloseTo(36);
-    expect(result.profit).toBeCloseTo(36);
+    // Still invoiced on the uplifted hours — 2h -> 2.4h -> 2.5h.
+    expect(result.billedHours).toBeCloseTo(2.5);
+    expect(result.revenue).toBeCloseTo(45);
+    expect(result.profit).toBeCloseTo(45);
   });
 
   it("distinguishes a salaried member from one with no rate on file", () => {
     // Both leave the hourly cost column empty, but one is accounted for
     // elsewhere and the other is missing data.
-    const salaried = grossProfitForEntry(entry({ minutes: 60 }), {
-      payRate: null,
-      invoiceRate: 18,
-      incrementHours: 0.25,
-      salaried: true,
-    });
-    const unpriced = grossProfitForEntry(entry({ minutes: 60 }), {
-      payRate: null,
-      invoiceRate: 18,
-      incrementHours: 0.25,
-      salaried: false,
-    });
+    const salaried = grossProfitForEntry(entry({}), opts({ payRate: null, salaried: true }));
+    const unpriced = grossProfitForEntry(entry({}), opts({ payRate: null }));
     expect(salaried.costBasis).toBe("salary");
     expect(salaried.cost).toBe(0);
     expect(unpriced.costBasis).toBe("unpriced");
