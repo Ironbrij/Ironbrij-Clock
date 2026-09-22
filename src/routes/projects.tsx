@@ -58,7 +58,7 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { formatHours, formatMinutes } from "@/lib/mock-data";
+import { formatDuration, formatHours } from "@/lib/mock-data";
 import { formatDayLong, fromDateKey } from "@/lib/time-utils";
 import {
   dotColors,
@@ -1884,7 +1884,7 @@ function TagEntriesDialog({
                     </p>
                   </div>
                   <span className="shrink-0 text-sm font-medium tabular-nums">
-                    {formatMinutes(e.minutes)}
+                    {formatDuration(e.seconds)}
                   </span>
                 </li>
               );

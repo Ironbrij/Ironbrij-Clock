@@ -84,7 +84,7 @@ export function useTimesheetsData(enabled: boolean, uid: string | null, canManag
       const { data, error } = await supabase
         .from("time_entries")
         .select(
-          "id, user_id, project_id, task, description, entry_date, start_time, duration_minutes",
+          "id, user_id, project_id, task, description, entry_date, start_time, duration_seconds, duration_minutes",
         )
         .in("user_id", userIds)
         .gte("entry_date", earliest);
@@ -133,11 +133,14 @@ export function useTimesheetsData(enabled: boolean, uid: string | null, canManag
         // means the Approvals queue never even offers the button.
         .filter((t) => t.status === "Submitted" && t.userId !== uid)
         .map((t) => {
-          const minutes = rowsForTimesheet(t).reduce(
-            (sum, r) => sum + (r.duration_minutes ?? 0),
+          // M51: summed in seconds, so a week of short entries presents the
+          // reviewer with the hours actually worked rather than a total
+          // inflated by each entry's own round-up.
+          const seconds = rowsForTimesheet(t).reduce(
+            (sum, r) => sum + (r.duration_seconds ?? (r.duration_minutes ?? 0) * 60),
             0,
           );
-          return { ...t, minutes };
+          return { ...t, seconds };
         }),
     [timesheets, uid, rowsForTimesheet],
   );
@@ -151,7 +154,7 @@ export function useTimesheetsData(enabled: boolean, uid: string | null, canManag
           projectId: r.project_id,
           task: r.task ?? "",
           description: r.description,
-          minutes: r.duration_minutes ?? 0,
+          seconds: r.duration_seconds ?? (r.duration_minutes ?? 0) * 60,
           startTime: r.start_time,
         }))
         .sort((a, b) => a.startTime.localeCompare(b.startTime)),

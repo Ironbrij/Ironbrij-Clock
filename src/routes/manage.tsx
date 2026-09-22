@@ -60,7 +60,7 @@ import {
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
-import { formatHours, formatMinutes } from "@/lib/mock-data";
+import { formatDuration, formatHours } from "@/lib/mock-data";
 import {
   addDays,
   convertTimeRange,
@@ -563,7 +563,7 @@ function ApprovalsPanel() {
   const allSelected =
     pendingApprovals.length > 0 && pendingApprovals.every((a) => selectedIds.has(a.id));
   const selectedApprovals = pendingApprovals.filter((a) => selectedIds.has(a.id));
-  const selectedTotalMinutes = selectedApprovals.reduce((sum, a) => sum + a.minutes, 0);
+  const selectedTotalSeconds = selectedApprovals.reduce((sum, a) => sum + a.seconds, 0);
 
   return (
     <div className="mt-4">
@@ -624,7 +624,7 @@ function ApprovalsPanel() {
                           onClick={() => setExpandedId(expanded ? null : a.id)}
                         >
                           {formatWeekRange(fromDateKey(a.weekStart))} ·{" "}
-                          {formatHours(a.minutes / 60)} logged
+                          {formatHours(a.seconds / 3600)} logged
                           <ChevronDown
                             className={
                               "h-3 w-3 transition-transform " + (expanded ? "rotate-180" : "")
@@ -679,7 +679,7 @@ function ApprovalsPanel() {
               {approving
                 ? `${memberById(approving.userId)?.name ?? "This person"}'s week of ${formatWeekRange(
                     fromDateKey(approving.weekStart),
-                  )} (${formatHours(approving.minutes / 60)}) will be locked for editing. This can't be undone — there's no way to un-approve a timesheet once it's approved.`
+                  )} (${formatHours(approving.seconds / 3600)}) will be locked for editing. This can't be undone — there's no way to un-approve a timesheet once it's approved.`
                 : ""}
             </AlertDialogDescription>
           </AlertDialogHeader>
@@ -699,7 +699,7 @@ function ApprovalsPanel() {
             <AlertDialogDescription asChild>
               <div className="space-y-2">
                 <p>
-                  {formatHours(selectedTotalMinutes / 60)} total will be locked for editing. This
+                  {formatHours(selectedTotalSeconds / 3600)} total will be locked for editing. This
                   can't be undone for any of them — there's no way to un-approve a timesheet once
                   it's approved.
                 </p>
@@ -710,7 +710,7 @@ function ApprovalsPanel() {
                         {memberById(a.userId)?.name ?? "Unknown"} ·{" "}
                         {formatWeekRange(fromDateKey(a.weekStart))}
                       </span>
-                      <span className="shrink-0 tabular-nums">{formatHours(a.minutes / 60)}</span>
+                      <span className="shrink-0 tabular-nums">{formatHours(a.seconds / 3600)}</span>
                     </li>
                   ))}
                 </ul>
@@ -757,7 +757,7 @@ function ApprovalEntries({ approval }: { approval: PendingApproval }) {
               </p>
             </div>
             <span className="shrink-0 tabular-nums text-xs font-medium">
-              {formatMinutes(e.minutes)}
+              {formatDuration(e.seconds)}
             </span>
           </li>
         );
@@ -1662,7 +1662,7 @@ function TeamEntriesTab({
     );
   }
 
-  const weekTotal = entries.reduce((s, e) => s + e.minutes, 0) / 60;
+  const weekTotal = entries.reduce((s, e) => s + e.seconds, 0) / 3600;
 
   return (
     <div className="mt-4 grid gap-4">
@@ -1758,7 +1758,7 @@ function TeamEntriesTab({
                     </div>
                     <div className="flex shrink-0 items-center gap-1">
                       <span className="tabular-nums text-sm font-medium">
-                        {entry.running ? "running" : formatMinutes(entry.minutes)}
+                        {entry.running ? "running" : formatDuration(entry.seconds)}
                       </span>
                       {locked ? (
                         <span
@@ -1821,8 +1821,8 @@ function TeamEntriesTab({
             <AlertDialogTitle>Delete this entry?</AlertDialogTitle>
             <AlertDialogDescription>
               {deletingEntry
-                ? `"${deletingEntry.description || "No description"}" — ${formatMinutes(
-                    deletingEntry.minutes,
+                ? `"${deletingEntry.description || "No description"}" — ${formatDuration(
+                    deletingEntry.seconds,
                   )} on ${formatDayLong(fromDateKey(deletingEntry.date))}. This can't be undone.`
                 : ""}
             </AlertDialogDescription>

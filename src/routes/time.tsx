@@ -40,7 +40,7 @@ import { DescriptionAutocomplete } from "@/components/description-autocomplete";
 import { EntryFormDialog } from "@/components/entry-form-dialog";
 import { TimesheetGrid } from "@/components/timesheet-grid";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { formatHours, formatMinutes } from "@/lib/mock-data";
+import { formatDuration, formatHours } from "@/lib/mock-data";
 import {
   addDays,
   formatClock,
@@ -516,7 +516,7 @@ function EntryList({ entries }: { entries: WorkspaceEntry[] }) {
               </div>
               <div className="flex shrink-0 items-center gap-1">
                 <span className="tabular-nums text-sm font-medium">
-                  {entry.running ? "running" : formatMinutes(entry.minutes)}
+                  {entry.running ? "running" : formatDuration(entry.seconds)}
                 </span>
                 {locked ? (
                   <span
@@ -586,8 +586,8 @@ function EntryList({ entries }: { entries: WorkspaceEntry[] }) {
             <AlertDialogTitle>Delete this entry?</AlertDialogTitle>
             <AlertDialogDescription>
               {deletingEntry
-                ? `"${deletingEntry.description || "No description"}" — ${formatMinutes(
-                    deletingEntry.minutes,
+                ? `"${deletingEntry.description || "No description"}" — ${formatDuration(
+                    deletingEntry.seconds,
                   )} on ${formatDayLong(fromDateKey(deletingEntry.date))}. This can't be undone.`
                 : ""}
             </AlertDialogDescription>
@@ -623,7 +623,7 @@ function ListView() {
               <div className="flex items-center gap-3">
                 {index === 0 && <CopyYesterdayButton />}
                 <span className="text-sm text-muted-foreground tabular-nums">
-                  {formatMinutes(dayEntries.reduce((s, e) => s + e.minutes, 0))}
+                  {formatDuration(dayEntries.reduce((s, e) => s + e.seconds, 0))}
                 </span>
               </div>
             </CardHeader>
@@ -735,7 +735,7 @@ function CopyYesterdayButton() {
                         {projectById(e.projectId)?.name ?? "No project"} ·{" "}
                         {e.description || "No description"}
                       </span>
-                      <span className="shrink-0 tabular-nums">{formatMinutes(e.minutes)}</span>
+                      <span className="shrink-0 tabular-nums">{formatDuration(e.seconds)}</span>
                     </li>
                   ))}
                 </ul>
@@ -887,7 +887,7 @@ function CalendarView() {
                 if (!date) return <div key={`blank-${i}`} className="min-h-24" />;
                 const key = toDateKey(date);
                 const dayEntries = entries.filter((e) => e.date === key);
-                const totalHours = dayEntries.reduce((s, e) => s + e.minutes, 0) / 60;
+                const totalHours = dayEntries.reduce((s, e) => s + e.seconds, 0) / 3600;
                 return (
                   <div
                     key={key}
@@ -921,7 +921,7 @@ function CalendarView() {
                           <span className="truncate">
                             {mode === "month"
                               ? (p?.name ?? "No project")
-                              : `${e.description || p?.name} · ${formatMinutes(e.minutes)}`}
+                              : `${e.description || p?.name} · ${formatDuration(e.seconds)}`}
                           </span>
                         </div>
                       );

@@ -593,6 +593,7 @@ export type Database = {
           created_at: string;
           description: string;
           duration_minutes: number | null;
+          duration_seconds: number | null;
           end_time: string | null;
           entry_date: string;
           id: string;
@@ -609,6 +610,7 @@ export type Database = {
           created_at?: string;
           description?: string;
           duration_minutes?: number | null;
+          duration_seconds?: number | null;
           end_time?: string | null;
           entry_date?: string;
           id?: string;
@@ -625,6 +627,7 @@ export type Database = {
           created_at?: string;
           description?: string;
           duration_minutes?: number | null;
+          duration_seconds?: number | null;
           end_time?: string | null;
           entry_date?: string;
           id?: string;

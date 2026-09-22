@@ -5,7 +5,7 @@ import { AppShell, ProjectDot } from "@/components/app-shell";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { formatHours, formatMinutes } from "@/lib/mock-data";
+import { formatDuration, formatHours } from "@/lib/mock-data";
 import {
   addDays,
   formatDayLong,
@@ -113,20 +113,21 @@ function Dashboard() {
 
   const todayKey = toDateKey(new Date());
   const todayEntries = entries.filter((e) => e.date === todayKey);
-  const todayMinutes = todayEntries.reduce((sum, e) => sum + e.minutes, 0);
+  const todaySeconds = todayEntries.reduce((sum, e) => sum + e.seconds, 0);
 
   const dayKeys = weekdayNames.map((_, i) => toDateKey(addDays(weekStart, i)));
   const weekEntries = entries.filter((e) => dayKeys.includes(e.date));
   const dayTotals = dayKeys.map(
-    (key) => weekEntries.filter((e) => e.date === key).reduce((sum, e) => sum + e.minutes, 0) / 60,
+    (key) =>
+      weekEntries.filter((e) => e.date === key).reduce((sum, e) => sum + e.seconds, 0) / 3600,
   );
   const weekTotal = dayTotals.reduce((a, b) => a + b, 0);
   const maxDay = Math.max(...dayTotals, 0);
-  const weekMinutes = weekEntries.reduce((s, e) => s + e.minutes, 0);
-  const billableMinutes = weekEntries
+  const weekSeconds = weekEntries.reduce((s, e) => s + e.seconds, 0);
+  const billableSeconds = weekEntries
     .filter((e) => projects.find((p) => p.id === e.projectId)?.billable)
-    .reduce((s, e) => s + e.minutes, 0);
-  const billableShare = weekMinutes ? Math.round((billableMinutes / weekMinutes) * 100) : 0;
+    .reduce((s, e) => s + e.seconds, 0);
+  const billableShare = weekSeconds ? Math.round((billableSeconds / weekSeconds) * 100) : 0;
 
   // M30, narrow version: a daily "nothing logged today" check would false-
   // positive on every weekend/holiday/day off, since there's no real leave
@@ -144,7 +145,7 @@ function Dashboard() {
     .map((p) => ({
       ...p,
       myWeekHours:
-        weekEntries.filter((e) => e.projectId === p.id).reduce((s, e) => s + e.minutes, 0) / 60,
+        weekEntries.filter((e) => e.projectId === p.id).reduce((s, e) => s + e.seconds, 0) / 3600,
     }))
     .filter((p) => p.myWeekHours > 0)
     .sort((a, b) => b.myWeekHours - a.myWeekHours)
@@ -159,7 +160,7 @@ function Dashboard() {
   const lastWeekStart = addDays(weekStart, -7);
   const lastWeekKeys = weekdayNames.map((_, i) => toDateKey(addDays(lastWeekStart, i)));
   const lastWeekEntries = entries.filter((e) => lastWeekKeys.includes(e.date));
-  const lastWeekMinutes = lastWeekEntries.reduce((s, e) => s + e.minutes, 0);
+  const lastWeekSeconds = lastWeekEntries.reduce((s, e) => s + e.seconds, 0);
   const lastWeekProjectCount = new Set(
     lastWeekEntries.map((e) => e.projectId).filter((id): id is string => !!id),
   ).size;
@@ -311,7 +312,7 @@ function Dashboard() {
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard
           label="Tracked today"
-          value={formatMinutes(todayMinutes)}
+          value={formatDuration(todaySeconds)}
           hint={`Goal ${formatHours(dailyGoal)} · ${todayEntries.length} entries`}
         />
         <StatCard
@@ -395,7 +396,7 @@ function Dashboard() {
                 Last week · {formatWeekRange(lastWeekStart)}
               </p>
               <p className="text-sm font-medium">
-                {formatHours(lastWeekMinutes / 60)} across {lastWeekProjectCount}{" "}
+                {formatHours(lastWeekSeconds / 3600)} across {lastWeekProjectCount}{" "}
                 {lastWeekProjectCount === 1 ? "project" : "projects"}
               </p>
             </div>

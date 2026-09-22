@@ -247,7 +247,7 @@ type WorkspaceContextValue = {
       projectId: string | null;
       description: string;
       date: string;
-      minutes: number;
+      seconds: number;
     }[]
   >;
   /** H16: every entry in a date range that time_entries' own RLS lets the viewer see — backs the Reports page's Detailed tab. */

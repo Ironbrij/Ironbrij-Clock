@@ -170,6 +170,8 @@ export type WorkspaceEntry = {
   task: string;
   description: string;
   minutes: number;
+  /** M51: the real tracked duration. `minutes` is this rounded, kept for callers that still work in whole minutes — prefer this one for anything that displays or prices the entry. */
+  seconds: number;
   startTime: string;
   endTime: string | null;
   date: string;
@@ -196,7 +198,7 @@ export type WorkspaceTimesheet = {
 };
 
 /** A submitted timesheet plus the hours it covers, for a manager/admin's review queue. */
-export type PendingApproval = WorkspaceTimesheet & { minutes: number };
+export type PendingApproval = WorkspaceTimesheet & { seconds: number };
 
 /** One line item behind a PendingApproval's total — lets a reviewer see what they're actually approving instead of just a sum. */
 export type PendingApprovalEntry = {
@@ -204,7 +206,7 @@ export type PendingApprovalEntry = {
   projectId: string | null;
   task: string;
   description: string;
-  minutes: number;
+  seconds: number;
   startTime: string;
 };
 
@@ -217,8 +219,12 @@ export type DetailedEntry = {
   description: string;
   date: string;
   minutes: number;
+  /** M51: see WorkspaceEntry.seconds. This is the figure the Gross Profit tab prices — rounding to the minute first is what M51 set out to stop. */
+  seconds: number;
   billable: boolean;
   startTime: string;
+  /** M51 (W6): tags copied onto the entry when it was logged, per `time_entries.tag_ids`. */
+  tagIds: string[];
   /** M46: null means not a Casual Service Monitoring entry at all. */
   serviceCategory: CasualServiceCategory | null;
   /** M46: accounts-team-set date the VA was paid for this line — null until then. */

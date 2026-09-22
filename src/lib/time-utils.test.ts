@@ -104,6 +104,23 @@ describe("splitByDay", () => {
     expect(splitByDay(t, t)).toHaveLength(0);
     expect(splitByDay(t, addDays(t, -1))).toHaveLength(0);
   });
+
+  it("reports seconds that the minute figure rounds away (M51)", () => {
+    const start = new Date(2026, 7, 24, 9, 0, 0);
+    const end = new Date(2026, 7, 24, 9, 0, 20);
+    const [segment] = splitByDay(start, end);
+    expect(segment.seconds).toBe(20);
+    // The whole point: `minutes` cannot represent this, and rounds to nothing.
+    expect(segment.minutes).toBe(0);
+  });
+
+  it("keeps per-segment seconds summing to the real wall-clock span", () => {
+    const start = new Date(2026, 7, 24, 22, 0, 45);
+    const end = new Date(2026, 7, 26, 6, 30, 15);
+    const segments = splitByDay(start, end);
+    const totalSeconds = segments.reduce((sum, s) => sum + s.seconds, 0);
+    expect(totalSeconds).toBe(Math.round((end.getTime() - start.getTime()) / 1000));
+  });
 });
 
 describe("combineDateAndTime", () => {
@@ -112,6 +129,15 @@ describe("combineDateAndTime", () => {
     expect([d.getFullYear(), d.getMonth(), d.getDate(), d.getHours(), d.getMinutes()]).toEqual([
       2026, 7, 24, 14, 30,
     ]);
+  });
+
+  it("treats a bare HH:MM as landing exactly on the minute", () => {
+    expect(combineDateAndTime("2026-08-24", "14:30").getSeconds()).toBe(0);
+  });
+
+  it("accepts HH:MM:SS so an edited timer entry keeps its seconds (M51)", () => {
+    const d = combineDateAndTime("2026-08-24", "14:30:45");
+    expect([d.getHours(), d.getMinutes(), d.getSeconds()]).toEqual([14, 30, 45]);
   });
 });
 

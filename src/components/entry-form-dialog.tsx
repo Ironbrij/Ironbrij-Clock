@@ -66,9 +66,24 @@ function toFormValues(entry: WorkspaceEntry | null, defaultTask: string): EntryF
     task: entry.task || defaultTask,
     description: entry.description,
     date: entry.date,
-    startTime: `${pad(start.getHours())}:${pad(start.getMinutes())}`,
-    endTime: `${pad(end.getHours())}:${pad(end.getMinutes())}`,
+    startTime: clockValue(start),
+    endTime: clockValue(end),
   };
+}
+
+/**
+ * M51: `HH:MM`, or `HH:MM:SS` when the entry actually lands mid-minute.
+ *
+ * A timer-tracked entry almost always does, and `<input type="time">` keeps
+ * whatever precision its value carries — so without this, opening the edit
+ * dialog on a 3h29m30s entry and saving anything at all (even just a typo
+ * in the description) would round it to 3h29m and permanently discard the
+ * seconds. A manual entry typed on the minute still renders as plain
+ * `HH:MM`, so the common case looks exactly as it did.
+ */
+function clockValue(d: Date) {
+  const hm = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  return d.getSeconds() === 0 ? hm : `${hm}:${pad(d.getSeconds())}`;
 }
 
 /**
@@ -373,6 +388,7 @@ export function EntryFormDialog({
               <Input
                 id="entry-start"
                 type="time"
+                step="1"
                 value={values.startTime}
                 onChange={(e) => setValues((v) => ({ ...v, startTime: e.target.value }))}
               />
@@ -387,6 +403,7 @@ export function EntryFormDialog({
                 <Input
                   id="entry-end"
                   type="time"
+                  step="1"
                   value={values.endTime}
                   onChange={(e) => setValues((v) => ({ ...v, endTime: e.target.value }))}
                 />
