@@ -13,7 +13,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { formatMinutes } from "@/lib/mock-data";
+import { formatDuration } from "@/lib/mock-data";
 import { addDays, fromDateKey, toDateKey } from "@/lib/time-utils";
 import { useWorkspace, type DetailedEntry } from "@/lib/workspace-store";
 import { CASUAL_SERVICE_CATEGORY_LABELS, type CasualServiceCategory } from "@/lib/workspace/types";
@@ -273,7 +273,7 @@ export function CasualServiceTab() {
                     <td className="px-5 py-3">{r.vaName}</td>
                     <td className="px-5 py-3 text-muted-foreground">{r.task || "—"}</td>
                     <td className="px-5 py-3 text-right tabular-nums">
-                      {formatMinutes(r.minutes)}
+                      {formatDuration(r.seconds)}
                     </td>
                     <td className="px-5 py-3">
                       {r.vaPaidAt ? (

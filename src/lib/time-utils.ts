@@ -46,9 +46,15 @@ export function fromDateKey(dateKey: string) {
  * entry whose full duration gets misattributed to the day it started on.
  * A span that never crosses midnight returns a single segment covering
  * the whole range unchanged.
+ *
+ * M51: `seconds` is the real duration of the segment; `minutes` is kept
+ * alongside it only for callers that still store the minute column. Don't
+ * derive one from the other at the call site — a segment of 89.6s rounds
+ * differently depending on which you round first, and the database's own
+ * trigger rounds each from the raw interval independently.
  */
 export function splitByDay(start: Date, end: Date) {
-  const segments: { date: string; start: Date; end: Date; minutes: number }[] = [];
+  const segments: { date: string; start: Date; end: Date; minutes: number; seconds: number }[] = [];
   let segStart = start;
   while (segStart < end) {
     const dayEnd = new Date(
@@ -66,16 +72,24 @@ export function splitByDay(start: Date, end: Date) {
       start: segStart,
       end: segEnd,
       minutes: Math.round((segEnd.getTime() - segStart.getTime()) / 60000),
+      seconds: Math.round((segEnd.getTime() - segStart.getTime()) / 1000),
     });
     segStart = segEnd;
   }
   return segments;
 }
 
+/**
+ * M51: accepts `HH:MM` or `HH:MM:SS`. A bare `HH:MM` still means "on the
+ * minute", exactly as before — the seconds group only exists so that
+ * opening and re-saving a timer-tracked entry in the edit dialog doesn't
+ * silently truncate its seconds back to zero, which would quietly undo the
+ * precision the rest of M51 adds.
+ */
 export function combineDateAndTime(dateKey: string, time: string) {
   const date = fromDateKey(dateKey);
-  const [h, m] = time.split(":").map(Number);
-  date.setHours(h ?? 0, m ?? 0, 0, 0);
+  const [h, m, s] = time.split(":").map(Number);
+  date.setHours(h ?? 0, m ?? 0, s ?? 0, 0);
   return date;
 }
 

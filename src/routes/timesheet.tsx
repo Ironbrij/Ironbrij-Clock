@@ -18,7 +18,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { formatHours, formatMinutes } from "@/lib/mock-data";
+import { formatDuration, formatHours } from "@/lib/mock-data";
 import {
   addDays,
   formatClock,
@@ -58,7 +58,7 @@ function Timesheet() {
   const weekEntries = entries
     .filter((e) => dayKeys.includes(e.date))
     .sort((a, b) => a.startTime.localeCompare(b.startTime));
-  const weekTotal = weekEntries.reduce((s, e) => s + e.minutes, 0) / 60;
+  const weekTotal = weekEntries.reduce((s, e) => s + e.seconds, 0) / 3600;
   const timesheet = timesheetForWeek(weekStart);
   // See GridView in time.tsx — entries older than this were never fetched,
   // so nav stops here instead of rendering a week that looks empty but
@@ -142,7 +142,7 @@ function Timesheet() {
                         </div>
                       </div>
                       <span className="shrink-0 tabular-nums text-sm font-medium">
-                        {formatMinutes(e.minutes)}
+                        {formatDuration(e.seconds)}
                       </span>
                     </li>
                   );

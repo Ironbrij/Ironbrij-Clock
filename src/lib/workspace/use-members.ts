@@ -330,8 +330,14 @@ export function useMembersData(enabled: boolean, uid: string | null, session: Se
     [qc],
   );
 
-  const employeeHoursForRange = useCallback(async (from: string, to: string) => {
-    const { data, error } = await supabase.rpc("employee_hours_range", { _from: from, _to: to });
+  const employeeHoursForRange = useCallback(async (from: string, to: string, tagId?: string) => {
+    const { data, error } = await supabase.rpc("employee_hours_range", {
+      _from: from,
+      _to: to,
+      // M51: null skips the filter server-side, so an unset tag picker costs
+      // nothing.
+      _tag_id: tagId,
+    });
     throwIf(error);
     return (data ?? []).map((r) => ({ userId: r.user_id, minutes: r.minutes }));
   }, []);
@@ -339,27 +345,35 @@ export function useMembersData(enabled: boolean, uid: string | null, session: Se
   // H17: billable-only hours per employee, for Reports' $ column — separate
   // RPC rather than reusing employee_hours_range's total, since a $ figure
   // has to be billable hours * rate, not total hours * rate.
-  const employeeBillableHoursForRange = useCallback(async (from: string, to: string) => {
-    const { data, error } = await supabase.rpc("employee_billable_hours_range", {
-      _from: from,
-      _to: to,
-    });
-    throwIf(error);
-    return (data ?? []).map((r) => ({ userId: r.user_id, minutes: r.minutes }));
-  }, []);
+  const employeeBillableHoursForRange = useCallback(
+    async (from: string, to: string, tagId?: string) => {
+      const { data, error } = await supabase.rpc("employee_billable_hours_range", {
+        _from: from,
+        _to: to,
+        _tag_id: tagId,
+      });
+      throwIf(error);
+      return (data ?? []).map((r) => ({ userId: r.user_id, minutes: r.minutes }));
+    },
+    [],
+  );
 
-  const employeeClientHoursForRange = useCallback(async (from: string, to: string) => {
-    const { data, error } = await supabase.rpc("employee_client_hours_range", {
-      _from: from,
-      _to: to,
-    });
-    throwIf(error);
-    return (data ?? []).map((r) => ({
-      userId: r.user_id,
-      clientId: r.client_id,
-      minutes: r.minutes,
-    }));
-  }, []);
+  const employeeClientHoursForRange = useCallback(
+    async (from: string, to: string, tagId?: string) => {
+      const { data, error } = await supabase.rpc("employee_client_hours_range", {
+        _from: from,
+        _to: to,
+        _tag_id: tagId,
+      });
+      throwIf(error);
+      return (data ?? []).map((r) => ({
+        userId: r.user_id,
+        clientId: r.client_id,
+        minutes: r.minutes,
+      }));
+    },
+    [],
+  );
 
   return {
     profilesQ,

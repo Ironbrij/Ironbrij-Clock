@@ -39,6 +39,7 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { billableHoursForCasualEntry } from "@/lib/casual-billing";
 import { currencies, timezones, useWorkspace, type Role } from "@/lib/workspace-store";
 import { toast } from "sonner";
 import { useEffect, useRef, useState, type ChangeEvent } from "react";
@@ -770,10 +771,30 @@ function AdminTab() {
   const [casualBillingIncrementHours, setCasualBillingIncrementHours] = useState(
     String(settings.casualBillingIncrementHours),
   );
+  const [clientBillingUpliftPct, setClientBillingUpliftPct] = useState(
+    String(settings.clientBillingUpliftPct),
+  );
   const [clientInactiveThresholdDays, setClientInactiveThresholdDays] = useState(
     String(settings.clientInactiveThresholdDays),
   );
   const fileRef = useRef<HTMLInputElement>(null);
+
+  // M51: a worked example of the two settings interacting, since "uplift
+  // then round" and "round then uplift" give different answers and the pair
+  // of inputs on their own doesn't say which order applies. Falls back to
+  // the stored values while either box is mid-edit or invalid, so the
+  // example never renders as NaN.
+  const upliftPreviewPct =
+    Number(clientBillingUpliftPct) >= 0 ? clientBillingUpliftPct || "0" : "0";
+  const upliftPreviewHours = (() => {
+    const pct = Number(upliftPreviewPct);
+    const increment = Number(casualBillingIncrementHours);
+    if (Number.isNaN(pct) || Number.isNaN(increment) || increment <= 0) return "—";
+    return `${billableHoursForCasualEntry({ seconds: 6.1 * 3600 }, "paid_casual", {
+      incrementHours: increment,
+      upliftPct: pct,
+    }).toFixed(2)}h`;
+  })();
 
   useEffect(() => {
     setCompanyName(settings.companyName);
@@ -784,6 +805,7 @@ function AdminTab() {
     setRequireDescriptions(settings.requireDescriptions);
     setAllowManualEntry(settings.allowManualEntry);
     setCasualBillingIncrementHours(String(settings.casualBillingIncrementHours));
+    setClientBillingUpliftPct(String(settings.clientBillingUpliftPct));
     setClientInactiveThresholdDays(String(settings.clientInactiveThresholdDays));
   }, [settings]);
 
@@ -902,6 +924,24 @@ function AdminTab() {
           </div>
 
           <div className="grid gap-2">
+            <Label htmlFor="ws-client-uplift">Client billing uplift (%)</Label>
+            <Input
+              id="ws-client-uplift"
+              type="number"
+              step={1}
+              min={0}
+              value={clientBillingUpliftPct}
+              onChange={(e) => setClientBillingUpliftPct(e.target.value)}
+              className="max-w-32"
+            />
+            <p className="text-xs text-muted-foreground">
+              Added to casual-service hours before they're rounded up, and applied to what the
+              client is invoiced — never to what the VA is paid, which always uses actual tracked
+              time. Set to 0 to invoice actual hours. Same scope as the increment below.
+            </p>
+          </div>
+
+          <div className="grid gap-2">
             <Label htmlFor="ws-casual-increment">Casual service billing increment (hours)</Label>
             <Input
               id="ws-casual-increment"
@@ -916,6 +956,11 @@ function AdminTab() {
               Casual-service hours (Paid Casual, VIP Client, Promotional — not Ironbrij) are rounded
               up to the nearest increment of this many hours in Reports and CSV exports. Doesn't
               change any stored tracked time.
+            </p>
+            <p className="text-xs text-muted-foreground">
+              Applied <span className="font-medium">after</span> the uplift — at {upliftPreviewPct}%
+              and a {casualBillingIncrementHours || "0.25"}h increment, 6.10 tracked hours are
+              invoiced as {upliftPreviewHours}.
             </p>
           </div>
 
@@ -994,6 +1039,17 @@ function AdminTab() {
                   toast.error("Casual service billing increment must be a number greater than 0");
                   return;
                 }
+                // Same reasoning as the increment check above: min={0} on the
+                // input is a UI hint that nothing stops someone typing past.
+                const parsedUplift = Number(clientBillingUpliftPct);
+                if (
+                  !clientBillingUpliftPct.trim() ||
+                  Number.isNaN(parsedUplift) ||
+                  parsedUplift < 0
+                ) {
+                  toast.error("Client billing uplift must be a number of 0 or more");
+                  return;
+                }
                 const parsedInactiveDays = Number(clientInactiveThresholdDays);
                 if (
                   !clientInactiveThresholdDays.trim() ||
@@ -1014,6 +1070,7 @@ function AdminTab() {
                   requireDescriptions,
                   allowManualEntry,
                   casualBillingIncrementHours: parsedIncrement,
+                  clientBillingUpliftPct: parsedUplift,
                   clientInactiveThresholdDays: parsedInactiveDays,
                 })
                   .then(() =>

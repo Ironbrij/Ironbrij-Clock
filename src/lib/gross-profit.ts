@@ -61,8 +61,17 @@ export function resolveInvoiceRate(
 }
 
 export type EntryProfit = {
-  /** Billable hours for this line, after the casual increment rounding. */
-  hours: number;
+  /**
+   * M51: hours actually tracked, to the second. What the VA is paid for, and
+   * what the internal view of any report shows.
+   */
+  actualHours: number;
+  /**
+   * M51: hours actually invoiced — `actualHours` plus the client uplift,
+   * rounded up to the billing increment. Equal to `actualHours` for anything
+   * outside the three casual categories.
+   */
+  billedHours: number;
   cost: number | null;
   revenue: number | null;
   /** Never null — unpriced work is $0 profit (cost-only), not unknown profit. */
@@ -84,12 +93,22 @@ export type EntryProfit = {
  * same reasoning 20260903010000_casual_service_reports.sql gives for not
  * writing this as a SQL aggregate.
  *
- * `hours` is the increment-rounded figure, and **both** sides of the
- * equation use it. That was the confirmed call: the source workbook pays
- * the VA on the same rounded hours it invoices the client for (Vellih's
- * 6.25h on Kim Wasley is $50.50 paid at $8.08 and $93.75 invoiced at
- * $15.00), so cost computed any other way would stop reconciling against
- * the payroll figures accounts already works from.
+ * M51 — the two sides of the equation now use **different** hours, which
+ * reverses M48's original call, deliberately and on the product owner's
+ * explicit instruction after being shown the conflict:
+ *
+ *   - **cost** is `actualHours x payRate`. The VA is paid for the time they
+ *     actually worked.
+ *   - **revenue** is `billedHours x invoiceRate`. The client is charged the
+ *     uplifted, rounded-up figure.
+ *
+ * The gap between them is no longer an accounting artefact to be reconciled
+ * away — under M51 it *is* the margin the uplift exists to create. M48 had
+ * both sides on the rounded figure because the source workbook paid VAs on
+ * the hours it invoiced (Vellih's 6.25h on Kim Wasley: $50.50 paid at $8.08,
+ * $93.75 invoiced at $15.00). That tie-out no longer holds, so a report run
+ * today over a past period will not match a copy of the workbook printed
+ * back then. That was accepted when M51 was specified.
  *
  * Revenue requires all three of: a billable entry, a category that is
  * actually chargeable, and a resolved rate. Internal work therefore lands
@@ -102,24 +121,31 @@ export type EntryProfit = {
  * well would count the same payroll twice.
  */
 export function grossProfitForEntry(
-  entry: { minutes: number; billable: boolean; serviceCategory: CasualServiceCategory | null },
+  entry: { seconds: number; billable: boolean; serviceCategory: CasualServiceCategory | null },
   opts: {
     payRate: number | null;
     invoiceRate: number | null;
     incrementHours: number;
+    upliftPct: number;
     salaried: boolean;
   },
 ): EntryProfit {
-  const hours = billableHoursForCasualEntry(entry, entry.serviceCategory, opts.incrementHours);
-  const cost = opts.salaried ? 0 : opts.payRate === null ? null : hours * opts.payRate;
+  const actualHours = entry.seconds / 3600;
+  const billedHours = billableHoursForCasualEntry(entry, entry.serviceCategory, {
+    incrementHours: opts.incrementHours,
+    upliftPct: opts.upliftPct,
+  });
+
+  const cost = opts.salaried ? 0 : opts.payRate === null ? null : actualHours * opts.payRate;
 
   // 'ironbrij' is casual work that is tracked but never charged — the same
   // exclusion billableHoursForCasualEntry already applies to its rounding.
   const chargeable = entry.billable && entry.serviceCategory !== "ironbrij";
-  const revenue = chargeable && opts.invoiceRate !== null ? hours * opts.invoiceRate : null;
+  const revenue = chargeable && opts.invoiceRate !== null ? billedHours * opts.invoiceRate : null;
 
   return {
-    hours,
+    actualHours,
+    billedHours,
     cost,
     revenue,
     profit: revenue === null ? 0 : revenue - (cost ?? 0),

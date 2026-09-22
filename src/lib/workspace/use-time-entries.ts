@@ -36,13 +36,14 @@ type TimeEntryRow = {
   end_time: string | null;
   entry_date: string;
   duration_minutes: number | null;
+  duration_seconds: number | null;
   is_billable: boolean;
   service_category: CasualServiceCategory | null;
   va_paid_at: string | null;
 };
 
 const ENTRY_COLUMNS =
-  "id, project_id, task, description, start_time, end_time, entry_date, duration_minutes, is_billable, service_category, va_paid_at";
+  "id, project_id, task, description, start_time, end_time, entry_date, duration_minutes, duration_seconds, is_billable, service_category, va_paid_at";
 
 function mapEntryRow(e: TimeEntryRow): WorkspaceEntry {
   return {
@@ -51,6 +52,11 @@ function mapEntryRow(e: TimeEntryRow): WorkspaceEntry {
     task: e.task ?? "",
     description: e.description,
     minutes: e.duration_minutes ?? 0,
+    // M51: duration_seconds is backfilled for every historical row, so this
+    // fallback only ever covers a row written in the window between this
+    // code deploying and the migration landing — not an era of minute-only
+    // data.
+    seconds: e.duration_seconds ?? (e.duration_minutes ?? 0) * 60,
     startTime: e.start_time,
     endTime: e.end_time,
     date: e.entry_date,
@@ -318,12 +324,16 @@ export function useTimeEntriesData(
 
         const start = combineDateAndTime(date, startTime);
         const end = combineDateAndTime(date, endTime);
-        const minutes = Math.round((end.getTime() - start.getTime()) / 60000);
-        if (minutes <= 0) throw new Error("End time must be after start time.");
+        if (end.getTime() <= start.getTime()) {
+          throw new Error("End time must be after start time.");
+        }
         dbPatch.entry_date = date;
         dbPatch.start_time = start.toISOString();
         dbPatch.end_time = end.toISOString();
-        dbPatch.duration_minutes = minutes;
+        // M51: duration is no longer sent at all. compute_time_entry_duration()
+        // has recomputed it from start/end on every write since C6, so anything
+        // set here was overwritten server-side anyway — and a client-rounded
+        // minute count is exactly the value this milestone is removing.
       }
 
       // Same silent-no-op risk as stopTimer: if entryId's week (old or new,
@@ -367,8 +377,9 @@ export function useTimeEntriesData(
       const project = projects.find((p) => p.id === input.projectId);
       const start = combineDateAndTime(input.date, input.startTime);
       const end = combineDateAndTime(input.endDate ?? input.date, input.endTime);
-      const minutes = Math.round((end.getTime() - start.getTime()) / 60000);
-      if (minutes <= 0) throw new Error("End time must be after start time.");
+      if (end.getTime() <= start.getTime()) {
+        throw new Error("End time must be after start time.");
+      }
       // M21: a manual entry that crosses midnight is stored as one row per
       // calendar day it touches — the same convention stopTimer/splitByDay
       // already established for the live timer (H8) — so day/week views
@@ -389,7 +400,9 @@ export function useTimeEntriesData(
         start_time: seg.start.toISOString(),
         end_time: seg.end.toISOString(),
         entry_date: seg.date,
-        duration_minutes: Math.max(1, seg.minutes),
+        // M51: no duration sent — see updateEntry. The Math.max(1, …) floor
+        // that used to live here is now GREATEST(1, seconds) in the trigger,
+        // where it costs a second rather than a minute.
         is_billable: billable,
         service_category: serviceCategory,
         tag_ids: project?.tagIds ?? [],
@@ -428,7 +441,7 @@ export function useTimeEntriesData(
       const { data, error } = await supabase
         .from("time_entries")
         .select(
-          "id, user_id, project_id, task, description, start_time, entry_date, duration_minutes, is_billable, service_category, va_paid_at",
+          "id, user_id, project_id, task, description, start_time, entry_date, duration_minutes, duration_seconds, is_billable, service_category, va_paid_at, tag_ids",
         )
         .gte("entry_date", from)
         .lte("entry_date", to)
@@ -447,10 +460,12 @@ export function useTimeEntriesData(
         description: e.description,
         date: e.entry_date,
         minutes: e.duration_minutes ?? 0,
+        seconds: e.duration_seconds ?? (e.duration_minutes ?? 0) * 60,
         billable: e.is_billable,
         startTime: e.start_time,
         serviceCategory: e.service_category,
         vaPaidAt: e.va_paid_at,
+        tagIds: e.tag_ids ?? [],
       }));
     },
     [],
@@ -484,7 +499,9 @@ export function useTimeEntriesData(
   const entriesForTag = useCallback(async (tagId: string) => {
     const { data, error } = await supabase
       .from("time_entries")
-      .select("id, user_id, project_id, description, entry_date, duration_minutes")
+      .select(
+        "id, user_id, project_id, description, entry_date, duration_minutes, duration_seconds",
+      )
       .contains("tag_ids", [tagId])
       .order("entry_date", { ascending: false })
       .limit(200);
@@ -495,7 +512,7 @@ export function useTimeEntriesData(
       projectId: e.project_id,
       description: e.description,
       date: e.entry_date,
-      minutes: e.duration_minutes ?? 0,
+      seconds: e.duration_seconds ?? (e.duration_minutes ?? 0) * 60,
     }));
   }, []);
 
