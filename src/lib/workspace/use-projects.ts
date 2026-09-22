@@ -251,10 +251,10 @@ export function useProjectsData(
       const { data, error } = await supabase.rpc("project_hours_range", {
         _from: from,
         _to: to,
-        _team_id: teamId ?? null,
+        _team_id: teamId,
         // M51: null skips the filter server-side, so an unset tag picker
         // costs nothing.
-        _tag_id: tagId ?? null,
+        _tag_id: tagId,
       });
       throwIf(error);
       return (data ?? []).map((r) => ({ projectId: r.project_id, minutes: r.minutes }));
@@ -271,8 +271,8 @@ export function useProjectsData(
       const { data, error } = await supabase.rpc("project_billable_hours_range", {
         _from: from,
         _to: to,
-        _team_id: teamId ?? null,
-        _tag_id: tagId ?? null,
+        _team_id: teamId,
+        _tag_id: tagId,
       });
       throwIf(error);
       return (data ?? []).map((r) => ({ projectId: r.project_id, minutes: r.billable_minutes }));

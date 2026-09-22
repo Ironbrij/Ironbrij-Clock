@@ -4,7 +4,7 @@ export type Database = {
   // Allows to automatically instantiate createClient with right options
   // instead of createClient<Database, { PostgrestVersion: 'XX' }>(URL, KEY)
   __InternalSupabase: {
-    PostgrestVersion: "14.17";
+    PostgrestVersion: "14.5";
   };
   graphql_public: {
     Tables: {
@@ -892,14 +892,14 @@ export type Database = {
       delete_tag: { Args: { _tag_id: string }; Returns: undefined };
       description_required: { Args: never; Returns: boolean };
       employee_billable_hours_range: {
-        Args: { _from: string; _to: string; _tag_id?: string | null };
+        Args: { _from: string; _tag_id?: string; _to: string };
         Returns: {
           minutes: number;
           user_id: string;
         }[];
       };
       employee_client_hours_range: {
-        Args: { _from: string; _to: string; _tag_id?: string | null };
+        Args: { _from: string; _tag_id?: string; _to: string };
         Returns: {
           client_id: string;
           minutes: number;
@@ -907,7 +907,7 @@ export type Database = {
         }[];
       };
       employee_hours_range: {
-        Args: { _from: string; _to: string; _tag_id?: string | null };
+        Args: { _from: string; _tag_id?: string; _to: string };
         Returns: {
           minutes: number;
           user_id: string;
@@ -923,9 +923,15 @@ export type Database = {
       hook_restrict_signup_to_invited: { Args: { event: Json }; Returns: Json };
       is_active_user: { Args: { _user_id: string }; Returns: boolean };
       is_approved: { Args: { _user_id: string }; Returns: boolean };
+      is_valid_weekly_schedule_days: { Args: { v: Json }; Returns: boolean };
       manual_entry_allowed: { Args: never; Returns: boolean };
       project_billable_hours_range: {
-        Args: { _from: string; _to: string; _team_id?: string | null; _tag_id?: string | null };
+        Args: {
+          _from: string;
+          _tag_id?: string;
+          _team_id?: string;
+          _to: string;
+        };
         Returns: {
           billable_minutes: number;
           project_id: string;
@@ -940,10 +946,24 @@ export type Database = {
         }[];
       };
       project_hours_range: {
-        Args: { _from: string; _to: string; _team_id?: string | null; _tag_id?: string | null };
+        Args: {
+          _from: string;
+          _tag_id?: string;
+          _team_id?: string;
+          _to: string;
+        };
         Returns: {
           minutes: number;
           project_id: string;
+        }[];
+      };
+      request_timesheet_reminder: {
+        Args: { _user_id: string; _week_start: string };
+        Returns: {
+          email: string;
+          full_name: string;
+          manager_name: string;
+          week_start: string;
         }[];
       };
       review_timesheet: {
@@ -1009,15 +1029,6 @@ export type Database = {
         Returns: {
           entry_count: number;
           tag_id: string;
-        }[];
-      };
-      request_timesheet_reminder: {
-        Args: { _user_id: string; _week_start: string };
-        Returns: {
-          email: string;
-          full_name: string;
-          manager_name: string;
-          week_start: string;
         }[];
       };
       timesheet_submission_recipients: {
@@ -1163,6 +1174,7 @@ export const Constants = {
   public: {
     Enums: {
       app_role: ["admin", "manager", "member"],
+      casual_service_category: ["ironbrij", "paid_casual", "vip_client", "promotional"],
       timesheet_status: ["draft", "submitted", "approved", "rejected"],
     },
   },

@@ -41,3 +41,6 @@ duplicate-merge-backup-*.json
 *.njsproj
 *.sln
 *.sw?
+
+# Supabase CLI local state (holds a pooler URL and project ref)
+supabase/.temp/

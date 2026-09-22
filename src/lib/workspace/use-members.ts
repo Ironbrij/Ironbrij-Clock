@@ -336,7 +336,7 @@ export function useMembersData(enabled: boolean, uid: string | null, session: Se
       _to: to,
       // M51: null skips the filter server-side, so an unset tag picker costs
       // nothing.
-      _tag_id: tagId ?? null,
+      _tag_id: tagId,
     });
     throwIf(error);
     return (data ?? []).map((r) => ({ userId: r.user_id, minutes: r.minutes }));
@@ -350,7 +350,7 @@ export function useMembersData(enabled: boolean, uid: string | null, session: Se
       const { data, error } = await supabase.rpc("employee_billable_hours_range", {
         _from: from,
         _to: to,
-        _tag_id: tagId ?? null,
+        _tag_id: tagId,
       });
       throwIf(error);
       return (data ?? []).map((r) => ({ userId: r.user_id, minutes: r.minutes }));
@@ -363,7 +363,7 @@ export function useMembersData(enabled: boolean, uid: string | null, session: Se
       const { data, error } = await supabase.rpc("employee_client_hours_range", {
         _from: from,
         _to: to,
-        _tag_id: tagId ?? null,
+        _tag_id: tagId,
       });
       throwIf(error);
       return (data ?? []).map((r) => ({
