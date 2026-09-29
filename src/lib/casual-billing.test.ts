@@ -6,6 +6,7 @@
 // coverage.
 //
 // M51: extended for the client uplift, which applies before the round-up.
+// M52: scope narrowed to paid_casual — VIP and Promotional now pass through.
 import { describe, expect, it } from "vitest";
 import { billableHoursForCasualEntry } from "./casual-billing";
 
@@ -28,11 +29,14 @@ describe("billableHoursForCasualEntry", () => {
       expect(billableHoursForCasualEntry(minutes(100), "ironbrij", DEFAULTS)).toBeCloseTo(100 / 60);
     });
 
-    it("applies to all three paid casual categories", () => {
-      // M51 was confirmed as scoped to exactly these three — regular client
-      // work is deliberately not uplifted.
-      for (const category of ["paid_casual", "vip_client", "promotional"] as const) {
-        expect(billableHoursForCasualEntry(minutes(100), category, NO_UPLIFT)).toBeCloseTo(1.75);
+    it("applies to paid casual work and nothing else (M52)", () => {
+      // M51 scoped this to all three paid categories; M52 narrowed it to
+      // Paid Casual alone ("only casual that does increment"). VIP and
+      // Promotional are still casual-programme work — they just bill at
+      // exact tracked hours now, same as ordinary client work.
+      expect(billableHoursForCasualEntry(minutes(100), "paid_casual", NO_UPLIFT)).toBeCloseTo(1.75);
+      for (const category of ["vip_client", "promotional"] as const) {
+        expect(billableHoursForCasualEntry(minutes(100), category, DEFAULTS)).toBeCloseTo(100 / 60);
       }
     });
   });

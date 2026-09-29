@@ -806,6 +806,15 @@ function describeActivityEvent(
       return `${actor} removed ${target}'s access`;
     case "timesheet_reminder_sent":
       return `${actor} reminded ${target} to submit their timesheet for ${week(e.metadata.week_start)}`;
+    case "casual_report_emailed": {
+      // M52: no target_user_id — the recipient is a client, not a member — so
+      // both the client and the address come out of the metadata.
+      const client =
+        typeof e.metadata.client_name === "string" ? e.metadata.client_name : "a client";
+      const recipient =
+        typeof e.metadata.recipient === "string" ? e.metadata.recipient : "their contact";
+      return `${actor} emailed ${client}'s casual service report for ${week(e.metadata.week_start)} to ${recipient}`;
+    }
     case "time_entry_edited": {
       const day =
         typeof e.metadata.entry_date === "string"
@@ -842,6 +851,7 @@ const actionFilterLabels: Record<string, string> = {
   team_removed: "Removed from team",
   member_removed: "Access removed",
   timesheet_reminder_sent: "Reminder sent",
+  casual_report_emailed: "Client report emailed",
   time_entry_edited: "Entry edited",
   time_entry_deleted: "Entry deleted",
 };

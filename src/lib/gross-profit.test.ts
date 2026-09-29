@@ -131,13 +131,26 @@ describe("grossProfitForEntry", () => {
   });
 
   it("leaves non-casual work billed at exactly its actual hours", () => {
-    // M51's scope was confirmed as the three casual categories only, so
-    // regular client work must show identical figures on both sides.
+    // Full-time and part-time work for external clients: paid on actual
+    // hours, invoiced on actual hours, so both sides use the same figure.
     const result = grossProfitForEntry(entry({ seconds: hours(1.7) }), opts());
     expect(result.actualHours).toBeCloseTo(1.7);
     expect(result.billedHours).toBeCloseTo(1.7);
     expect(result.cost).toBeCloseTo(10.2);
     expect(result.revenue).toBeCloseTo(30.6);
+  });
+
+  it("invoices VIP and Promotional work at exact tracked hours (M52)", () => {
+    // M51 uplifted and rounded all three paid categories; M52 narrowed that
+    // to Paid Casual alone. These two are still invoiced — they just bill
+    // the hours actually worked, so revenue is 1.70 x $18, not 2.25 x $18.
+    for (const serviceCategory of ["vip_client", "promotional"] as const) {
+      const result = grossProfitForEntry(entry({ seconds: hours(1.7), serviceCategory }), opts());
+      expect(result.billedHours).toBeCloseTo(1.7);
+      expect(result.cost).toBeCloseTo(10.2);
+      expect(result.revenue).toBeCloseTo(30.6);
+      expect(result.profit).toBeCloseTo(20.4);
+    }
   });
 
   it("counts 'ironbrij' work as cost-only with zero profit", () => {

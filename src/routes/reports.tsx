@@ -128,9 +128,6 @@ const EMPLOYMENT_LABELS: Record<EmploymentType | "unset", string> = {
   unset: "Employment type not set",
 };
 
-/** Fixed presentation order for the P&L split — not whatever order the entries happened to arrive in. */
-const EMPLOYMENT_ORDER: (EmploymentType | "unset")[] = ["full_time", "part_time", "unset"];
-
 /**
  * M51: who a report is being produced for.
  *
@@ -171,6 +168,71 @@ function filterByAudience<
   const wantInternal = audience === "internal";
   return rows.filter((r) => isInternalWork(r) === wantInternal);
 }
+
+/**
+ * M52: the accounts workbook's Gross Profit sheet has a *department* axis —
+ * Full Time / Part Time / Casual / VIP — and neither of M51's two new
+ * groupings reproduces it, because it mixes the two. A full-time VA's casual
+ * work belongs to Casual on that sheet, not to Full Time, so an
+ * employment-type split can never reconcile against it, and a service-line
+ * split loses the full-time/part-time distinction the feedback is about.
+ *
+ * One bucket per entry, drawn from whichever dimension actually decides how
+ * the work is priced:
+ *
+ *   - Ironbrij-category work, and work with no client at all, is Internal.
+ *     Backup cover lives here too — confirmed as internal work rather than a
+ *     category of its own.
+ *   - Paid Casual, VIP Client and Promotional each get their own department,
+ *     whoever did the work, because the casual programme is priced per
+ *     service line rather than per employment type. Only Paid Casual is
+ *     uplifted and rounded up (see casual-billing.ts).
+ *   - Everything else is ordinary external-client work, split by the VA's
+ *     employment type. This is the half the feedback spelled out: pay rate ×
+ *     hours is what they are paid, invoice rate × hours is what the client is
+ *     invoiced, and the difference is the gross profit.
+ */
+type DepartmentKey =
+  EmploymentType | "unset" | "paid_casual" | "vip_client" | "promotional" | "internal";
+
+const DEPARTMENT_LABELS: Record<DepartmentKey, string> = {
+  full_time: "Full-time (client work)",
+  part_time: "Part-time (client work)",
+  unset: "Employment type not set",
+  paid_casual: "Paid Casual Service",
+  vip_client: "VIP Client",
+  promotional: "Promotional",
+  internal: "Internal (incl. backup)",
+};
+
+/** Fixed presentation order — the workbook's, not whatever order the entries arrived in. */
+const DEPARTMENT_ORDER: DepartmentKey[] = [
+  "full_time",
+  "part_time",
+  "unset",
+  "paid_casual",
+  "vip_client",
+  "promotional",
+  "internal",
+];
+
+/**
+ * Which department one entry belongs to. Internal is tested first, so that
+ * casual-category work logged with no client — which can't be invoiced, and
+ * which `isInternalWork` already treats as internal everywhere else in this
+ * tab — doesn't land in a client-facing department.
+ */
+const departmentFor = (
+  e: { serviceCategory: CasualServiceCategory | null; clientId: string | null },
+  employmentType: EmploymentType | undefined,
+): DepartmentKey => {
+  if (isInternalWork(e)) return "internal";
+  // The 'ironbrij' re-test is for the type checker: isInternalWork has
+  // already returned for that category, but it isn't a type predicate.
+  const category = e.serviceCategory;
+  if (category !== null && category !== "ironbrij") return category;
+  return employmentType ?? "unset";
+};
 
 // Same dimension names, phrased for the chart title ("Billable hours by
 // client/VA/day/week") rather than a table column header.
@@ -1278,95 +1340,112 @@ function Reports() {
   );
 
   /**
-   * M51: the profit-and-loss split by employment type — "separate full time
-   * and parttime / actual hours and actual wages".
+   * M52: gross profit by department — the workbook's own Gross Profit sheet
+   * layout, and where the confirmed formula lands: pay rate × actual hours is
+   * what the VA is paid, invoice rate × billed hours is what the client is
+   * invoiced, and the difference is the margin.
    *
-   * Deliberately its own block rather than just a grouping of the table
-   * above, because a salaried member's cost isn't in that table at all. M50
-   * charges a fixed weekly salary once per week and costs their entries at
-   * zero, so grouping the hourly rows by employment type would show
-   * Full-time as $0.00 wages against real hours — a figure that looks like
-   * data and is actually an artefact. This block carries both columns and
-   * adds them, so the total cost per employment type is the real one.
+   * Replaces M51's split by employment type, which this is a superset of: the
+   * Full-time and Part-time rows are still here, they just no longer absorb
+   * the casual-programme work those same people do, which the sheet reports
+   * under Casual and VIP. Every entry lands in exactly one row, so these
+   * totals still tie out to the grand totals below.
    *
-   * Salary is withheld under a client filter for the same reason the salary
-   * block itself is (payroll is a whole-company bill, not work done for one
-   * client), and the block says so rather than quietly showing wages that
-   * exclude it.
+   * Salaried payroll gets its own row rather than being spread across the
+   * full-time and part-time ones. A fixed weekly wage isn't attributable to
+   * the hours someone happened to log that week, and since M52 those two rows
+   * don't even contain all of that person's work — charging a whole salary
+   * against part of it would overstate the department. Withheld under a client
+   * filter, the same rule the salary block itself uses.
    */
-  type PnlRow = {
-    key: EmploymentType | "unset";
+  type DepartmentRow = {
+    key: DepartmentKey | "salary";
     label: string;
     actualHours: number;
     billedHours: number;
-    hourlyWages: number;
-    salary: number;
-    revenue: number;
-    /** Someone in this bucket has no pay rate on file, so `hourlyWages` is knowingly short. */
+    /** What the VAs in this department are paid — actual hours × pay rate. */
+    paid: number;
+    /** What the client is invoiced — billed hours × invoice rate. */
+    invoice: number;
+    /** Someone here has no pay rate on file, so `paid` is knowingly short. */
     hasUnpricedWork: boolean;
+    /** Hours costed at zero because their owner is salaried — their pay is in the salary row. */
+    salariedHours: number;
   };
 
-  const pnlByEmployment: PnlRow[] = (() => {
-    const map = new Map<EmploymentType | "unset", PnlRow>();
-    const bucket = (key: EmploymentType | "unset") => {
+  const departmentRows: DepartmentRow[] = (() => {
+    const map = new Map<DepartmentKey, DepartmentRow>();
+    const bucket = (key: DepartmentKey) => {
       const existing = map.get(key);
       if (existing) return existing;
-      const created: PnlRow = {
+      const created: DepartmentRow = {
         key,
-        label: EMPLOYMENT_LABELS[key],
+        label: DEPARTMENT_LABELS[key],
         actualHours: 0,
         billedHours: 0,
-        hourlyWages: 0,
-        salary: 0,
-        revenue: 0,
+        paid: 0,
+        invoice: 0,
         hasUnpricedWork: false,
+        salariedHours: 0,
       };
       map.set(key, created);
       return created;
     };
 
-    // The hourly side comes straight from the entries — same source as the
-    // grand totals, so the two can't disagree.
+    // Straight from the entries — the same source as the grand totals, so
+    // the two can't disagree.
     for (const e of pricedProfitEntries) {
-      const row = bucket(employmentByUser.get(e.userId)?.employmentType ?? "unset");
+      const row = bucket(departmentFor(e, employmentByUser.get(e.userId)?.employmentType));
       row.actualHours += e.actualHours;
       row.billedHours += e.billedHours;
-      row.hourlyWages += e.cost ?? 0;
-      row.revenue += e.revenue ?? 0;
+      row.paid += e.cost ?? 0;
+      row.invoice += e.revenue ?? 0;
       if (e.costBasis === "unpriced") row.hasUnpricedWork = true;
+      if (e.costBasis === "salary") row.salariedHours += e.actualHours;
     }
 
-    // The salary side accrues per week, over every week in range rather than
-    // the filtered `salaryWeeks` — a week dropped there contributes no salary
-    // anyway, so the two still total the same.
-    if (salariesApply) {
-      const weeks = weeksInRange(from, to);
-      for (const employment of salariedMembers) {
-        const row = bucket(employment.employmentType);
-        for (const week of weeks) {
-          row.salary += salaryAccrualForWeek(employment, week).salary;
-        }
-      }
-    }
-
-    return EMPLOYMENT_ORDER.flatMap((key) => {
+    const rows: DepartmentRow[] = DEPARTMENT_ORDER.flatMap((key) => {
       const row = map.get(key);
       return row ? [row] : [];
     });
+
+    // Accrued over every week in range rather than the filtered
+    // `salaryWeeks`, same as M51's block: a week dropped there contributes no
+    // salary anyway, so the two still total the same.
+    if (salariesApply && salariedMembers.length > 0) {
+      const weeks = weeksInRange(from, to);
+      let salary = 0;
+      for (const employment of salariedMembers) {
+        for (const week of weeks) {
+          salary += salaryAccrualForWeek(employment, week).salary;
+        }
+      }
+      if (salary > 0) {
+        rows.push({
+          key: "salary",
+          label: "Salaried payroll (all departments)",
+          actualHours: 0,
+          billedHours: 0,
+          paid: salary,
+          invoice: 0,
+          hasUnpricedWork: false,
+          salariedHours: 0,
+        });
+      }
+    }
+
+    return rows;
   })();
 
-  const pnlTotals = pnlByEmployment.reduce(
+  const departmentTotals = departmentRows.reduce(
     (acc, r) => ({
       actualHours: acc.actualHours + r.actualHours,
       billedHours: acc.billedHours + r.billedHours,
-      hourlyWages: acc.hourlyWages + r.hourlyWages,
-      salary: acc.salary + r.salary,
-      revenue: acc.revenue + r.revenue,
+      paid: acc.paid + r.paid,
+      invoice: acc.invoice + r.invoice,
     }),
-    { actualHours: 0, billedHours: 0, hourlyWages: 0, salary: 0, revenue: 0 },
+    { actualHours: 0, billedHours: 0, paid: 0, invoice: 0 },
   );
-
-  const pnlCost = (r: { hourlyWages: number; salary: number }) => r.hourlyWages + r.salary;
 
   /**
    * M51: the client-facing deliverable — "export without cost, gross profit
@@ -1650,44 +1729,38 @@ function Reports() {
               `${from} to ${to}`,
             ],
           ]),
-          // M51: the profit-and-loss split, appended as its own block for
-          // the same reason retainers and salaries already are — the screen
-          // shows it, so the export has to, or the two disagree.
-          ...(pnlByEmployment.length > 0
+          // M52: the department breakdown, appended as its own block for the
+          // same reason retainers and salaries already are — the screen shows
+          // it, so the export has to, or the two disagree.
+          ...(departmentRows.length > 0
             ? [
                 [],
-                ["Profit & loss by employment type"],
+                ["Gross profit by department"],
                 [
-                  "Employment type",
+                  "Department",
                   "Actual Hours",
                   "Billed Hours",
-                  `Actual Wages (${settings.currency})`,
-                  `Salary (${settings.currency})`,
-                  `Total Cost (${settings.currency})`,
-                  `Revenue (${settings.currency})`,
+                  `Paid (${settings.currency})`,
+                  `Invoice (${settings.currency})`,
                   `Gross Profit (${settings.currency})`,
                 ],
-                ...pnlByEmployment.map((r) => [
+                ...departmentRows.map((r) => [
                   // The asterisk the table shows can't survive a CSV, so the
                   // gap it flags is spelled out in the row itself.
                   r.hasUnpricedWork ? `${r.label} (some work has no pay rate)` : r.label,
-                  r.actualHours.toFixed(2),
-                  r.billedHours.toFixed(2),
-                  r.hourlyWages.toFixed(2),
-                  r.salary.toFixed(2),
-                  pnlCost(r).toFixed(2),
-                  r.revenue.toFixed(2),
-                  (r.revenue - pnlCost(r)).toFixed(2),
+                  r.key === "salary" ? "" : r.actualHours.toFixed(2),
+                  r.key === "salary" ? "" : r.billedHours.toFixed(2),
+                  r.paid.toFixed(2),
+                  r.key === "salary" ? "" : r.invoice.toFixed(2),
+                  (r.invoice - r.paid).toFixed(2),
                 ]),
                 [
-                  "P&L total",
-                  pnlTotals.actualHours.toFixed(2),
-                  pnlTotals.billedHours.toFixed(2),
-                  pnlTotals.hourlyWages.toFixed(2),
-                  pnlTotals.salary.toFixed(2),
-                  pnlCost(pnlTotals).toFixed(2),
-                  pnlTotals.revenue.toFixed(2),
-                  (pnlTotals.revenue - pnlCost(pnlTotals)).toFixed(2),
+                  "Department total",
+                  departmentTotals.actualHours.toFixed(2),
+                  departmentTotals.billedHours.toFixed(2),
+                  departmentTotals.paid.toFixed(2),
+                  departmentTotals.invoice.toFixed(2),
+                  (departmentTotals.invoice - departmentTotals.paid).toFixed(2),
                 ],
               ]
             : []),
@@ -1795,7 +1868,7 @@ function Reports() {
             "Tags",
             "Entries",
             "Raw Hours",
-            "Billable Hours (uplifted & rounded)",
+            "Billable Hours (Paid Casual uplifted & rounded)",
             "Paid",
             "Unpaid",
             "Date range",
@@ -2042,8 +2115,8 @@ function Reports() {
                 point of the two hour columns. */}
             Wages are costed on actual tracked hours; revenue is invoiced on billed hours
             {settings.clientBillingUpliftPct > 0
-              ? ` (casual work plus ${settings.clientBillingUpliftPct}%, rounded up)`
-              : " (casual work rounded up)"}
+              ? ` (Paid Casual work plus ${settings.clientBillingUpliftPct}%, rounded up)`
+              : " (Paid Casual work rounded up)"}
             . Work with no invoice rate on file counts as cost only.
             {profitGroupBy === "team" &&
               " Someone on more than one team is counted under each — group totals will add up to more than the grand total."}
@@ -2579,9 +2652,9 @@ function Reports() {
                 {settings.clientBillingUpliftPct > 0
                   ? ` (${settings.clientBillingUpliftPct}%)`
                   : ""}{" "}
-                and then rounds up to the billing increment, for every category except Ironbrij
-                (internal, never billed) — raw tracked hours are shown alongside for reference and
-                are never overwritten.
+                and then rounds up to the billing increment, for Paid Casual Service only — VIP
+                Client, Promotional and Ironbrij all bill at exact tracked hours. Raw tracked hours
+                are shown alongside for reference and are never overwritten.
               </p>
             </CardHeader>
             <CardContent className="overflow-x-auto p-0">
@@ -2746,7 +2819,7 @@ function Reports() {
             <p className="text-xs text-muted-foreground">
               Safe to send out — no cost, pay rate or margin figures. Hours are what's invoiced
               {settings.clientBillingUpliftPct > 0
-                ? `, including the ${settings.clientBillingUpliftPct}% uplift on casual work, rounded up`
+                ? `, including the ${settings.clientBillingUpliftPct}% uplift on Paid Casual work, rounded up`
                 : ", rounded up"}
               . Remaining hours are the client's whole subscription allowance less everything ever
               rendered against it, not just this range.
@@ -2823,68 +2896,73 @@ function Reports() {
         </Card>
       ) : (
         <>
-          {/* M51: profit and loss by employment type. Sits above the main
-              table because it answers a different question — "what did this
-              period cost us, split by how people are employed" rather than
-              "where did the margin come from". */}
-          {!profitTruncated && pnlByEmployment.length > 0 && (
+          {/* M52: gross profit by department. Sits above the main table
+              because it answers a different question — "what did each
+              department earn" rather than "where did the margin come from" —
+              and because it's the block that reconciles against the accounts
+              workbook's own Gross Profit sheet. */}
+          {!profitTruncated && departmentRows.length > 0 && (
             <Card className="mb-4 shadow-card">
               <CardHeader>
-                <CardTitle className="text-base">Profit &amp; loss · {rangeLabel}</CardTitle>
+                <CardTitle className="text-base">
+                  Gross profit by department · {rangeLabel}
+                </CardTitle>
                 <p className="text-xs text-muted-foreground">
-                  Actual tracked hours and the wages they cost, split by employment type. Salaried
-                  staff cost nothing per hour — their fixed weekly pay is the Salary column, so
-                  Total Cost is the real figure for each row.
+                  Paid is each VA's pay rate × actual tracked hours; Invoice is the client's invoice
+                  rate × billed hours. Only Paid Casual Service hours are uplifted and rounded up,
+                  so every other department invoices the hours actually worked. Casual, VIP and
+                  Promotional work counts under its own department rather than under Full-time or
+                  Part-time, whoever did it.
                   {!salariesApply &&
-                    " Salary is withheld while a client filter is active, since payroll isn't work done for one client."}
+                    " Salaried payroll is withheld while a client filter is active, since payroll isn't work done for one client."}
                 </p>
               </CardHeader>
               <CardContent className="overflow-x-auto p-0">
-                <table className="w-full min-w-[880px] text-sm">
+                <table className="w-full min-w-[760px] text-sm">
                   <thead>
                     <tr className="border-b border-border text-xs uppercase tracking-wide text-muted-foreground">
-                      <th className="px-5 py-3 text-left font-medium">Employment type</th>
+                      <th className="px-5 py-3 text-left font-medium">Department</th>
                       <th className="px-5 py-3 text-right font-medium">Actual Hours</th>
                       <th className="px-5 py-3 text-right font-medium">Billed Hours</th>
-                      <th className="px-5 py-3 text-right font-medium">Actual Wages</th>
-                      <th className="px-5 py-3 text-right font-medium">Salary</th>
-                      <th className="px-5 py-3 text-right font-medium">Total Cost</th>
-                      <th className="px-5 py-3 text-right font-medium">Revenue</th>
+                      <th className="px-5 py-3 text-right font-medium">Paid</th>
+                      <th className="px-5 py-3 text-right font-medium">Invoice</th>
                       <th className="px-5 py-3 text-right font-medium">Gross Profit</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {pnlByEmployment.map((r) => (
+                    {departmentRows.map((r) => (
                       <tr key={r.key} className="border-b border-border last:border-0">
                         <td className="px-5 py-3 font-medium">{r.label}</td>
                         <td className="px-5 py-3 text-right tabular-nums">
-                          {formatHours(r.actualHours)}
+                          {r.key === "salary" ? "—" : formatHours(r.actualHours)}
                         </td>
                         <td className="px-5 py-3 text-right tabular-nums">
-                          {formatHours(r.billedHours)}
+                          {r.key === "salary" ? "—" : formatHours(r.billedHours)}
                         </td>
                         <td className="px-5 py-3 text-right tabular-nums">
-                          {formatCurrency(r.hourlyWages, settings.currency)}
+                          {formatCurrency(r.paid, settings.currency)}
                           {r.hasUnpricedWork && (
                             <span
                               className="ml-1 text-muted-foreground"
-                              title="Someone in this group has no pay rate on file, so this is lower than the real figure"
+                              title="Someone in this department has no pay rate on file, so this is lower than the real figure"
                             >
                               *
                             </span>
                           )}
-                        </td>
-                        <td className="px-5 py-3 text-right tabular-nums text-muted-foreground">
-                          {r.salary > 0 ? formatCurrency(r.salary, settings.currency) : "—"}
-                        </td>
-                        <td className="px-5 py-3 text-right font-medium tabular-nums">
-                          {formatCurrency(pnlCost(r), settings.currency)}
+                          {r.salariedHours > 0 && (
+                            <span
+                              className="ml-1 text-muted-foreground"
+                              title="Some hours here were worked by salaried staff, whose pay is in the Salaried payroll row instead"
+                            >
+                              †
+                            </span>
+                          )}
                         </td>
                         <td className="px-5 py-3 text-right tabular-nums">
-                          {formatCurrency(r.revenue, settings.currency)}
+                          {r.key === "salary" ? "—" : formatCurrency(r.invoice, settings.currency)}
                         </td>
                         <td className="px-5 py-3 text-right font-semibold tabular-nums">
-                          {formatCurrency(r.revenue - pnlCost(r), settings.currency)}
+                          {formatCurrency(r.invoice - r.paid, settings.currency)}
                         </td>
                       </tr>
                     ))}
@@ -2893,25 +2971,22 @@ function Reports() {
                     <tr className="border-t-2 border-border bg-muted/50">
                       <td className="px-5 py-3 font-semibold">Total</td>
                       <td className="px-5 py-3 text-right font-semibold tabular-nums">
-                        {formatHours(pnlTotals.actualHours)}
+                        {formatHours(departmentTotals.actualHours)}
                       </td>
                       <td className="px-5 py-3 text-right font-semibold tabular-nums">
-                        {formatHours(pnlTotals.billedHours)}
+                        {formatHours(departmentTotals.billedHours)}
                       </td>
                       <td className="px-5 py-3 text-right font-semibold tabular-nums">
-                        {formatCurrency(pnlTotals.hourlyWages, settings.currency)}
+                        {formatCurrency(departmentTotals.paid, settings.currency)}
                       </td>
                       <td className="px-5 py-3 text-right font-semibold tabular-nums">
-                        {formatCurrency(pnlTotals.salary, settings.currency)}
+                        {formatCurrency(departmentTotals.invoice, settings.currency)}
                       </td>
                       <td className="px-5 py-3 text-right font-semibold tabular-nums">
-                        {formatCurrency(pnlCost(pnlTotals), settings.currency)}
-                      </td>
-                      <td className="px-5 py-3 text-right font-semibold tabular-nums">
-                        {formatCurrency(pnlTotals.revenue, settings.currency)}
-                      </td>
-                      <td className="px-5 py-3 text-right font-semibold tabular-nums">
-                        {formatCurrency(pnlTotals.revenue - pnlCost(pnlTotals), settings.currency)}
+                        {formatCurrency(
+                          departmentTotals.invoice - departmentTotals.paid,
+                          settings.currency,
+                        )}
                       </td>
                     </tr>
                   </tfoot>
