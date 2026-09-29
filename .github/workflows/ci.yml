@@ -35,10 +35,18 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      # Pinned rather than "latest" on purpose. Resolving "latest" makes the
+      # action call the GitHub releases API unauthenticated, from a shared
+      # runner IP, and run #30 on 2026-09-29 died on exactly that: "Failed to
+      # resolve latest Supabase CLI release: rate limit exceeded", which
+      # skipped every step after it — including the RPC integration tests this
+      # job exists for. A pinned version is downloaded by direct URL with no
+      # API call, so the job no longer depends on someone else's API quota.
+      # Bump deliberately; there is no need to track the newest CLI here.
       - name: Set up Supabase CLI
         uses: supabase/setup-cli@v1
         with:
-          version: latest
+          version: 2.115.0
 
       # M43: spins up a throwaway local Postgres + Auth + Storage stack
       # (Docker is already preinstalled on this runner) and applies every
