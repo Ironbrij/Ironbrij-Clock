@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
-import { Banknote } from "lucide-react";
+import { Banknote, Mail } from "lucide-react";
 import { toast } from "sonner";
+import { CasualReportEmailDialog } from "@/components/casual-report-email-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -42,6 +43,10 @@ export function CasualServiceTab() {
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
+  // M52: the client-facing report email. Lives here rather than in Reports for
+  // the same reason marking a VA paid does — Manage is where this app keeps
+  // privileged actions, and Reports stays a read/export surface.
+  const [emailOpen, setEmailOpen] = useState(false);
 
   useEffect(() => {
     if (!canManage) {
@@ -199,7 +204,17 @@ export function CasualServiceTab() {
             <SelectItem value="unpaid">Unpaid only</SelectItem>
           </SelectContent>
         </Select>
+        <Button variant="outline" className="ml-auto" onClick={() => setEmailOpen(true)}>
+          <Mail className="mr-2 h-4 w-4" />
+          Email client report…
+        </Button>
       </div>
+
+      <CasualReportEmailDialog
+        open={emailOpen}
+        onOpenChange={setEmailOpen}
+        initialClientId={clientFilter === "all" ? null : clientFilter}
+      />
 
       {selected.size > 0 && (
         <div className="flex items-center gap-3 rounded-md border border-border bg-muted/40 px-4 py-2">

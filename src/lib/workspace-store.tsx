@@ -43,6 +43,11 @@ import {
 } from "@/lib/workspace/types";
 import { useAnnouncementsData } from "@/lib/workspace/use-announcements";
 import { useBillingRatesData } from "@/lib/workspace/use-billing-rates";
+import {
+  useCasualReportsData,
+  type CasualReportPreview,
+  type CasualReportPreviousSend,
+} from "@/lib/workspace/use-casual-reports";
 import { useClientsData } from "@/lib/workspace/use-clients";
 import { usePlacementsData } from "@/lib/workspace/use-placements";
 import { useEmploymentData } from "@/lib/workspace/use-employment";
@@ -75,6 +80,8 @@ export {
   NO_CLIENT,
   timezones,
   type ActiveTimer,
+  type CasualReportPreview,
+  type CasualReportPreviousSend,
   type DaySchedule,
   type DetailedEntry,
   type EmploymentType,
@@ -207,6 +214,10 @@ type WorkspaceContextValue = {
   remindedWeeks: Set<string>;
   /** M47: emails someone that their timesheet for `weekStart` (a Monday date key) isn't submitted. Throws with a specific reason if refused. */
   remindToSubmit: (userId: string, weekStart: string) => Promise<void>;
+  /** M52: composes the client's Casual Service Productivity Report for a week and returns it *without* sending — the exact email sendCasualReport would deliver. Throws with a specific reason if refused. */
+  previewCasualReport: (clientId: string, weekStart: string) => Promise<CasualReportPreview>;
+  /** M52: sends that same report to the client's contact email. Nothing is scheduled — one call, one email. */
+  sendCasualReport: (clientId: string, weekStart: string) => Promise<{ to: string }>;
 
   membersByTeam: (teamId: string) => WorkspaceMember[];
   teamMemberCount: (teamId: string) => number;
@@ -483,6 +494,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     remindToSubmit,
   } = useTimesheetsData(enabled, uid, canManage);
 
+  const { previewCasualReport, sendCasualReport } = useCasualReportsData();
+
   const loading =
     enabled &&
     (profilesQ.isLoading ||
@@ -611,6 +624,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       reviewTimesheet,
       remindedWeeks,
       remindToSubmit,
+      previewCasualReport,
+      sendCasualReport,
       refreshAll: () => qc.invalidateQueries(),
     };
   }, [
@@ -704,6 +719,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     reviewTimesheet,
     remindedWeeks,
     remindToSubmit,
+    previewCasualReport,
+    sendCasualReport,
     membersByTeam,
     qc,
   ]);
