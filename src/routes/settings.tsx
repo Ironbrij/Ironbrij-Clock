@@ -935,7 +935,7 @@ function AdminTab() {
               className="max-w-32"
             />
             <p className="text-xs text-muted-foreground">
-              Added to casual-service hours before they're rounded up, and applied to what the
+              Added to Paid Casual Service hours before they're rounded up, and applied to what the
               client is invoiced — never to what the VA is paid, which always uses actual tracked
               time. Set to 0 to invoice actual hours. Same scope as the increment below.
             </p>
@@ -953,9 +953,10 @@ function AdminTab() {
               className="max-w-32"
             />
             <p className="text-xs text-muted-foreground">
-              Casual-service hours (Paid Casual, VIP Client, Promotional — not Ironbrij) are rounded
-              up to the nearest increment of this many hours in Reports and CSV exports. Doesn't
-              change any stored tracked time.
+              Paid Casual Service hours are rounded up to the nearest increment of this many hours
+              in Reports and CSV exports. VIP Client, Promotional, Ironbrij and ordinary client work
+              are all invoiced at exact tracked hours instead. Doesn't change any stored tracked
+              time.
             </p>
             <p className="text-xs text-muted-foreground">
               Applied <span className="font-medium">after</span> the uplift — at {upliftPreviewPct}%

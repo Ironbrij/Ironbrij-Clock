@@ -24,25 +24,29 @@ const INCREMENT_EPSILON = 1e-9;
  *
  * This is a narrower, deliberately re-confirmed exception to the general
  * time-rounding feature docs/audit-findings.md's "Unnecessary" section
- * already rejected for the core app — not a reversal of that call. It's
- * scoped only to the three paid casual-service categories.
+ * already rejected for the core app — not a reversal of that call.
  *
- * Per the workbook's own header comment ("Ironbrij is excluded from the
- * additional increment"), 'ironbrij'-category work passes through at its
- * exact tracked hours, since it's never actually billed. A non-casual
- * entry (`category === null`) is likewise untouched — this function only
- * ever changes the number for paid casual/VIP/promotional work.
- *
- * M51: the client uplift (`upliftPct`, 20 by default) now applies **before**
+ * M51: the client uplift (`upliftPct`, 20 by default) applies **before**
  * the round-up, which is the order the product owner confirmed: 6.10h
  * becomes 7.32h, which rounds to 7.50h. Rounding first would give the same
  * answer here but diverges as soon as the decimals fall differently, so the
  * order is load-bearing rather than incidental.
  *
- * The scope is deliberately unchanged from M46 — paid casual, VIP client and
- * promotional only, confirmed explicitly when M51 was specified. Regular
- * client work and retainer work still pass through raw, so this function
- * never silently inflates anything outside the casual programme.
+ * M52 — **scope narrowed to `paid_casual` alone**, on the product owner's
+ * instruction ("only casual that does increment"), replacing M51's
+ * three-category scope. Everything else now bills at exact tracked hours:
+ *
+ *   - `vip_client` and `promotional` — still casual-programme work, still
+ *     reported under their own departments, but no longer uplifted or
+ *     rounded. This is the one behaviour M52 actually changes, and it
+ *     changes past periods too, same as M51's uplift did.
+ *   - `ironbrij` — internal work, including backup cover, which is never
+ *     billed at all. Unchanged since M46.
+ *   - `null` — full-time and part-time work for external clients, plus
+ *     retainers. The far more common case, and unchanged.
+ *
+ * So the single rule is now: an entry is uplifted and rounded up if, and
+ * only if, it is Paid Casual Service.
  */
 export function billableHoursForCasualEntry(
   entry: { seconds: number },
@@ -50,7 +54,7 @@ export function billableHoursForCasualEntry(
   { incrementHours, upliftPct }: { incrementHours: number; upliftPct: number },
 ): number {
   const rawHours = entry.seconds / 3600;
-  if (category === null || category === "ironbrij") return rawHours;
+  if (category !== "paid_casual") return rawHours;
 
   const uplifted = upliftPct > 0 ? rawHours * (1 + upliftPct / 100) : rawHours;
   if (incrementHours <= 0) return uplifted;

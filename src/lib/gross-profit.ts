@@ -68,8 +68,9 @@ export type EntryProfit = {
   actualHours: number;
   /**
    * M51: hours actually invoiced — `actualHours` plus the client uplift,
-   * rounded up to the billing increment. Equal to `actualHours` for anything
-   * outside the three casual categories.
+   * rounded up to the billing increment. M52 narrowed that to Paid Casual
+   * Service alone, so this equals `actualHours` for everything else,
+   * VIP Client and Promotional included.
    */
   billedHours: number;
   cost: number | null;
@@ -138,8 +139,9 @@ export function grossProfitForEntry(
 
   const cost = opts.salaried ? 0 : opts.payRate === null ? null : actualHours * opts.payRate;
 
-  // 'ironbrij' is casual work that is tracked but never charged — the same
-  // exclusion billableHoursForCasualEntry already applies to its rounding.
+  // 'ironbrij' is casual work that is tracked but never charged. Narrower
+  // than billableHoursForCasualEntry's scope since M52: VIP Client and
+  // Promotional work is still invoiced, just at exact tracked hours.
   const chargeable = entry.billable && entry.serviceCategory !== "ironbrij";
   const revenue = chargeable && opts.invoiceRate !== null ? billedHours * opts.invoiceRate : null;
 

@@ -1795,7 +1795,7 @@ function Reports() {
             "Tags",
             "Entries",
             "Raw Hours",
-            "Billable Hours (uplifted & rounded)",
+            "Billable Hours (Paid Casual uplifted & rounded)",
             "Paid",
             "Unpaid",
             "Date range",
@@ -2042,8 +2042,8 @@ function Reports() {
                 point of the two hour columns. */}
             Wages are costed on actual tracked hours; revenue is invoiced on billed hours
             {settings.clientBillingUpliftPct > 0
-              ? ` (casual work plus ${settings.clientBillingUpliftPct}%, rounded up)`
-              : " (casual work rounded up)"}
+              ? ` (Paid Casual work plus ${settings.clientBillingUpliftPct}%, rounded up)`
+              : " (Paid Casual work rounded up)"}
             . Work with no invoice rate on file counts as cost only.
             {profitGroupBy === "team" &&
               " Someone on more than one team is counted under each — group totals will add up to more than the grand total."}
@@ -2579,9 +2579,9 @@ function Reports() {
                 {settings.clientBillingUpliftPct > 0
                   ? ` (${settings.clientBillingUpliftPct}%)`
                   : ""}{" "}
-                and then rounds up to the billing increment, for every category except Ironbrij
-                (internal, never billed) — raw tracked hours are shown alongside for reference and
-                are never overwritten.
+                and then rounds up to the billing increment, for Paid Casual Service only — VIP
+                Client, Promotional and Ironbrij all bill at exact tracked hours. Raw tracked hours
+                are shown alongside for reference and are never overwritten.
               </p>
             </CardHeader>
             <CardContent className="overflow-x-auto p-0">
@@ -2746,7 +2746,7 @@ function Reports() {
             <p className="text-xs text-muted-foreground">
               Safe to send out — no cost, pay rate or margin figures. Hours are what's invoiced
               {settings.clientBillingUpliftPct > 0
-                ? `, including the ${settings.clientBillingUpliftPct}% uplift on casual work, rounded up`
+                ? `, including the ${settings.clientBillingUpliftPct}% uplift on Paid Casual work, rounded up`
                 : ", rounded up"}
               . Remaining hours are the client's whole subscription allowance less everything ever
               rendered against it, not just this range.
