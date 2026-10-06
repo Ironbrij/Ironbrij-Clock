@@ -19,12 +19,13 @@ import {
   Pagination,
   PaginationContent,
   PaginationItem,
-  PaginationNext,
-  PaginationPrevious,
+  PaginationNextButton,
+  PaginationPreviousButton,
 } from "@/components/ui/pagination";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { MultiSelectList } from "@/components/multi-select-list";
+import { UnsavedChangesGuard } from "@/components/unsaved-changes-guard";
 import {
   filterMembersBySearchAndTeam,
   MemberSearchFilter,
@@ -44,7 +45,16 @@ import { currencies, timezones, useWorkspace, type Role } from "@/lib/workspace-
 import { toast } from "sonner";
 import { useEffect, useRef, useState, type ChangeEvent } from "react";
 
+const settingsTabs = ["profile", "notifications", "users", "admin"] as const;
+type SettingsTab = (typeof settingsTabs)[number];
+
+// The active tab lives in the URL (?tab=users) so a refresh keeps it and
+// other pages can link straight to a tab — the Dashboard's pending-signups
+// banner links to Users.
 export const Route = createFileRoute("/settings")({
+  validateSearch: (search: Record<string, unknown>): { tab?: SettingsTab } => ({
+    tab: settingsTabs.includes(search.tab as SettingsTab) ? (search.tab as SettingsTab) : undefined,
+  }),
   head: () => ({
     meta: [
       { title: "Settings — IronTrack" },
@@ -83,9 +93,21 @@ const notifications = [
 
 function SettingsPage() {
   const { isAdmin } = useWorkspace();
+  const search = Route.useSearch();
+  const navigate = Route.useNavigate();
+  // Users has no non-admin fallback content, so a non-admin following a
+  // ?tab=users link lands on Profile instead of a blank panel.
+  const tab: SettingsTab =
+    search.tab === "users" && !isAdmin ? "profile" : (search.tab ?? "profile");
+  const setTab = (value: string) =>
+    void navigate({
+      search: { tab: value === "profile" ? undefined : (value as SettingsTab) },
+      replace: true,
+    });
+
   return (
     <AppShell title="Settings" subtitle="Make IronTrack feel like yours.">
-      <Tabs defaultValue="profile">
+      <Tabs value={tab} onValueChange={setTab}>
         <TabsList>
           <TabsTrigger value="profile">Profile</TabsTrigger>
           <TabsTrigger value="notifications">Notifications</TabsTrigger>
@@ -133,7 +155,7 @@ function SettingsPage() {
                       <p className="text-sm font-medium">{n.label}</p>
                       <p className="text-xs text-muted-foreground">{n.hint}</p>
                     </div>
-                    <Switch defaultChecked={n.on} disabled />
+                    <Switch defaultChecked={n.on} disabled aria-label={n.label} />
                   </li>
                 ))}
               </ul>
@@ -181,6 +203,13 @@ function ProfileTab() {
     setTimezone(currentUser.timezone);
   }, [currentUser]);
 
+  // The avatar uploads immediately on pick, so only the three text/select
+  // fields below can hold unsaved edits.
+  const dirty =
+    fullName !== currentUser.name ||
+    jobTitle !== currentUser.title ||
+    timezone !== currentUser.timezone;
+
   const pickAvatar = () => avatarInputRef.current?.click();
 
   const onAvatarSelected = async (e: ChangeEvent<HTMLInputElement>) => {
@@ -202,6 +231,7 @@ function ProfileTab() {
 
   return (
     <Card className="max-w-2xl shadow-card">
+      <UnsavedChangesGuard when={dirty} />
       <CardContent className="flex flex-col gap-6 p-6">
         <div className="flex items-center gap-4">
           <Avatar className="h-16 w-16">
@@ -221,17 +251,27 @@ function ProfileTab() {
             <Button variant="outline" size="sm" disabled={uploadingAvatar} onClick={pickAvatar}>
               {uploadingAvatar ? "Uploading…" : "Change avatar"}
             </Button>
-            <p className="mt-2 text-xs text-muted-foreground">PNG or JPG, up to 2 MB.</p>
+            <p className="mt-2 text-xs text-muted-foreground">PNG or JPG, up to 2&nbsp;MB.</p>
           </div>
         </div>
         <div className="grid gap-4 sm:grid-cols-2">
           <div className="grid gap-2">
             <Label htmlFor="name">Full name</Label>
-            <Input id="name" value={fullName} onChange={(e) => setFullName(e.target.value)} />
+            <Input
+              id="name"
+              autoComplete="name"
+              value={fullName}
+              onChange={(e) => setFullName(e.target.value)}
+            />
           </div>
           <div className="grid gap-2">
             <Label htmlFor="title">Job title</Label>
-            <Input id="title" value={jobTitle} onChange={(e) => setJobTitle(e.target.value)} />
+            <Input
+              id="title"
+              autoComplete="organization-title"
+              value={jobTitle}
+              onChange={(e) => setJobTitle(e.target.value)}
+            />
           </div>
         </div>
         <div className="grid gap-2">
@@ -268,7 +308,7 @@ function ProfileTab() {
                 .finally(() => setSaving(false));
             }}
           >
-            Save changes
+            {saving ? "Saving…" : "Save changes"}
           </Button>
         </div>
       </CardContent>
@@ -399,7 +439,7 @@ function UsersTab() {
         onValueChange={(v) => changeRole(m, v as Role)}
         disabled={isBusy(`role:${m.id}`)}
       >
-        <SelectTrigger className="h-8 w-28">
+        <SelectTrigger className="h-8 w-28" aria-label={`Role for ${m.name}`}>
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
@@ -445,6 +485,7 @@ function UsersTab() {
             size="sm"
             disabled={isBusy(`team:${m.id}`)}
             className="h-8 min-w-[9rem] justify-start font-normal"
+            aria-label={`Teams for ${m.name}: ${label}`}
           >
             {label}
           </Button>
@@ -491,14 +532,16 @@ function UsersTab() {
                 <tbody className="divide-y">
                   {pendingMembers.map((m) => (
                     <tr key={m.id} className="hover:bg-accent/40 transition-colors">
-                      <td className="px-3 py-2.5 font-medium flex items-center gap-2">
-                        <Avatar className="h-7 w-7 shrink-0">
-                          <AvatarImage src={m.avatarUrl ?? undefined} alt={m.name} />
-                          <AvatarFallback className="bg-secondary text-xs">
-                            {m.initials}
-                          </AvatarFallback>
-                        </Avatar>
-                        {m.name}
+                      <td className="px-3 py-2.5 font-medium">
+                        <div className="flex items-center gap-2">
+                          <Avatar className="h-7 w-7 shrink-0">
+                            <AvatarImage src={m.avatarUrl ?? undefined} alt="" />
+                            <AvatarFallback className="bg-secondary text-xs" aria-hidden="true">
+                              {m.initials}
+                            </AvatarFallback>
+                          </Avatar>
+                          {m.name}
+                        </div>
                       </td>
                       <td className="px-3 py-2.5 text-muted-foreground">{m.email ?? "—"}</td>
                       <td className="px-3 py-2.5">
@@ -615,14 +658,16 @@ function UsersTab() {
                     <tbody className="divide-y">
                       {pagedApprovedMembers.map((m) => (
                         <tr key={m.id} className="hover:bg-accent/40 transition-colors">
-                          <td className="px-3 py-2.5 font-medium flex items-center gap-2">
-                            <Avatar className="h-7 w-7 shrink-0">
-                              <AvatarImage src={m.avatarUrl ?? undefined} alt={m.name} />
-                              <AvatarFallback className="bg-secondary text-xs">
-                                {m.initials}
-                              </AvatarFallback>
-                            </Avatar>
-                            {m.name}
+                          <td className="px-3 py-2.5 font-medium">
+                            <div className="flex items-center gap-2">
+                              <Avatar className="h-7 w-7 shrink-0">
+                                <AvatarImage src={m.avatarUrl ?? undefined} alt="" />
+                                <AvatarFallback className="bg-secondary text-xs" aria-hidden="true">
+                                  {m.initials}
+                                </AvatarFallback>
+                              </Avatar>
+                              {m.name}
+                            </div>
                           </td>
                           <td className="px-3 py-2.5 text-muted-foreground">{m.email ?? "—"}</td>
                           <td className="px-3 py-2.5">
@@ -671,24 +716,16 @@ function UsersTab() {
                 <Pagination className="mx-0 w-auto">
                   <PaginationContent>
                     <PaginationItem>
-                      <PaginationPrevious
-                        className={
-                          membersCurrentPage <= 1
-                            ? "pointer-events-none opacity-50"
-                            : "cursor-pointer"
-                        }
+                      <PaginationPreviousButton
+                        disabled={membersCurrentPage <= 1}
                         onClick={() =>
                           membersCurrentPage > 1 && setMembersPage(membersCurrentPage - 1)
                         }
                       />
                     </PaginationItem>
                     <PaginationItem>
-                      <PaginationNext
-                        className={
-                          membersCurrentPage >= membersTotalPages
-                            ? "pointer-events-none opacity-50"
-                            : "cursor-pointer"
-                        }
+                      <PaginationNextButton
+                        disabled={membersCurrentPage >= membersTotalPages}
                         onClick={() =>
                           membersCurrentPage < membersTotalPages &&
                           setMembersPage(membersCurrentPage + 1)
@@ -759,6 +796,16 @@ function UsersTab() {
   );
 }
 
+type AdminField = "weeklyHours" | "uplift" | "increment" | "inactiveDays";
+/** Page order, so focus lands on the topmost invalid field. */
+const adminFieldOrder: AdminField[] = ["weeklyHours", "uplift", "increment", "inactiveDays"];
+const adminFieldIds: Record<AdminField, string> = {
+  weeklyHours: "ws-hours",
+  uplift: "ws-client-uplift",
+  increment: "ws-casual-increment",
+  inactiveDays: "ws-client-inactive-days",
+};
+
 function AdminTab() {
   const { settings, updateSettings } = useWorkspace();
   const [companyName, setCompanyName] = useState(settings.companyName);
@@ -778,6 +825,7 @@ function AdminTab() {
     String(settings.clientInactiveThresholdDays),
   );
   const fileRef = useRef<HTMLInputElement>(null);
+  const [saving, setSaving] = useState(false);
 
   // M51: a worked example of the two settings interacting, since "uplift
   // then round" and "round then uplift" give different answers and the pair
@@ -818,8 +866,99 @@ function AdminTab() {
 
   const dailyGoal = (Number(weeklyHours) || 0) / 5;
 
+  const dirty =
+    companyName !== settings.companyName ||
+    timezone !== settings.timezone ||
+    weeklyHours !== String(settings.weeklyHours) ||
+    currency !== settings.currency ||
+    logo !== settings.logoDataUrl ||
+    requireDescriptions !== settings.requireDescriptions ||
+    allowManualEntry !== settings.allowManualEntry ||
+    casualBillingIncrementHours !== String(settings.casualBillingIncrementHours) ||
+    clientBillingUpliftPct !== String(settings.clientBillingUpliftPct) ||
+    clientInactiveThresholdDays !== String(settings.clientInactiveThresholdDays);
+
+  // Inline validation: each error shows under its own field, is announced
+  // via aria-describedby, and the first invalid field (in page order) gets
+  // focus on Save. The min= attributes on the inputs are browser hints only
+  // — nothing stops typing past them — so these checks are the real gate.
+  const [errors, setErrors] = useState<Partial<Record<AdminField, string>>>({});
+  const clearError = (field: AdminField) =>
+    setErrors((prev) => (prev[field] ? { ...prev, [field]: undefined } : prev));
+  const errorProps = (field: AdminField) => ({
+    "aria-invalid": errors[field] ? true : undefined,
+    "aria-describedby": errors[field] ? `${adminFieldIds[field]}-error` : undefined,
+  });
+  const fieldError = (field: AdminField) =>
+    errors[field] ? (
+      <p id={`${adminFieldIds[field]}-error`} className="text-xs text-destructive">
+        {errors[field]}
+      </p>
+    ) : null;
+
+  const save = () => {
+    const parsedHours = Number(weeklyHours);
+    const parsedIncrement = Number(casualBillingIncrementHours);
+    const parsedUplift = Number(clientBillingUpliftPct);
+    const parsedInactiveDays = Number(clientInactiveThresholdDays);
+
+    // Number("0") || fallback used to silently discard 0 (and any other
+    // invalid entry) and save the old value instead — hence explicit checks.
+    const next: Partial<Record<AdminField, string>> = {};
+    if (!weeklyHours.trim() || Number.isNaN(parsedHours) || parsedHours < 1) {
+      next.weeklyHours = "Enter a number of 1 or more.";
+    }
+    if (!clientBillingUpliftPct.trim() || Number.isNaN(parsedUplift) || parsedUplift < 0) {
+      next.uplift = "Enter a number of 0 or more. Use 0 to invoice actual hours.";
+    }
+    if (
+      !casualBillingIncrementHours.trim() ||
+      Number.isNaN(parsedIncrement) ||
+      parsedIncrement <= 0
+    ) {
+      next.increment = "Enter a number greater than 0, e.g. 0.25.";
+    }
+    if (
+      !clientInactiveThresholdDays.trim() ||
+      Number.isNaN(parsedInactiveDays) ||
+      parsedInactiveDays <= 0
+    ) {
+      next.inactiveDays = "Enter a number of days greater than 0.";
+    }
+    setErrors(next);
+    const firstInvalid = adminFieldOrder.find((field) => next[field]);
+    if (firstInvalid) {
+      document.getElementById(adminFieldIds[firstInvalid])?.focus();
+      return;
+    }
+
+    setSaving(true);
+    void updateSettings({
+      companyName: companyName.trim() || settings.companyName,
+      timezone,
+      weeklyHours: parsedHours,
+      currency,
+      logoDataUrl: logo,
+      requireDescriptions,
+      allowManualEntry,
+      casualBillingIncrementHours: parsedIncrement,
+      clientBillingUpliftPct: parsedUplift,
+      clientInactiveThresholdDays: parsedInactiveDays,
+    })
+      .then(() =>
+        toast.success("Workspace settings saved", {
+          description: "Your changes are live across the workspace.",
+        }),
+      )
+      .catch((error: Error) =>
+        toast.error("Couldn't save settings", { description: error.message }),
+      )
+      .finally(() => setSaving(false));
+  };
+
   return (
     <div className="grid max-w-2xl gap-6">
+      <UnsavedChangesGuard when={dirty && !saving} />
       <Card className="shadow-card">
         <CardContent className="flex flex-col gap-6 p-6">
           <div className="grid gap-2">
@@ -831,8 +970,8 @@ function AdminTab() {
             />
           </div>
 
-          <div className="grid gap-2">
-            <Label>Company logo</Label>
+          <div className="grid gap-2" role="group" aria-labelledby="company-logo-label">
+            <Label id="company-logo-label">Company logo</Label>
             <div className="flex items-center gap-4">
               <div className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-border bg-muted">
                 {logo ? (
@@ -863,7 +1002,9 @@ function AdminTab() {
                     </Button>
                   )}
                 </div>
-                <p className="mt-2 text-xs text-muted-foreground">PNG, JPG or SVG, up to 2 MB.</p>
+                <p className="mt-2 text-xs text-muted-foreground">
+                  PNG, JPG or SVG, up to 2&nbsp;MB.
+                </p>
               </div>
             </div>
           </div>
@@ -912,8 +1053,13 @@ function AdminTab() {
               step={0.5}
               min={1}
               value={weeklyHours}
-              onChange={(e) => setWeeklyHours(e.target.value)}
+              onChange={(e) => {
+                setWeeklyHours(e.target.value);
+                clearError("weeklyHours");
+              }}
+              {...errorProps("weeklyHours")}
             />
+            {fieldError("weeklyHours")}
             <p className="text-xs text-muted-foreground">
               Drives the daily goal on your Dashboard — currently{" "}
               <span className="font-medium text-foreground">
@@ -931,9 +1077,14 @@ function AdminTab() {
               step={1}
               min={0}
               value={clientBillingUpliftPct}
-              onChange={(e) => setClientBillingUpliftPct(e.target.value)}
+              onChange={(e) => {
+                setClientBillingUpliftPct(e.target.value);
+                clearError("uplift");
+              }}
               className="max-w-32"
+              {...errorProps("uplift")}
             />
+            {fieldError("uplift")}
             <p className="text-xs text-muted-foreground">
               Added to Paid Casual Service hours before they're rounded up, and applied to what the
               client is invoiced — never to what the VA is paid, which always uses actual tracked
@@ -949,9 +1100,14 @@ function AdminTab() {
               step={0.05}
               min={0.05}
               value={casualBillingIncrementHours}
-              onChange={(e) => setCasualBillingIncrementHours(e.target.value)}
+              onChange={(e) => {
+                setCasualBillingIncrementHours(e.target.value);
+                clearError("increment");
+              }}
               className="max-w-32"
+              {...errorProps("increment")}
             />
+            {fieldError("increment")}
             <p className="text-xs text-muted-foreground">
               Paid Casual Service hours are rounded up to the nearest increment of this many hours
               in Reports and CSV exports. VIP Client, Promotional, Ironbrij and ordinary client work
@@ -975,11 +1131,16 @@ function AdminTab() {
               step={1}
               min={1}
               value={clientInactiveThresholdDays}
-              onChange={(e) => setClientInactiveThresholdDays(e.target.value)}
+              onChange={(e) => {
+                setClientInactiveThresholdDays(e.target.value);
+                clearError("inactiveDays");
+              }}
               className="max-w-32"
+              {...errorProps("inactiveDays")}
             />
+            {fieldError("inactiveDays")}
             <p className="text-xs text-muted-foreground">
-              A client is flagged "Casual service inactive" on Projects and Clients once this many
+              A client is flagged “Casual service inactive” on Projects and Clients once this many
               days have passed since their last casual-service entry.
             </p>
           </div>
@@ -992,7 +1153,11 @@ function AdminTab() {
                   Entries can't be saved without a short note.
                 </p>
               </div>
-              <Switch checked={requireDescriptions} onCheckedChange={setRequireDescriptions} />
+              <Switch
+                checked={requireDescriptions}
+                onCheckedChange={setRequireDescriptions}
+                aria-label="Require descriptions on entries"
+              />
             </li>
             <li className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 px-4 py-3">
               <div className="min-w-0">
@@ -1002,7 +1167,11 @@ function AdminTab() {
                   only.
                 </p>
               </div>
-              <Switch checked={allowManualEntry} onCheckedChange={setAllowManualEntry} />
+              <Switch
+                checked={allowManualEntry}
+                onCheckedChange={setAllowManualEntry}
+                aria-label="Allow manual time entry"
+              />
             </li>
             <li className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 px-4 py-3">
               <div className="min-w-0">
@@ -1019,72 +1188,8 @@ function AdminTab() {
           </ul>
 
           <div>
-            <Button
-              onClick={() => {
-                // Number("0") || fallback used to silently discard 0 (and
-                // any other invalid entry) and save the old value instead,
-                // with no indication the typed number wasn't what got
-                // saved. min={1} on the input is a UI hint only — nothing
-                // stopped it being bypassed by typing.
-                const parsedHours = Number(weeklyHours);
-                if (!weeklyHours.trim() || Number.isNaN(parsedHours) || parsedHours < 1) {
-                  toast.error("Weekly hours must be a number of 1 or more");
-                  return;
-                }
-                const parsedIncrement = Number(casualBillingIncrementHours);
-                if (
-                  !casualBillingIncrementHours.trim() ||
-                  Number.isNaN(parsedIncrement) ||
-                  parsedIncrement <= 0
-                ) {
-                  toast.error("Casual service billing increment must be a number greater than 0");
-                  return;
-                }
-                // Same reasoning as the increment check above: min={0} on the
-                // input is a UI hint that nothing stops someone typing past.
-                const parsedUplift = Number(clientBillingUpliftPct);
-                if (
-                  !clientBillingUpliftPct.trim() ||
-                  Number.isNaN(parsedUplift) ||
-                  parsedUplift < 0
-                ) {
-                  toast.error("Client billing uplift must be a number of 0 or more");
-                  return;
-                }
-                const parsedInactiveDays = Number(clientInactiveThresholdDays);
-                if (
-                  !clientInactiveThresholdDays.trim() ||
-                  Number.isNaN(parsedInactiveDays) ||
-                  parsedInactiveDays <= 0
-                ) {
-                  toast.error(
-                    "Casual service inactivity threshold must be a number greater than 0",
-                  );
-                  return;
-                }
-                void updateSettings({
-                  companyName: companyName.trim() || settings.companyName,
-                  timezone,
-                  weeklyHours: parsedHours,
-                  currency,
-                  logoDataUrl: logo,
-                  requireDescriptions,
-                  allowManualEntry,
-                  casualBillingIncrementHours: parsedIncrement,
-                  clientBillingUpliftPct: parsedUplift,
-                  clientInactiveThresholdDays: parsedInactiveDays,
-                })
-                  .then(() =>
-                    toast.success("Workspace settings saved", {
-                      description: "Your changes are live across the workspace.",
-                    }),
-                  )
-                  .catch((error: Error) =>
-                    toast.error("Couldn't save settings", { description: error.message }),
-                  );
-              }}
-            >
-              Save workspace settings
+            <Button onClick={save} disabled={saving}>
+              {saving ? "Saving…" : "Save workspace settings"}
             </Button>
           </div>
         </CardContent>
@@ -1125,6 +1230,7 @@ function TaskCategoriesCard() {
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState("");
+  const [removeTarget, setRemoveTarget] = useState<{ id: string; name: string } | null>(null);
 
   const add = async () => {
     const name = newName.trim();
@@ -1165,6 +1271,7 @@ function TaskCategoriesCard() {
     try {
       await deleteTaskCategory(id);
       toast.success("Task category removed");
+      setRemoveTarget(null);
     } catch (error) {
       toast.error("Couldn't remove that", { description: (error as Error).message });
     } finally {
@@ -1188,6 +1295,7 @@ function TaskCategoriesCard() {
               {editingId === t.id ? (
                 <Input
                   autoFocus
+                  aria-label={`Rename ${t.name}`}
                   value={editName}
                   onChange={(e) => setEditName(e.target.value)}
                   onBlur={() => void saveEdit()}
@@ -1214,7 +1322,7 @@ function TaskCategoriesCard() {
                   variant="ghost"
                   aria-label={`Remove ${t.name}`}
                   disabled={deletingId === t.id}
-                  onClick={() => void remove(t.id)}
+                  onClick={() => setRemoveTarget({ id: t.id, name: t.name })}
                 >
                   <Trash2 className="h-4 w-4" />
                 </Button>
@@ -1229,7 +1337,9 @@ function TaskCategoriesCard() {
         </ul>
         <div className="flex gap-2">
           <Input
-            placeholder="New category name"
+            aria-label="New task category name"
+            autoComplete="off"
+            placeholder="New category name…"
             value={newName}
             onChange={(e) => setNewName(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && void add()}
@@ -1239,6 +1349,32 @@ function TaskCategoriesCard() {
           </Button>
         </div>
       </CardContent>
+      <AlertDialog open={!!removeTarget} onOpenChange={(open) => !open && setRemoveTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove “{removeTarget?.name}”?</AlertDialogTitle>
+            <AlertDialogDescription>
+              It stops appearing as a choice when logging time, and every project scoped to it loses
+              it — a project scoped to only this category goes back to offering all of them. Entries
+              already logged against it keep it. Re-adding the same name later won't restore those
+              project scopes.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deletingId !== null}>Keep it</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={deletingId !== null}
+              onClick={(e) => {
+                // Keep the dialog open until the delete resolves.
+                e.preventDefault();
+                if (removeTarget) void remove(removeTarget.id);
+              }}
+            >
+              Remove category
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Card>
   );
 }

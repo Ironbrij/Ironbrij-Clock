@@ -85,6 +85,7 @@ function TeamsPage() {
     isAdmin,
     canManage,
     invitePeople,
+    addMemberToTeam,
     removeMemberFromTeam,
     createTeam,
     updateTeam,
@@ -142,6 +143,8 @@ function TeamsPage() {
                 return (
                   <li key={t.id} className="relative">
                     <button
+                      type="button"
+                      aria-pressed={selected === t.id}
                       onClick={() => setSelected(t.id)}
                       className={
                         "grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-4 px-5 py-3.5 text-left transition-colors hover:bg-muted/50 " +
@@ -158,7 +161,8 @@ function TeamsPage() {
                         <div className="min-w-0">
                           <p className="truncate text-sm font-medium">{t.name}</p>
                           <p className="text-xs text-muted-foreground">
-                            {teamMemberCount(t.id)} members
+                            {teamMemberCount(t.id)}{" "}
+                            {teamMemberCount(t.id) === 1 ? "member" : "members"}
                           </p>
                         </div>
                       </div>
@@ -176,7 +180,10 @@ function TeamsPage() {
                         {canManage ? (
                           <span className="w-8" />
                         ) : (
-                          <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                          <ChevronRight
+                            className="h-4 w-4 text-muted-foreground"
+                            aria-hidden="true"
+                          />
                         )}
                       </div>
                     </button>
@@ -224,7 +231,9 @@ function TeamsPage() {
           <CardContent className="p-5">
             <h2 className="text-base font-semibold">{team?.name ?? "No teams yet"}</h2>
             <p className="mt-0.5 text-sm text-muted-foreground">
-              {team ? `${teamMemberCount(team.id)} members` : "Create a team to get started."}
+              {team
+                ? `${teamMemberCount(team.id)} ${teamMemberCount(team.id) === 1 ? "member" : "members"}`
+                : "Create a team to get started."}
             </p>
             {team && roster.length === 0 ? (
               <p className="mt-6 text-sm text-muted-foreground">
@@ -265,8 +274,19 @@ function TeamsPage() {
                           aria-label={`Remove ${m.name} from ${team?.name ?? "this team"}`}
                           onClick={() => {
                             if (!team) return;
+                            // One click, but reversible: removing someone from
+                            // a team is a single team_members row, so Undo
+                            // just adds it straight back.
                             run(removeMemberFromTeam(m.id, team.id), () =>
-                              toast.success(`${m.name} removed from ${team.name}`),
+                              toast.success(`${m.name} removed from ${team.name}`, {
+                                action: {
+                                  label: "Undo",
+                                  onClick: () =>
+                                    run(addMemberToTeam(m.id, team.id), () =>
+                                      toast.success(`${m.name} is back in ${team.name}`),
+                                    ),
+                                },
+                              }),
                             );
                           }}
                         >
@@ -286,15 +306,15 @@ function TeamsPage() {
         open={inviteOpen}
         onOpenChange={setInviteOpen}
         defaultTeamId={selected}
-        onInvite={(payload) => {
-          invitePeople(payload)
-            .then((count) =>
-              toast.success("Invite sent", {
-                description: `${count} ${count === 1 ? "person" : "people"} invited as ${payload.role}.`,
-              }),
-            )
-            .catch((error: Error) => toast.error("Invite failed", { description: error.message }));
-        }}
+        // Returns the promise (and lets a failure reject) so InviteDialog can
+        // stay open with the typed addresses intact if the invite fails.
+        onInvite={(payload) =>
+          invitePeople(payload).then((count) => {
+            toast.success("Invite sent", {
+              description: `${count} ${count === 1 ? "person" : "people"} invited as ${payload.role}.`,
+            });
+          })
+        }
       />
 
       <TeamFormDialog
@@ -303,17 +323,17 @@ function TeamsPage() {
         onOpenChange={setTeamFormOpen}
         team={editingTeam}
         people={activeMembers}
-        onSubmit={({ name, color, memberIds }) => {
-          if (editingTeam) {
-            run(updateTeam(editingTeam.id, { name, color }), () =>
-              toast.success("Team updated", { description: `${name} saved.` }),
-            );
-          } else {
-            run(createTeam({ name, color, memberIds }), () =>
-              toast.success("Team created", { description: `${name} is ready to go.` }),
-            );
-          }
-        }}
+        // Returns the promise (and lets a failure reject) so the dialog can
+        // stay open with what was typed if the save fails.
+        onSubmit={({ name, color, memberIds }) =>
+          editingTeam
+            ? updateTeam(editingTeam.id, { name, color }).then(() => {
+                toast.success("Team updated", { description: `${name} saved.` });
+              })
+            : createTeam({ name, color, memberIds }).then(() => {
+                toast.success("Team created", { description: `${name} is ready to go.` });
+              })
+        }
       />
 
       <AlertDialog open={!!deletingTeam} onOpenChange={(o) => !o && setDeletingTeamId(null)}>
@@ -369,12 +389,25 @@ function InviteDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
   defaultTeamId: string;
-  onInvite: (payload: { emails: string[]; teamId: string; role: Role }) => void;
+  onInvite: (payload: { emails: string[]; teamId: string; role: Role }) => Promise<void>;
 }) {
   const { teams } = useWorkspace();
   const [raw, setRaw] = useState("");
   const [teamId, setTeamId] = useState(defaultTeamId);
   const [role, setRole] = useState<Role>("Member");
+  const [sending, setSending] = useState(false);
+
+  const send = async () => {
+    setSending(true);
+    try {
+      await onInvite({ emails, teamId, role });
+      onOpenChange(false);
+    } catch (error) {
+      toast.error("Invite failed", { description: (error as Error).message });
+    } finally {
+      setSending(false);
+    }
+  };
 
   useEffect(() => {
     if (open) {
@@ -410,10 +443,12 @@ function InviteDialog({
               id="invite-emails"
               rows={4}
               placeholder={"maya@ironbrij.com\ntom@ironbrij.com"}
+              autoComplete="off"
+              spellCheck={false}
               value={raw}
               onChange={(e) => setRaw(e.target.value)}
             />
-            <p className="text-xs text-muted-foreground">
+            <p className="text-xs text-muted-foreground" aria-live="polite">
               {emails.length} valid {emails.length === 1 ? "address" : "addresses"} detected.
             </p>
           </div>
@@ -454,14 +489,10 @@ function InviteDialog({
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Button
-            disabled={emails.length === 0 || !teamId}
-            onClick={() => {
-              onInvite({ emails, teamId, role });
-              onOpenChange(false);
-            }}
-          >
-            Send {emails.length > 1 ? `${emails.length} invites` : "invite"}
+          <Button disabled={emails.length === 0 || !teamId || sending} onClick={() => void send()}>
+            {sending
+              ? "Sending…"
+              : `Send ${emails.length > 1 ? `${emails.length} invites` : "invite"}`}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -480,7 +511,7 @@ function TeamFormDialog({
   onOpenChange: (open: boolean) => void;
   team: { id: string; name: string; color: string } | null;
   people: { id: string; name: string; title: string; teamId: string; teamIds: string[] }[];
-  onSubmit: (input: { name: string; color: string; memberIds: string[] }) => void;
+  onSubmit: (input: { name: string; color: string; memberIds: string[] }) => Promise<void>;
 }) {
   const { teams, addMemberToTeam, removeMemberFromTeam } = useWorkspace();
   const [name, setName] = useState(team?.name ?? "");
@@ -505,14 +536,22 @@ function TeamFormDialog({
   }, [open, team]);
 
   const handleSubmit = async () => {
-    onSubmit({ name: name.trim(), color, memberIds });
+    setSaving(true);
+    try {
+      await onSubmit({ name: name.trim(), color, memberIds });
+    } catch (error) {
+      // Name/colour didn't save — stay open with the form as typed, and
+      // don't go on to apply membership changes to a team that failed.
+      toast.error("That didn't save", { description: (error as Error).message });
+      setSaving(false);
+      return;
+    }
     if (team) {
       const originalSet = new Set(originalMemberIds);
       const nextSet = new Set(memberIds);
       const toAdd = memberIds.filter((id) => !originalSet.has(id));
       const toRemove = originalMemberIds.filter((id) => !nextSet.has(id));
       if (toAdd.length || toRemove.length) {
-        setSaving(true);
         try {
           await Promise.all([
             ...toAdd.map((id) => addMemberToTeam(id, team.id)),
@@ -522,11 +561,10 @@ function TeamFormDialog({
           toast.error("Some membership changes didn't save", {
             description: (error as Error).message,
           });
-        } finally {
-          setSaving(false);
         }
       }
     }
+    setSaving(false);
     onOpenChange(false);
   };
 
@@ -551,12 +589,12 @@ function TeamFormDialog({
               onChange={(e) => setName(e.target.value)}
             />
           </div>
-          <div className="grid gap-2">
-            <Label>Colour</Label>
+          <div className="grid gap-2" role="group" aria-labelledby="team-colour-label">
+            <Label id="team-colour-label">Colour</Label>
             <ColorDotPicker value={color} onChange={setColor} />
           </div>
-          <div className="grid gap-2">
-            <Label>{team ? "People" : "Add people (optional)"}</Label>
+          <div className="grid gap-2" role="group" aria-labelledby="team-people-label">
+            <Label id="team-people-label">{team ? "People" : "Add people (optional)"}</Label>
             <MultiSelectList
               options={people.map((p) => ({
                 id: p.id,
@@ -588,7 +626,7 @@ function TeamFormDialog({
             Cancel
           </Button>
           <Button disabled={!name.trim() || saving} onClick={() => void handleSubmit()}>
-            {team ? "Save team" : "Create team"}
+            {saving ? "Saving…" : team ? "Save team" : "Create team"}
           </Button>
         </DialogFooter>
       </DialogContent>

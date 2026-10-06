@@ -23,12 +23,30 @@ import {
   addDays,
   formatClock,
   formatWeekRange,
+  fromDateKey,
   oldestLoadedWeekStart,
+  startOfWeek,
   toDateKey,
 } from "@/lib/time-utils";
 import { useThisWeekStart, useWorkspace, type TimesheetStatus } from "@/lib/workspace-store";
 
+const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+
+/** Whole weeks from `from` to `to` — rounded, so a DST shift in between doesn't matter. */
+const weeksBetween = (from: Date, to: Date) =>
+  Math.round((to.getTime() - from.getTime()) / WEEK_MS);
+
+// The view and the week being looked at live in the URL (?view=list,
+// ?week=2026-09-28) so a refresh keeps them and a link opens the same week.
+// Defaults (grid, this week) are left out of the URL.
 export const Route = createFileRoute("/timesheet")({
+  validateSearch: (search: Record<string, unknown>): { view?: "list"; week?: string } => ({
+    view: search.view === "list" ? "list" : undefined,
+    week:
+      typeof search.week === "string" && /^\d{4}-\d{2}-\d{2}$/.test(search.week)
+        ? search.week
+        : undefined,
+  }),
   head: () => ({
     meta: [
       { title: "Timesheet — IronTrack" },
@@ -45,9 +63,30 @@ export const Route = createFileRoute("/timesheet")({
 });
 
 function Timesheet() {
-  const [view, setView] = useState("grid");
-  const [offset, setOffset] = useState(0);
+  const search = Route.useSearch();
+  const navigate = Route.useNavigate();
+  const view = search.view ?? "grid";
+  const setView = (value: string) =>
+    void navigate({
+      search: (prev) => ({ ...prev, view: value === "list" ? "list" : undefined }),
+      replace: true,
+    });
   const thisWeek = useThisWeekStart();
+  // A ?week= from a link is snapped to its Monday and clamped to what's
+  // actually loaded (and never the future), same limits as the arrows.
+  const oldestOffset = weeksBetween(thisWeek, oldestLoadedWeekStart());
+  const requestedOffset = search.week
+    ? weeksBetween(thisWeek, startOfWeek(fromDateKey(search.week)))
+    : 0;
+  const offset = Math.min(0, Math.max(oldestOffset, requestedOffset));
+  const setOffset = (next: number) =>
+    void navigate({
+      search: (prev) => ({
+        ...prev,
+        week: next === 0 ? undefined : toDateKey(addDays(thisWeek, next * 7)),
+      }),
+      replace: true,
+    });
   const weekStart = useMemo(() => addDays(thisWeek, offset * 7), [thisWeek, offset]);
   const { entries, projectById, timesheetForWeek } = useWorkspace();
 
@@ -72,18 +111,21 @@ function Timesheet() {
           <Button
             variant="outline"
             size="icon"
+            aria-label="Previous week"
             disabled={atOldestLoaded}
-            onClick={() => setOffset((w) => w - 1)}
+            onClick={() => setOffset(offset - 1)}
           >
-            <ChevronLeft className="h-4 w-4" />
+            <ChevronLeft className="h-4 w-4" aria-hidden="true" />
           </Button>
           <span className="truncate text-sm font-medium">{formatWeekRange(weekStart)}</span>
           <Button
             variant="outline"
             size="icon"
-            onClick={() => setOffset((w) => Math.min(0, w + 1))}
+            aria-label="Next week"
+            disabled={offset >= 0}
+            onClick={() => setOffset(Math.min(0, offset + 1))}
           >
-            <ChevronRight className="h-4 w-4" />
+            <ChevronRight className="h-4 w-4" aria-hidden="true" />
           </Button>
           <span className="ml-2 hidden text-sm text-muted-foreground sm:inline">
             Total {formatHours(weekTotal)}
@@ -260,7 +302,7 @@ function SubmissionPanel({
           {status === "Rejected" ? (
             <>
               <p className="text-sm font-medium">Sent back — take another look and resubmit.</p>
-              {reviewNote && <p className="mt-0.5 text-sm text-muted-foreground">"{reviewNote}"</p>}
+              {reviewNote && <p className="mt-0.5 text-sm text-muted-foreground">“{reviewNote}”</p>}
             </>
           ) : (
             <p className="text-sm text-muted-foreground">

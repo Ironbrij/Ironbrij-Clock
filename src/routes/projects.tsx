@@ -26,8 +26,8 @@ import {
   Pagination,
   PaginationContent,
   PaginationItem,
-  PaginationNext,
-  PaginationPrevious,
+  PaginationNextButton,
+  PaginationPreviousButton,
 } from "@/components/ui/pagination";
 import {
   AlertDialog,
@@ -60,6 +60,7 @@ import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { formatDuration, formatHours } from "@/lib/mock-data";
 import { formatDayLong, fromDateKey } from "@/lib/time-utils";
+import { tintedChipStyle } from "@/lib/chip-style";
 import {
   dotColors,
   NO_CLIENT,
@@ -87,7 +88,12 @@ const PROJECTS_PAGE_SIZE = 12;
  */
 const ALL_TEAMS = "__all_teams__";
 
+// The active tab lives in the URL (?tab=clients) so a refresh keeps it and
+// it can be linked to. Projects, the default, is left out of the URL.
 export const Route = createFileRoute("/projects")({
+  validateSearch: (search: Record<string, unknown>): { tab?: "clients" | "tags" } => ({
+    tab: search.tab === "clients" || search.tab === "tags" ? search.tab : undefined,
+  }),
   head: () => ({
     meta: [
       { title: "Projects — IronTrack" },
@@ -104,7 +110,14 @@ export const Route = createFileRoute("/projects")({
 });
 
 function ProjectsPage() {
-  const [tab, setTab] = useState("projects");
+  const search = Route.useSearch();
+  const navigate = Route.useNavigate();
+  const tab = search.tab ?? "projects";
+  const setTab = (value: string) =>
+    void navigate({
+      search: { tab: value === "clients" || value === "tags" ? value : undefined },
+      replace: true,
+    });
   const {
     projects: allProjects,
     teams,
@@ -261,8 +274,13 @@ function ProjectsPage() {
         <div className="grid gap-4">
           <div className="flex flex-wrap items-center gap-3">
             <div className="relative min-w-[220px] flex-1">
-              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Search
+                className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
+                aria-hidden="true"
+              />
               <Input
+                aria-label="Search projects or clients"
+                autoComplete="off"
                 placeholder="Search projects or clients…"
                 value={projectSearch}
                 onChange={(e) => setProjectSearch(e.target.value)}
@@ -271,7 +289,7 @@ function ProjectsPage() {
             </div>
             {tags.length > 0 && (
               <Select value={projectTagFilter} onValueChange={setProjectTagFilter}>
-                <SelectTrigger className="w-44 shrink-0">
+                <SelectTrigger className="w-44 shrink-0" aria-label="Filter by tag">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -311,7 +329,9 @@ function ProjectsPage() {
                     }
                     className={
                       "shadow-card transition-shadow hover:shadow-elevated " +
-                      (canManage ? "cursor-pointer " : "") +
+                      (canManage
+                        ? "cursor-pointer has-[.card-open:focus-visible]:ring-2 has-[.card-open:focus-visible]:ring-ring "
+                        : "") +
                       (p.archived ? "opacity-60" : "")
                     }
                   >
@@ -321,17 +341,35 @@ function ProjectsPage() {
                           <ProjectDot color={p.color} />
                         </span>
                         <div className="min-w-0">
-                          <h2 className="text-base font-semibold leading-snug">{p.name}</h2>
+                          <h2 className="text-base font-semibold leading-snug">
+                            {canManage ? (
+                              // The whole card is clickable with a mouse; this
+                              // button is the keyboard/screen-reader way in.
+                              // stopPropagation keeps the card's own onClick
+                              // from firing a second time.
+                              <button
+                                type="button"
+                                className="card-open text-left focus-visible:outline-none"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setEditingId(p.id);
+                                  setFormOpen(true);
+                                }}
+                              >
+                                {p.name}
+                                <span className="sr-only"> — edit project</span>
+                              </button>
+                            ) : (
+                              p.name
+                            )}
+                          </h2>
                           <p className="mt-0.5 text-sm text-muted-foreground">{p.client}</p>
                         </div>
                       </div>
                       <div className="flex flex-wrap items-center gap-1.5">
                         <span
                           className="w-fit rounded-full px-2.5 py-1 text-xs font-medium"
-                          style={{
-                            backgroundColor: `color-mix(in oklab, ${p.color} 14%, transparent)`,
-                            color: p.color,
-                          }}
+                          style={tintedChipStyle(p.color)}
                         >
                           {team?.name ?? "All teams"}
                         </span>
@@ -339,10 +377,7 @@ function ProjectsPage() {
                           <span
                             key={t.id}
                             className="rounded-full px-2 py-0.5 text-xs font-medium"
-                            style={{
-                              backgroundColor: `color-mix(in oklab, ${t.color} 14%, transparent)`,
-                              color: t.color,
-                            }}
+                            style={tintedChipStyle(t.color)}
                           >
                             {t.name}
                           </span>
@@ -435,24 +470,16 @@ function ProjectsPage() {
                 <Pagination className="mx-0 w-auto">
                   <PaginationContent>
                     <PaginationItem>
-                      <PaginationPrevious
-                        className={
-                          currentProjectPage <= 1
-                            ? "pointer-events-none opacity-50"
-                            : "cursor-pointer"
-                        }
+                      <PaginationPreviousButton
+                        disabled={currentProjectPage <= 1}
                         onClick={() =>
                           currentProjectPage > 1 && setProjectPage(currentProjectPage - 1)
                         }
                       />
                     </PaginationItem>
                     <PaginationItem>
-                      <PaginationNext
-                        className={
-                          currentProjectPage >= totalProjectPages
-                            ? "pointer-events-none opacity-50"
-                            : "cursor-pointer"
-                        }
+                      <PaginationNextButton
+                        disabled={currentProjectPage >= totalProjectPages}
                         onClick={() =>
                           currentProjectPage < totalProjectPages &&
                           setProjectPage(currentProjectPage + 1)
@@ -477,25 +504,19 @@ function ProjectsPage() {
         people={activeMembers}
         tags={tags}
         taskCategories={taskCategories}
-        onSubmit={(input) => {
-          if (editing) {
-            updateProject(editing.id, input)
-              .then(() => toast.success("Project updated", { description: `${input.name} saved.` }))
-              .catch((error: Error) =>
-                toast.error("Couldn't save", { description: error.message }),
-              );
-          } else {
-            createProject(input)
-              .then(() =>
+        // Returns the promise (and lets a failure reject) so the dialog can
+        // stay open with what was entered if the save fails.
+        onSubmit={(input) =>
+          editing
+            ? updateProject(editing.id, input).then(() => {
+                toast.success("Project updated", { description: `${input.name} saved.` });
+              })
+            : createProject(input).then(() => {
                 toast.success("Project created", {
                   description: `${input.name} is ready for time entries.`,
-                }),
-              )
-              .catch((error: Error) =>
-                toast.error("Couldn't create", { description: error.message }),
-              );
-          }
-        }}
+                });
+              })
+        }
         onArchive={() => {
           setFormOpen(false);
           setArchivingId(editing?.id ?? null);
@@ -644,7 +665,7 @@ function ProjectFormDialog({
   people: { id: string; name: string; title: string }[];
   tags: WorkspaceTag[];
   taskCategories: WorkspaceTaskCategory[];
-  onSubmit: (input: ProjectInput) => void;
+  onSubmit: (input: ProjectInput) => Promise<void>;
   onArchive: () => void;
   onUnarchive: () => void;
   onDelete: () => void;
@@ -667,6 +688,7 @@ function ProjectFormDialog({
   // budget) rather than coercing to 0 — same pattern as
   // ClientProfileDialog's subscriptionHours input.
   const [budgetHours, setBudgetHours] = useState("");
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     if (!open) return;
@@ -692,7 +714,7 @@ function ProjectFormDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-xl">
+      <DialogContent className="max-h-[90dvh] overflow-y-auto overscroll-contain sm:max-w-xl">
         <DialogHeader>
           <DialogTitle>{project ? "Edit project" : "New project"}</DialogTitle>
           <DialogDescription>
@@ -741,8 +763,8 @@ function ProjectFormDialog({
               </Select>
             </div>
           </div>
-          <div className="grid gap-2">
-            <Label>Colour tag</Label>
+          <div className="grid gap-2" role="group" aria-labelledby="project-colour-label">
+            <Label id="project-colour-label">Colour tag</Label>
             <ColorDotPicker value={color} onChange={setColor} />
           </div>
           <div className="flex items-center justify-between gap-4 rounded-xl border border-border px-4 py-3">
@@ -752,7 +774,11 @@ function ProjectFormDialog({
                 Hours logged here count towards client invoices.
               </p>
             </div>
-            <Switch checked={billable} onCheckedChange={setBillable} />
+            <Switch
+              checked={billable}
+              onCheckedChange={setBillable}
+              aria-label="Billable project"
+            />
           </div>
           <div className="grid gap-2">
             <Label htmlFor="project-budget-hours">Budget (hours)</Label>
@@ -776,16 +802,16 @@ function ProjectFormDialog({
             </p>
           </div>
           <div className="grid gap-4 sm:grid-cols-2">
-            <div className="grid gap-2">
-              <Label>Tags</Label>
+            <div className="grid gap-2" role="group" aria-labelledby="project-tags-label">
+              <Label id="project-tags-label">Tags</Label>
               <MultiSelectList
                 options={tags.map((t) => ({ id: t.id, label: t.name, color: t.color }))}
                 selected={tagIds}
                 onToggle={toggle(setTagIds)}
               />
             </div>
-            <div className="grid gap-2">
-              <Label>Assigned members</Label>
+            <div className="grid gap-2" role="group" aria-labelledby="project-members-label">
+              <Label id="project-members-label">Assigned members</Label>
               <MultiSelectList
                 options={people.map((p) => ({ id: p.id, label: p.name, hint: p.title }))}
                 selected={memberIds}
@@ -798,8 +824,8 @@ function ProjectFormDialog({
               exact default behavior, so this is additive, not a
               requirement to touch on every project. */}
           {taskCategories.length > 0 && (
-            <div className="grid gap-2">
-              <Label>Task categories</Label>
+            <div className="grid gap-2" role="group" aria-labelledby="project-categories-label">
+              <Label id="project-categories-label">Task categories</Label>
               <div className="flex items-center gap-2">
                 <Checkbox
                   id="project-all-categories"
@@ -864,24 +890,34 @@ function ProjectFormDialog({
                 budgetHoursInvalid ||
                 // Would silently save as "all", the opposite of what the
                 // scoped choice says.
-                (scopedCategories && taskCategoryIds.length === 0)
+                (scopedCategories && taskCategoryIds.length === 0) ||
+                saving
               }
-              onClick={() => {
-                onSubmit({
-                  name: name.trim(),
-                  client,
-                  teamId: teamId === ALL_TEAMS ? "" : teamId,
-                  color,
-                  billable,
-                  tagIds,
-                  memberIds,
-                  taskCategoryIds,
-                  budgetHours: budgetHoursTrimmed === "" ? null : Number(budgetHoursTrimmed),
-                });
-                onOpenChange(false);
+              onClick={async () => {
+                setSaving(true);
+                try {
+                  await onSubmit({
+                    name: name.trim(),
+                    client,
+                    teamId: teamId === ALL_TEAMS ? "" : teamId,
+                    color,
+                    billable,
+                    tagIds,
+                    memberIds,
+                    taskCategoryIds,
+                    budgetHours: budgetHoursTrimmed === "" ? null : Number(budgetHoursTrimmed),
+                  });
+                  onOpenChange(false);
+                } catch (error) {
+                  toast.error(project ? "Couldn't save" : "Couldn't create", {
+                    description: (error as Error).message,
+                  });
+                } finally {
+                  setSaving(false);
+                }
               }}
             >
-              {project ? "Save project" : "Create project"}
+              {saving ? "Saving…" : project ? "Save project" : "Create project"}
             </Button>
           </div>
         </DialogFooter>
@@ -1021,8 +1057,13 @@ function ClientsTab({
 
       <div className="flex flex-wrap items-center gap-3">
         <div className="relative min-w-[220px] flex-1">
-          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Search
+            className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
+            aria-hidden="true"
+          />
           <Input
+            aria-label="Search clients"
+            autoComplete="off"
             placeholder="Search clients…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
@@ -1055,6 +1096,7 @@ function ClientsTab({
                       {editingId === c.id ? (
                         <Input
                           autoFocus
+                          aria-label={`Rename ${c.name}`}
                           value={editName}
                           onChange={(e) => setEditName(e.target.value)}
                           onBlur={() => void saveEdit()}
@@ -1109,10 +1151,7 @@ function ClientsTab({
                           <span
                             key={p.id}
                             className="flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium"
-                            style={{
-                              backgroundColor: `color-mix(in oklab, ${p.color} 14%, transparent)`,
-                              color: p.color,
-                            }}
+                            style={tintedChipStyle(p.color)}
                           >
                             <ProjectDot color={p.color} />
                             {p.name}
@@ -1195,20 +1234,14 @@ function ClientsTab({
             <Pagination className="mx-0 w-auto">
               <PaginationContent>
                 <PaginationItem>
-                  <PaginationPrevious
-                    className={
-                      currentPage <= 1 ? "pointer-events-none opacity-50" : "cursor-pointer"
-                    }
+                  <PaginationPreviousButton
+                    disabled={currentPage <= 1}
                     onClick={() => currentPage > 1 && setPage(currentPage - 1)}
                   />
                 </PaginationItem>
                 <PaginationItem>
-                  <PaginationNext
-                    className={
-                      currentPage >= totalPages
-                        ? "pointer-events-none opacity-50"
-                        : "cursor-pointer"
-                    }
+                  <PaginationNextButton
+                    disabled={currentPage >= totalPages}
                     onClick={() => currentPage < totalPages && setPage(currentPage + 1)}
                   />
                 </PaginationItem>
@@ -1341,6 +1374,8 @@ function NewClientDialog({
               <Input
                 id="new-client-contact-email"
                 type="email"
+                autoComplete="off"
+                spellCheck={false}
                 value={contactEmail}
                 onChange={(e) => setContactEmail(e.target.value)}
                 placeholder="jane@client.com"
@@ -1353,7 +1388,10 @@ function NewClientDialog({
               id="new-client-basecamp"
               value={basecampUrl}
               onChange={(e) => setBasecampUrl(e.target.value)}
-              placeholder="https://3.basecamp.com/..."
+              type="url"
+              autoComplete="off"
+              spellCheck={false}
+              placeholder="https://3.basecamp.com/…"
             />
           </div>
           <div className="grid gap-2">
@@ -1473,6 +1511,8 @@ function ClientProfileDialog({
               <Input
                 id="client-contact-email"
                 type="email"
+                autoComplete="off"
+                spellCheck={false}
                 value={contactEmail}
                 onChange={(e) => setContactEmail(e.target.value)}
                 placeholder="jane@client.com"
@@ -1484,7 +1524,10 @@ function ClientProfileDialog({
                 id="client-basecamp"
                 value={basecampUrl}
                 onChange={(e) => setBasecampUrl(e.target.value)}
-                placeholder="https://3.basecamp.com/..."
+                type="url"
+                autoComplete="off"
+                spellCheck={false}
+                placeholder="https://3.basecamp.com/…"
               />
             </div>
             <div className="grid gap-2">
@@ -1651,20 +1694,26 @@ function TagsTab({
           {tags.map((t) => (
             <Card
               key={t.id}
-              className="min-w-0 cursor-pointer shadow-card transition-shadow hover:shadow-elevated"
+              className="min-w-0 cursor-pointer shadow-card transition-shadow hover:shadow-elevated has-[.card-open:focus-visible]:ring-2 has-[.card-open:focus-visible]:ring-ring"
               onClick={() => setViewingTag(t)}
             >
               <CardContent className="flex items-center justify-between gap-3 p-5">
-                <span
-                  className="flex min-w-0 items-center gap-2 rounded-full px-2.5 py-1 text-sm font-medium"
-                  style={{
-                    backgroundColor: `color-mix(in oklab, ${t.color} 14%, transparent)`,
-                    color: t.color,
+                {/* Keyboard/screen-reader way to open the card — the mouse
+                    can click anywhere on it. stopPropagation stops the
+                    card's own onClick firing a second time. */}
+                <button
+                  type="button"
+                  className="card-open flex min-w-0 items-center gap-2 rounded-full px-2.5 py-1 text-left text-sm font-medium focus-visible:outline-none"
+                  style={tintedChipStyle(t.color)}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setViewingTag(t);
                   }}
                 >
                   <ProjectDot color={t.color} />
                   <span className="truncate">{t.name}</span>
-                </span>
+                  <span className="sr-only"> — view entries</span>
+                </button>
                 <div className="flex shrink-0 items-center gap-1">
                   <span className="text-sm text-muted-foreground tabular-nums">{t.entryCount}</span>
                   {canManage && (
@@ -1753,18 +1802,21 @@ function TagFormDialog({
   const [name, setName] = useState("");
   const [color, setColor] = useState(dotColors[0]);
   const [saving, setSaving] = useState(false);
+  const [nameError, setNameError] = useState<string | null>(null);
 
   useEffect(() => {
     if (open) {
       setName(tag?.name ?? "");
       setColor(tag?.color ?? dotColors[0]);
+      setNameError(null);
     }
   }, [open, tag]);
 
   const submit = async () => {
     const trimmed = name.trim();
     if (!trimmed) {
-      toast.error("Give it a name first");
+      setNameError("Give the tag a name.");
+      document.getElementById("tag-name")?.focus();
       return;
     }
     setSaving(true);
@@ -1793,10 +1845,24 @@ function TagFormDialog({
         <div className="grid gap-4 py-2">
           <div className="grid gap-2">
             <Label htmlFor="tag-name">Name</Label>
-            <Input id="tag-name" value={name} onChange={(e) => setName(e.target.value)} />
+            <Input
+              id="tag-name"
+              value={name}
+              onChange={(e) => {
+                setName(e.target.value);
+                setNameError(null);
+              }}
+              aria-invalid={nameError ? true : undefined}
+              aria-describedby={nameError ? "tag-name-error" : undefined}
+            />
+            {nameError && (
+              <p id="tag-name-error" className="text-xs text-destructive">
+                {nameError}
+              </p>
+            )}
           </div>
-          <div className="grid gap-2">
-            <Label>Colour</Label>
+          <div className="grid gap-2" role="group" aria-labelledby="tag-colour-label">
+            <Label id="tag-colour-label">Colour</Label>
             <ColorDotPicker value={color} onChange={setColor} />
           </div>
         </div>
@@ -1846,7 +1912,7 @@ function TagEntriesDialog({
 
   return (
     <Dialog open={!!tag} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[80vh] overflow-y-auto">
+      <DialogContent className="max-h-[80dvh] overflow-y-auto overscroll-contain">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             {tag && <ProjectDot color={tag.color} />}
@@ -1872,7 +1938,10 @@ function TagEntriesDialog({
               const project = projectById(e.projectId);
               const member = memberById(e.userId);
               return (
-                <li key={e.id} className="flex items-center gap-3 py-3">
+                <li
+                  key={e.id}
+                  className="flex items-center gap-3 py-3 [contain-intrinsic-size:auto_4rem] [content-visibility:auto]"
+                >
                   <ProjectDot color={project?.color ?? "var(--muted-foreground)"} />
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-medium">

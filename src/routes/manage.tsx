@@ -159,13 +159,22 @@ function ManagePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [search.tab, search.memberId, search.weekStart]);
 
+  const navigate = Route.useNavigate();
+
   const handleTabChange = (value: string) => {
     setTab(value);
     // A manual tab click means we're done with whatever deep-link brought
     // us here — otherwise clicking away from Entries and back would keep
     // reapplying a stale member/week from an earlier "Edit entries" click.
     setEntriesTarget(undefined);
-    if (value === "activity") markActivitySeen();
+    // Mirror the tab into the URL (dropping any member/week deep-link) so a
+    // refresh or a copied link keeps it. The effect above picks the new
+    // ?tab= up and handles markActivitySeen() for the Activity tab, so it
+    // isn't repeated here. The default tab stays out of the URL.
+    void navigate({
+      search: { tab: value === sections[0].id ? undefined : value },
+      replace: true,
+    });
   };
 
   return (
@@ -176,7 +185,13 @@ function ManagePage() {
             <TabsTrigger key={s.id} value={s.id} className="relative">
               {s.label}
               {s.id === "activity" && unseenActivityCount > 0 && (
-                <span className="absolute -right-1 -top-1 h-2 w-2 rounded-full bg-destructive" />
+                <>
+                  <span
+                    className="absolute -right-1 -top-1 h-2 w-2 rounded-full bg-destructive"
+                    aria-hidden="true"
+                  />
+                  <span className="sr-only"> ({unseenActivityCount} new)</span>
+                </>
               )}
             </TabsTrigger>
           ))}
@@ -423,7 +438,7 @@ function WeekStatusPanel() {
                       className="text-xs text-muted-foreground"
                       title="Already reminded this week"
                     >
-                      Reminded
+                      Reminded<span className="sr-only"> this week</span>
                     </span>
                   ) : (
                     <Button
@@ -620,12 +635,14 @@ function ApprovalsPanel() {
                         <p className="truncate text-sm font-medium">{member?.name ?? "Unknown"}</p>
                         <button
                           type="button"
+                          aria-expanded={expanded}
                           className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
                           onClick={() => setExpandedId(expanded ? null : a.id)}
                         >
                           {formatWeekRange(fromDateKey(a.weekStart))} ·{" "}
                           {formatHours(a.seconds / 3600)} logged
                           <ChevronDown
+                            aria-hidden="true"
                             className={
                               "h-3 w-3 transition-transform " + (expanded ? "rotate-180" : "")
                             }
@@ -791,7 +808,7 @@ function describeActivityEvent(
       return `${actor} approved ${target}'s timesheet for ${week(e.metadata.week_start)}`;
     case "timesheet_rejected": {
       const note =
-        typeof e.metadata.note === "string" && e.metadata.note ? ` — "${e.metadata.note}"` : "";
+        typeof e.metadata.note === "string" && e.metadata.note ? ` — “${e.metadata.note}”` : "";
       return `${actor} sent back ${target}'s timesheet for ${week(e.metadata.week_start)}${note}`;
     }
     case "team_added": {
@@ -829,7 +846,7 @@ function describeActivityEvent(
           : "an entry";
       const description =
         typeof e.metadata.description === "string" && e.metadata.description
-          ? ` — "${e.metadata.description}"`
+          ? ` — “${e.metadata.description}”`
           : "";
       return `${actor} deleted ${target}'s entry for ${day}${description}`;
     }
@@ -926,7 +943,7 @@ function ActivityTab() {
       {(peopleInLog.length > 2 || actionsInLog.length > 1) && (
         <div className="flex flex-wrap items-center gap-3">
           <Select value={personFilter} onValueChange={setPersonFilter}>
-            <SelectTrigger className="w-48">
+            <SelectTrigger className="w-48" aria-label="Filter by person">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -939,7 +956,7 @@ function ActivityTab() {
             </SelectContent>
           </Select>
           <Select value={actionFilter} onValueChange={setActionFilter}>
-            <SelectTrigger className="w-52">
+            <SelectTrigger className="w-52" aria-label="Filter by action">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -972,7 +989,10 @@ function ActivityTab() {
             </div>
             <ul className="divide-y divide-border">
               {events.map((e) => (
-                <li key={e.id} className="flex items-start justify-between gap-4 px-6 py-3">
+                <li
+                  key={e.id}
+                  className="flex items-start justify-between gap-4 px-6 py-3 [contain-intrinsic-size:auto_3rem] [content-visibility:auto]"
+                >
                   <p className="text-sm">{describeActivityEvent(e, nameOf, teamName)}</p>
                   <span className="shrink-0 text-xs text-muted-foreground">
                     {new Date(e.createdAt).toLocaleString(undefined, {
@@ -1323,7 +1343,7 @@ function ScheduleRow({
           onValueChange={(v) => void saveType(v as EmploymentType)}
           disabled={savingType}
         >
-          <SelectTrigger className="h-8 w-32">
+          <SelectTrigger className="h-8 w-32" aria-label={`Employment type for ${member.name}`}>
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -1339,6 +1359,7 @@ function ScheduleRow({
             value={member.timezone}
             onChange={(tz) => void saveTimezone(tz)}
             disabled={savingTz}
+            aria-label={`Timezone for ${member.name}`}
             placeholder="Set timezone"
             searchPlaceholder="Search timezones…"
             triggerClassName="h-8 w-44 text-xs"
@@ -1352,14 +1373,18 @@ function ScheduleRow({
           <PopoverTrigger asChild>
             <button
               type="button"
+              aria-label={`Weekly schedule for ${member.name}: ${summarizeWeeklyScheduleDays(days)}${
+                unrecognizedSchedule ? " (old saved schedule couldn't be read)" : ""
+              }`}
               className="flex w-44 items-center gap-1.5 rounded-md border border-transparent px-2 py-1 text-left text-xs hover:border-border hover:bg-accent/40"
             >
-              <Pencil className="h-3 w-3 shrink-0 text-muted-foreground" />
+              <Pencil className="h-3 w-3 shrink-0 text-muted-foreground" aria-hidden="true" />
               <span className="truncate">{summarizeWeeklyScheduleDays(days)}</span>
               {unrecognizedSchedule && (
                 <span
                   className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500"
                   title="Couldn't read the old saved schedule as days"
+                  aria-hidden="true"
                 />
               )}
             </button>
@@ -1376,6 +1401,7 @@ function ScheduleRow({
                       disabled={savingSchedule}
                       onClick={() => toggleDay(i)}
                       aria-pressed={!!d}
+                      aria-label={label}
                       title={label}
                       className={
                         "flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[11px] font-medium transition-colors " +
@@ -1421,7 +1447,7 @@ function ScheduleRow({
               })}
               {unrecognizedSchedule && (
                 <p className="max-w-64 text-xs text-amber-600 dark:text-amber-400">
-                  Couldn't read "{employment?.weeklySchedule}" as days — pick above to replace it.
+                  Couldn't read “{employment?.weeklySchedule}” as days — pick above to replace it.
                 </p>
               )}
             </div>
@@ -1438,6 +1464,7 @@ function ScheduleRow({
           onBlur={() => void saveRate()}
           onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
           placeholder="0.00"
+          aria-label={`Hourly rate for ${member.name}`}
           className="h-8 w-24"
           disabled={isSalaried}
           title={
@@ -1458,6 +1485,7 @@ function ScheduleRow({
             onBlur={() => void saveSalary()}
             onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
             placeholder="0.00"
+            aria-label={`Weekly salary for ${member.name}`}
             className="h-8 w-24"
           />
           <Popover>
@@ -1468,7 +1496,7 @@ function ScheduleRow({
               <Button
                 variant="ghost"
                 size="icon"
-                aria-label="Salary dates"
+                aria-label={`Salary dates for ${member.name}`}
                 title={
                   salaryFrom === ""
                     ? "Set the dates this salary applies"
@@ -1693,7 +1721,7 @@ function TeamEntriesTab({
         <CardContent className="flex flex-wrap items-center justify-between gap-3 p-4">
           <div className="flex flex-wrap items-center gap-3">
             <Select value={memberId} onValueChange={setMemberId}>
-              <SelectTrigger className="w-56">
+              <SelectTrigger className="w-56" aria-label="Team member">
                 <SelectValue placeholder="Choose a team member" />
               </SelectTrigger>
               <SelectContent>
@@ -1711,8 +1739,13 @@ function TeamEntriesTab({
               </SelectContent>
             </Select>
             <div className="flex items-center gap-1">
-              <Button variant="outline" size="icon" onClick={() => setOffset((o) => o - 1)}>
-                <ChevronLeft className="h-4 w-4" />
+              <Button
+                variant="outline"
+                size="icon"
+                aria-label="Previous week"
+                onClick={() => setOffset((o) => o - 1)}
+              >
+                <ChevronLeft className="h-4 w-4" aria-hidden="true" />
               </Button>
               <span className="min-w-[9rem] text-center text-sm font-medium">
                 {formatWeekRange(weekStart)}
@@ -1720,10 +1753,11 @@ function TeamEntriesTab({
               <Button
                 variant="outline"
                 size="icon"
+                aria-label="Next week"
                 disabled={offset >= 0}
                 onClick={() => setOffset((o) => Math.min(0, o + 1))}
               >
-                <ChevronRight className="h-4 w-4" />
+                <ChevronRight className="h-4 w-4" aria-hidden="true" />
               </Button>
               {offset !== 0 && (
                 <Button variant="ghost" size="sm" onClick={() => setOffset(0)}>
@@ -1775,7 +1809,8 @@ function TeamEntriesTab({
                           className="flex h-9 w-9 items-center justify-center text-muted-foreground"
                           title="This week is locked — only an admin can edit it"
                         >
-                          <Lock className="h-4 w-4" />
+                          <Lock className="h-4 w-4" aria-hidden="true" />
+                          <span className="sr-only">Locked — only an admin can edit this week</span>
                         </span>
                       ) : entry.running ? (
                         // Same escape hatch as the owner's own Time page: a
@@ -1831,7 +1866,7 @@ function TeamEntriesTab({
             <AlertDialogTitle>Delete this entry?</AlertDialogTitle>
             <AlertDialogDescription>
               {deletingEntry
-                ? `"${deletingEntry.description || "No description"}" — ${formatDuration(
+                ? `“${deletingEntry.description || "No description"}” — ${formatDuration(
                     deletingEntry.seconds,
                   )} on ${formatDayLong(fromDateKey(deletingEntry.date))}. This can't be undone.`
                 : ""}

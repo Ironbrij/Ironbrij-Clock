@@ -247,7 +247,9 @@ function Dashboard() {
               </p>
             </div>
             <Button asChild size="sm" variant="outline">
-              <Link to="/settings">Review</Link>
+              <Link to="/settings" search={{ tab: "users" }}>
+                Review
+              </Link>
             </Button>
           </CardContent>
         </Card>
@@ -265,7 +267,10 @@ function Dashboard() {
                   ? "1 week is still waiting on you"
                   : `${unsubmittedPastWeeks.length} weeks are still waiting on you`}
               </p>
-              <p className="truncate text-xs text-muted-foreground">
+              <p
+                className="truncate text-xs text-muted-foreground"
+                title={unsubmittedPastWeeks.map((w) => formatWeekRange(w.weekStart)).join(" · ")}
+              >
                 {unsubmittedPastWeeks
                   .map(
                     (w) =>
@@ -336,7 +341,12 @@ function Dashboard() {
           <CardContent>
             <div className="flex h-44 items-stretch gap-3">
               {dayTotals.map((t, i) => (
-                <div key={i} className="flex h-full flex-1 flex-col items-center">
+                <div
+                  key={i}
+                  role="img"
+                  aria-label={`${weekdayNames[i]}: ${formatHours(t)}`}
+                  className="flex h-full flex-1 flex-col items-center"
+                >
                   <div className="flex h-full w-full items-end">
                     <div
                       className="w-full rounded-t-md bg-primary/85"
@@ -373,7 +383,10 @@ function Dashboard() {
                     {formatHours(p.myWeekHours)}
                   </span>
                 </div>
-                <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
+                <div
+                  className="h-1.5 w-full overflow-hidden rounded-full bg-muted"
+                  aria-hidden="true"
+                >
                   <div
                     className="h-full rounded-full"
                     style={{

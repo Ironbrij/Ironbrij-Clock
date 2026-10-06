@@ -75,6 +75,37 @@ const PaginationNext = ({ className, ...props }: React.ComponentProps<typeof Pag
 );
 PaginationNext.displayName = "PaginationNext";
 
+/**
+ * Button versions of Previous/Next for client-side paging (no URL to link
+ * to). An `<a>` without `href` isn't focusable-and-activatable by keyboard
+ * and can't be truly disabled — a `<button>` is both.
+ */
+const PaginationPreviousButton = ({ className, ...props }: React.ComponentProps<"button">) => (
+  <button
+    type="button"
+    aria-label="Go to previous page"
+    className={cn(buttonVariants({ variant: "ghost", size: "default" }), "gap-1 pl-2.5", className)}
+    {...props}
+  >
+    <ChevronLeft className="h-4 w-4" aria-hidden="true" />
+    <span>Previous</span>
+  </button>
+);
+PaginationPreviousButton.displayName = "PaginationPreviousButton";
+
+const PaginationNextButton = ({ className, ...props }: React.ComponentProps<"button">) => (
+  <button
+    type="button"
+    aria-label="Go to next page"
+    className={cn(buttonVariants({ variant: "ghost", size: "default" }), "gap-1 pr-2.5", className)}
+    {...props}
+  >
+    <span>Next</span>
+    <ChevronRight className="h-4 w-4" aria-hidden="true" />
+  </button>
+);
+PaginationNextButton.displayName = "PaginationNextButton";
+
 const PaginationEllipsis = ({ className, ...props }: React.ComponentProps<"span">) => (
   <span
     aria-hidden
@@ -94,5 +125,7 @@ export {
   PaginationItem,
   PaginationPrevious,
   PaginationNext,
+  PaginationPreviousButton,
+  PaginationNextButton,
   PaginationEllipsis,
 };

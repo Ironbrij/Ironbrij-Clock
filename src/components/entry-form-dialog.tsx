@@ -2,6 +2,16 @@ import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { ProjectDot } from "@/components/app-shell";
 import { DescriptionAutocomplete } from "@/components/description-autocomplete";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -38,6 +48,16 @@ import { useClientBudgets, useWorkspace, type WorkspaceEntry } from "@/lib/works
 import { CASUAL_SERVICE_CATEGORY_LABELS, type CasualServiceCategory } from "@/lib/workspace/types";
 
 const pad = (n: number) => n.toString().padStart(2, "0");
+
+type EntryField = "description" | "project" | "start" | "end";
+/** Page order, so focus lands on the topmost invalid field. */
+const entryFieldOrder: EntryField[] = ["description", "project", "start", "end"];
+const entryFieldIds: Record<EntryField, string> = {
+  description: "entry-description",
+  project: "entry-project",
+  start: "entry-start",
+  end: "entry-end",
+};
 
 type EntryFormValues = {
   projectId: string;
@@ -137,10 +157,19 @@ export function EntryFormDialog({
   // following the client until the person picks a category themselves.
   const [serviceCategory, setServiceCategory] = useState<CasualServiceCategory | null>(null);
   const [serviceCategoryTouched, setServiceCategoryTouched] = useState(false);
+  // What the form looked like when it opened — the baseline for "has the
+  // person changed anything?" (see `dirty` below).
+  const [initialValues, setInitialValues] = useState<EntryFormValues>(values);
+  const [errors, setErrors] = useState<Partial<Record<EntryField, string>>>({});
+  const [confirmingDiscard, setConfirmingDiscard] = useState(false);
 
   useEffect(() => {
     if (open) {
-      setValues(toFormValues(entry, defaultTask));
+      const initial = toFormValues(entry, defaultTask);
+      setValues(initial);
+      setInitialValues(initial);
+      setErrors({});
+      setConfirmingDiscard(false);
       setEndsNextDay(false);
       setBillable(entry ? entry.billable : true);
       setBillableTouched(!!entry);
@@ -220,19 +249,71 @@ export function EntryFormDialog({
 
   const endDate = endsNextDay ? toDateKey(addDays(fromDateKey(values.date), 1)) : values.date;
 
+  // Has the person changed anything since the dialog opened? Billable and
+  // service category auto-follow the project on a new entry, so for "add"
+  // they only count once deliberately touched; for "edit" they're compared
+  // with the stored entry.
+  const dirty =
+    JSON.stringify(values) !== JSON.stringify(initialValues) ||
+    endsNextDay ||
+    (entry
+      ? !isRunning && (billable !== entry.billable || serviceCategory !== entry.serviceCategory)
+      : billableTouched || serviceCategoryTouched);
+
+  // Every way of dismissing the dialog (Esc, outside click, X, Cancel) goes
+  // through here, so typed-in work is never thrown away without asking. A
+  // successful save calls onOpenChange directly and skips this.
+  const requestOpenChange = (next: boolean) => {
+    if (!next && dirty && !busy) {
+      setConfirmingDiscard(true);
+      return;
+    }
+    onOpenChange(next);
+  };
+
+  const setField = <K extends keyof EntryFormValues>(field: K, value: EntryFormValues[K]) => {
+    setValues((v) => ({ ...v, [field]: value }));
+    const errorKey: EntryField | null =
+      field === "projectId"
+        ? "project"
+        : field === "startTime"
+          ? "start"
+          : field === "endTime"
+            ? "end"
+            : field === "description"
+              ? "description"
+              : null;
+    if (errorKey) setErrors((prev) => (prev[errorKey] ? { ...prev, [errorKey]: undefined } : prev));
+  };
+
+  const errorProps = (field: EntryField) => ({
+    "aria-invalid": errors[field] ? true : undefined,
+    "aria-describedby": errors[field] ? `${entryFieldIds[field]}-error` : undefined,
+  });
+  const fieldError = (field: EntryField) =>
+    errors[field] ? (
+      <p id={`${entryFieldIds[field]}-error`} className="text-xs text-destructive">
+        {errors[field]}
+      </p>
+    ) : null;
+
   const submit = async () => {
-    if (!values.projectId) {
-      toast.error("Pick a project first");
-      return;
-    }
-    if (!values.startTime || (!isRunning && !values.endTime)) {
-      toast.error(isRunning ? "Add a start time" : "Add a start and end time");
-      return;
-    }
+    // Inline, per-field validation: each message sits under its field and is
+    // announced via aria-describedby, and focus moves to the first invalid
+    // field in page order.
+    const next: Partial<Record<EntryField, string>> = {};
     if (settings.requireDescriptions && !values.description.trim()) {
-      toast.error("Add a description first", {
-        description: "Your admin has made descriptions required.",
-      });
+      next.description = "Add a description — your admin has made them required.";
+    }
+    if (!values.projectId) next.project = "Pick a project.";
+    if (!values.startTime) {
+      next.start = isRunning ? "Add the time this timer started." : "Add a start time.";
+    }
+    if (!isRunning && !values.endTime) next.end = "Add an end time.";
+    setErrors(next);
+    const firstInvalid = entryFieldOrder.find((field) => next[field]);
+    if (firstInvalid) {
+      document.getElementById(entryFieldIds[firstInvalid])?.focus();
       return;
     }
     setBusy(true);
@@ -274,7 +355,7 @@ export function EntryFormDialog({
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={requestOpenChange}>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>{entry ? "Edit entry" : "Add a time entry"}</DialogTitle>
@@ -293,18 +374,20 @@ export function EntryFormDialog({
               id="entry-description"
               placeholder="What did you work on?"
               value={values.description}
-              onChange={(description) => setValues((v) => ({ ...v, description }))}
+              onChange={(description) => setField("description", description)}
               suggestions={recentDescriptions(entries)}
+              {...errorProps("description")}
             />
+            {fieldError("description")}
           </div>
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="grid gap-2">
-              <Label>Project</Label>
+              <Label htmlFor="entry-project">Project</Label>
               <Select
                 value={values.projectId}
-                onValueChange={(projectId) => setValues((v) => ({ ...v, projectId }))}
+                onValueChange={(projectId) => setField("projectId", projectId)}
               >
-                <SelectTrigger>
+                <SelectTrigger id="entry-project" {...errorProps("project")}>
                   <SelectValue placeholder="Project" />
                 </SelectTrigger>
                 <SelectContent>
@@ -332,6 +415,7 @@ export function EntryFormDialog({
                   ))}
                 </SelectContent>
               </Select>
+              {fieldError("project")}
               {/* L39: this picker has no fallback item (a manual entry needs
                   a real project, unlike the timer's "No project" option) —
                   with zero active projects it's a genuinely empty dropdown
@@ -343,12 +427,12 @@ export function EntryFormDialog({
               )}
             </div>
             <div className="grid gap-2">
-              <Label>Task</Label>
+              <Label htmlFor="entry-task">Task</Label>
               <Select
                 value={values.task}
                 onValueChange={(task) => setValues((v) => ({ ...v, task }))}
               >
-                <SelectTrigger>
+                <SelectTrigger id="entry-task">
                   <SelectValue placeholder="Task" />
                 </SelectTrigger>
                 <SelectContent>
@@ -390,13 +474,15 @@ export function EntryFormDialog({
                 type="time"
                 step="1"
                 value={values.startTime}
-                onChange={(e) => setValues((v) => ({ ...v, startTime: e.target.value }))}
+                onChange={(e) => setField("startTime", e.target.value)}
+                {...errorProps("start")}
               />
+              {fieldError("start")}
             </div>
             <div className="grid gap-2">
-              <Label htmlFor="entry-end">End</Label>
+              <Label htmlFor={isRunning ? undefined : "entry-end"}>End</Label>
               {isRunning ? (
-                <div id="entry-end" className="flex h-9 items-center text-sm text-muted-foreground">
+                <div className="flex h-9 items-center text-sm text-muted-foreground">
                   Still running
                 </div>
               ) : (
@@ -405,9 +491,11 @@ export function EntryFormDialog({
                   type="time"
                   step="1"
                   value={values.endTime}
-                  onChange={(e) => setValues((v) => ({ ...v, endTime: e.target.value }))}
+                  onChange={(e) => setField("endTime", e.target.value)}
+                  {...errorProps("end")}
                 />
               )}
+              {fieldError("end")}
             </div>
           </div>
           {!entry && (
@@ -485,14 +573,38 @@ export function EntryFormDialog({
           )}
         </div>
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
+          <Button variant="outline" onClick={() => requestOpenChange(false)}>
             Cancel
           </Button>
           <Button disabled={busy} onClick={() => void submit()}>
-            {entry ? "Save changes" : "Add entry"}
+            {busy ? "Saving…" : entry ? "Save changes" : "Add entry"}
           </Button>
         </DialogFooter>
       </DialogContent>
+      <AlertDialog open={confirmingDiscard} onOpenChange={setConfirmingDiscard}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Discard your changes?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {entry
+                ? "Your edits to this entry haven't been saved."
+                : "This entry hasn't been added yet."}{" "}
+              If you close now, what you've typed will be lost.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Keep editing</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                setConfirmingDiscard(false);
+                onOpenChange(false);
+              }}
+            >
+              Discard
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Dialog>
   );
 }

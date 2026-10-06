@@ -68,7 +68,14 @@ function TimeOffPage() {
                 <p className="mt-1 text-sm text-muted-foreground">
                   days left · {b.used} of {b.total} used
                 </p>
-                <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-muted">
+                <div
+                  role="progressbar"
+                  aria-label={`${b.label} used`}
+                  aria-valuemin={0}
+                  aria-valuemax={b.total}
+                  aria-valuenow={b.used}
+                  className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-muted"
+                >
                   <div
                     className="h-full rounded-full bg-primary"
                     style={{ width: `${(b.used / b.total) * 100}%` }}

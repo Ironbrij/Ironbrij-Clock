@@ -77,8 +77,9 @@ export function AppShell({
 
   if (authLoading || !session) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-background">
-        <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+      <div role="status" className="flex min-h-screen items-center justify-center bg-background">
+        <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" aria-hidden="true" />
+        <span className="sr-only">Loading…</span>
       </div>
     );
   }
@@ -89,8 +90,9 @@ export function AppShell({
   // like a workspace with nothing in it.
   if (loading) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-background">
-        <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+      <div role="status" className="flex min-h-screen items-center justify-center bg-background">
+        <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" aria-hidden="true" />
+        <span className="sr-only">Loading your workspace…</span>
       </div>
     );
   }
@@ -149,11 +151,19 @@ export function AppShell({
 
   return (
     <div className="flex min-h-screen w-full bg-background">
+      <a
+        href="#main-content"
+        className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-50 focus:rounded-md focus:bg-background focus:px-4 focus:py-2 focus:text-sm focus:font-medium focus:shadow-elevated focus:outline-none focus:ring-2 focus:ring-ring"
+      >
+        Skip to content
+      </a>
       <aside className="sticky top-0 hidden h-screen w-64 shrink-0 flex-col border-r border-sidebar-border bg-sidebar px-4 py-6 lg:flex">
         <Link to="/" className="mb-8 flex items-center gap-2.5 px-2">
           <img
             src="/ironbrij-mark.png"
             alt="IronTrack"
+            width={32}
+            height={32}
             className="h-8 w-8 shrink-0 dark:brightness-0 dark:invert"
           />
           <div className="min-w-0">
@@ -163,7 +173,7 @@ export function AppShell({
             <span className="block text-xs font-medium text-muted-foreground">Time tracking</span>
           </div>
         </Link>
-        <nav className="flex flex-1 flex-col gap-1">
+        <nav aria-label="Main" className="flex flex-1 flex-col gap-1">
           {nav.map((item) => {
             const active = pathname === item.to;
             const badgeCount =
@@ -183,11 +193,12 @@ export function AppShell({
                   active && "bg-sidebar-accent text-sidebar-accent-foreground",
                 )}
               >
-                <item.icon className="h-4 w-4 shrink-0" />
+                <item.icon className="h-4 w-4 shrink-0" aria-hidden="true" />
                 {item.label}
                 {badgeCount > 0 && (
                   <span className="ml-auto inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-destructive px-1.5 text-[11px] font-bold text-destructive-foreground">
                     {badgeCount}
+                    <span className="sr-only"> waiting on you</span>
                   </span>
                 )}
               </Link>
@@ -216,7 +227,7 @@ export function AppShell({
               void signOut().then(() => navigate({ to: "/login", replace: true }));
             }}
           >
-            <LogOut className="h-4 w-4" />
+            <LogOut className="h-4 w-4" aria-hidden="true" />
           </Button>
         </div>
       </aside>
@@ -232,10 +243,17 @@ export function AppShell({
             <ThemeToggle />
           </div>
         </header>
-        <div className="min-w-0 flex-1 px-5 py-6 sm:px-8 sm:py-8">
+        <main
+          id="main-content"
+          tabIndex={-1}
+          className="min-w-0 flex-1 px-5 py-6 focus:outline-none sm:px-8 sm:py-8"
+        >
           <div className="mx-auto w-full max-w-6xl">{children}</div>
-        </div>
-        <nav className="sticky bottom-0 flex items-center justify-around border-t border-border bg-background px-2 py-2 lg:hidden">
+        </main>
+        <nav
+          aria-label="Main"
+          className="sticky bottom-0 flex items-center justify-around border-t border-border bg-background px-2 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] lg:hidden"
+        >
           {mobilePrimaryNav.map((item) => (
             <Link
               key={item.to}
@@ -244,7 +262,7 @@ export function AppShell({
               activeProps={{ className: "active" }}
               activeOptions={{ exact: true }}
             >
-              <item.icon className="h-4 w-4" />
+              <item.icon className="h-4 w-4" aria-hidden="true" />
               {item.label}
             </Link>
           ))}
@@ -256,10 +274,16 @@ export function AppShell({
               mobileOverflowNav.some((item) => pathname === item.to) && "text-primary",
             )}
           >
-            <MoreHorizontal className="h-4 w-4" />
+            <MoreHorizontal className="h-4 w-4" aria-hidden="true" />
             More
             {(pendingCount > 0 || manageBadgeCount > 0 || unseenAnnouncementCount > 0) && (
-              <span className="absolute right-1 top-0 h-2 w-2 rounded-full bg-destructive" />
+              <>
+                <span
+                  className="absolute right-1 top-0 h-2 w-2 rounded-full bg-destructive"
+                  aria-hidden="true"
+                />
+                <span className="sr-only">(items waiting on you)</span>
+              </>
             )}
           </button>
         </nav>
@@ -288,11 +312,12 @@ export function AppShell({
                     activeProps={{ className: "active" }}
                     activeOptions={{ exact: true }}
                   >
-                    <item.icon className="h-5 w-5" />
+                    <item.icon className="h-5 w-5" aria-hidden="true" />
                     {item.label}
                     {badgeCount > 0 && (
                       <span className="absolute right-2 top-2 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-destructive px-1 text-[10px] font-bold text-destructive-foreground">
                         {badgeCount}
+                        <span className="sr-only"> waiting on you</span>
                       </span>
                     )}
                   </Link>

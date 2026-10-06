@@ -85,7 +85,13 @@ function Login() {
     <main className="flex min-h-screen items-center justify-center bg-muted/40 px-4 py-12">
       <div className="w-full max-w-sm">
         <div className="mb-8 flex flex-col items-center text-center">
-          <img src="/ironbrij-mark.png" alt="IronTrack" className="h-14 w-14" />
+          <img
+            src="/ironbrij-mark.png"
+            alt="IronTrack"
+            width={56}
+            height={56}
+            className="h-14 w-14"
+          />
           <h1 className="mt-4 text-2xl font-semibold tracking-tight">Welcome back</h1>
           <p className="mt-1 text-sm text-muted-foreground">
             Sign in to IronTrack and pick up where you left off.
@@ -93,51 +99,67 @@ function Login() {
         </div>
         <Card className="shadow-elevated">
           <CardContent className="flex flex-col gap-4 p-6">
-            <div className="grid gap-2">
-              <Label htmlFor="email">Work email</Label>
-              <Input
-                id="email"
-                type="email"
-                placeholder="you@ironbrij.com"
-                value={email}
-                autoComplete="email"
-                onChange={(e) => setEmail(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && signInWithPassword()}
-              />
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor="password">Password</Label>
-              <Input
-                id="password"
-                type="password"
-                placeholder="••••••••"
-                value={password}
-                autoComplete="current-password"
-                onChange={(e) => setPassword(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && signInWithPassword()}
-              />
-            </div>
-            <Button
-              className="w-full gap-2"
-              disabled={busy !== null || authLoading}
-              onClick={signInWithPassword}
+            {/* A real <form> so Enter submits natively, password managers
+                recognise the sign-in fields, and Enter can't fire a second
+                sign-in while the first is in flight (the submit button is
+                disabled, which blocks implicit submission). */}
+            <form
+              className="flex flex-col gap-4"
+              onSubmit={(e) => {
+                e.preventDefault();
+                void signInWithPassword();
+              }}
             >
-              {busy === "password" && <Loader2 className="h-4 w-4 animate-spin" />}
-              Sign in
-            </Button>
+              <div className="grid gap-2">
+                <Label htmlFor="email">Work email</Label>
+                <Input
+                  id="email"
+                  name="email"
+                  type="email"
+                  placeholder="you@ironbrij.com"
+                  value={email}
+                  autoComplete="email"
+                  spellCheck={false}
+                  onChange={(e) => setEmail(e.target.value)}
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="password">Password</Label>
+                <Input
+                  id="password"
+                  name="password"
+                  type="password"
+                  placeholder="••••••••"
+                  value={password}
+                  autoComplete="current-password"
+                  onChange={(e) => setPassword(e.target.value)}
+                />
+              </div>
+              <Button
+                type="submit"
+                className="w-full gap-2"
+                disabled={busy !== null || authLoading}
+              >
+                {busy === "password" && (
+                  <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                )}
+                Sign in
+              </Button>
+            </form>
             <div className="flex items-center gap-3 text-xs text-muted-foreground">
               <span className="h-px flex-1 bg-border" />
               or
               <span className="h-px flex-1 bg-border" />
             </div>
             <Button
+              type="button"
               variant="outline"
               className="w-full gap-2"
               disabled={busy !== null}
               onClick={signInWithGoogle}
             >
               {busy === "google" ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
+                <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
               ) : (
                 <svg viewBox="0 0 24 24" className="h-4 w-4" aria-hidden="true">
                   <path

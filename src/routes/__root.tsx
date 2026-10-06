@@ -11,6 +11,7 @@ import { useEffect, type ReactNode } from "react";
 
 import appCss from "../styles.css?url";
 import { reportLovableError } from "../lib/lovable-error-reporting";
+import { themeInitScript } from "@/lib/theme";
 import { Toaster } from "@/components/ui/sonner";
 import { WorkspaceProvider } from "@/lib/workspace-store";
 
@@ -109,8 +110,12 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
 
 function RootShell({ children }: { children: ReactNode }) {
   return (
-    <html lang="en">
+    // suppressHydrationWarning: themeInitScript adds the "dark" class to
+    // <html> before React hydrates, so the server-rendered attributes
+    // legitimately differ from the client's. Scoped to <html> only.
+    <html lang="en" suppressHydrationWarning>
       <head>
+        <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
         <HeadContent />
       </head>
       <body>

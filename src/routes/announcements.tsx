@@ -103,17 +103,35 @@ function AnnouncementsPage() {
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
 
+  const [errors, setErrors] = useState<{ title?: string; body?: string; teams?: string }>({});
+
   const resetCompose = () => {
     setTitle("");
     setBody("");
     setAudience(isAdmin ? "everyone" : "teams");
     setSelectedTeamIds([]);
+    setErrors({});
   };
 
   const submit = () => {
-    if (!title.trim() || !body.trim()) return;
+    // Used to return silently on an empty title/body — now each problem is
+    // shown under its field and focus jumps to the first one.
+    const next: typeof errors = {};
+    if (!title.trim()) next.title = "Add a title.";
+    if (!body.trim()) next.body = "Write the message you want to send.";
     if (audience === "teams" && selectedTeamIds.length === 0) {
-      toast.error("Pick at least one team");
+      next.teams = "Pick at least one team to send this to.";
+    }
+    setErrors(next);
+    const firstInvalidId = next.title
+      ? "announcement-title"
+      : next.body
+        ? "announcement-body"
+        : next.teams
+          ? "announcement-audience"
+          : null;
+    if (firstInvalidId) {
+      document.getElementById(firstInvalidId)?.focus();
       return;
     }
     setPosting(true);
@@ -143,7 +161,7 @@ function AnnouncementsPage() {
     >
       <div className="mb-6 flex flex-wrap items-center gap-3">
         <Select value={teamFilter} onValueChange={setTeamFilter}>
-          <SelectTrigger className="w-48">
+          <SelectTrigger className="w-48" aria-label="Filter by team">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -160,7 +178,7 @@ function AnnouncementsPage() {
       {filtered.length === 0 ? (
         <Card className="shadow-card">
           <CardContent className="flex flex-col items-center gap-3 px-6 py-16 text-center">
-            <Megaphone className="h-8 w-8 text-muted-foreground" />
+            <Megaphone className="h-8 w-8 text-muted-foreground" aria-hidden="true" />
             <p className="max-w-md text-sm text-muted-foreground">
               {announcements.length === 0
                 ? "Nothing's been posted yet."
@@ -205,9 +223,19 @@ function AnnouncementsPage() {
               <Input
                 id="announcement-title"
                 value={title}
-                onChange={(e) => setTitle(e.target.value)}
+                onChange={(e) => {
+                  setTitle(e.target.value);
+                  setErrors((prev) => ({ ...prev, title: undefined }));
+                }}
                 placeholder="e.g. Office closed Monday"
+                aria-invalid={errors.title ? true : undefined}
+                aria-describedby={errors.title ? "announcement-title-error" : undefined}
               />
+              {errors.title && (
+                <p id="announcement-title-error" className="text-xs text-destructive">
+                  {errors.title}
+                </p>
+              )}
             </div>
             <div className="grid gap-2">
               <Label htmlFor="announcement-body">Message</Label>
@@ -215,17 +243,34 @@ function AnnouncementsPage() {
                 id="announcement-body"
                 rows={5}
                 value={body}
-                onChange={(e) => setBody(e.target.value)}
+                onChange={(e) => {
+                  setBody(e.target.value);
+                  setErrors((prev) => ({ ...prev, body: undefined }));
+                }}
                 placeholder="What do you want the team to know?"
+                aria-invalid={errors.body ? true : undefined}
+                aria-describedby={errors.body ? "announcement-body-error" : undefined}
               />
+              {errors.body && (
+                <p id="announcement-body-error" className="text-xs text-destructive">
+                  {errors.body}
+                </p>
+              )}
             </div>
             <div className="grid gap-2">
-              <Label>Audience</Label>
+              <Label htmlFor="announcement-audience">Audience</Label>
               <Select
                 value={audience}
-                onValueChange={(v) => setAudience(v as "everyone" | "teams")}
+                onValueChange={(v) => {
+                  setAudience(v as "everyone" | "teams");
+                  setErrors((prev) => ({ ...prev, teams: undefined }));
+                }}
               >
-                <SelectTrigger>
+                <SelectTrigger
+                  id="announcement-audience"
+                  aria-invalid={errors.teams ? true : undefined}
+                  aria-describedby={errors.teams ? "announcement-teams-error" : undefined}
+                >
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -237,13 +282,19 @@ function AnnouncementsPage() {
                 <MultiSelectList
                   options={postableTeams.map((t) => ({ id: t.id, label: t.name, color: t.color }))}
                   selected={selectedTeamIds}
-                  onToggle={(id) =>
+                  onToggle={(id) => {
                     setSelectedTeamIds((prev) =>
                       prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
-                    )
-                  }
+                    );
+                    setErrors((prev) => ({ ...prev, teams: undefined }));
+                  }}
                   emptyLabel="You're not on any team yet — nothing to target."
                 />
+              )}
+              {errors.teams && (
+                <p id="announcement-teams-error" className="text-xs text-destructive">
+                  {errors.teams}
+                </p>
               )}
             </div>
           </div>
@@ -252,7 +303,7 @@ function AnnouncementsPage() {
               Cancel
             </Button>
             <Button disabled={posting} onClick={submit}>
-              Post announcement
+              {posting ? "Posting…" : "Post announcement"}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -264,7 +315,7 @@ function AnnouncementsPage() {
             <AlertDialogTitle>Delete this announcement?</AlertDialogTitle>
             <AlertDialogDescription>
               {deletingAnnouncement?.title
-                ? `"${deletingAnnouncement.title}" will be removed for everyone who could see it. This can't be undone.`
+                ? `“${deletingAnnouncement.title}” will be removed for everyone who could see it. This can't be undone.`
                 : "This can't be undone."}
             </AlertDialogDescription>
           </AlertDialogHeader>

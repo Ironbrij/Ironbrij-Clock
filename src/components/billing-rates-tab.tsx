@@ -4,6 +4,16 @@ import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -117,6 +127,7 @@ export function BillingRatesTab() {
           ]}
           value={clientFilter}
           onChange={setClientFilter}
+          aria-label="Filter by client"
           searchPlaceholder="Search clients…"
           triggerClassName="w-56"
         />
@@ -195,6 +206,7 @@ function RateRow({
 }) {
   const [rate, setRate] = useState(String(hourlyRate));
   const [busy, setBusy] = useState(false);
+  const [confirmingRemove, setConfirmingRemove] = useState(false);
 
   useEffect(() => {
     setRate(String(hourlyRate));
@@ -228,6 +240,7 @@ function RateRow({
     try {
       await onDelete(id);
       toast.success("Rate removed");
+      setConfirmingRemove(false);
     } catch (error) {
       toast.error("Couldn't remove rate", { description: (error as Error).message });
     } finally {
@@ -250,6 +263,7 @@ function RateRow({
           type="number"
           min="0"
           step="0.01"
+          aria-label={`Hourly rate for ${clientLabel}, ${scopeLabel}`}
           value={rate}
           disabled={busy}
           onChange={(e) => setRate(e.target.value)}
@@ -265,11 +279,38 @@ function RateRow({
           size="icon"
           variant="ghost"
           disabled={busy}
-          aria-label="Remove rate"
-          onClick={() => void remove()}
+          aria-label={`Remove rate for ${clientLabel}, ${scopeLabel}`}
+          onClick={() => setConfirmingRemove(true)}
         >
-          <Trash2 className="h-4 w-4" />
+          <Trash2 className="h-4 w-4" aria-hidden="true" />
         </Button>
+        <AlertDialog open={confirmingRemove} onOpenChange={setConfirmingRemove}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Remove this billing rate?</AlertDialogTitle>
+              <AlertDialogDescription>
+                {clientLabel} · {scopeLabel} · effective from {formatDate(effectiveFrom)}. Gross
+                profit reports for any period this rate covered will fall back to another rate on
+                file (an earlier one, or the client default), or show that work as unpriced. To
+                change a price going forward, add a new rate with a later start date instead. This
+                can't be undone.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={busy}>Keep it</AlertDialogCancel>
+              <AlertDialogAction
+                disabled={busy}
+                onClick={(e) => {
+                  // Keep the dialog open until the delete resolves.
+                  e.preventDefault();
+                  void remove();
+                }}
+              >
+                Remove rate
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </td>
     </tr>
   );

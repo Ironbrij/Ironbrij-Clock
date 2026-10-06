@@ -4,6 +4,16 @@ import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -136,7 +146,7 @@ export function PlacementsTab() {
           value={statusFilter}
           onValueChange={(v) => setStatusFilter(v as typeof statusFilter)}
         >
-          <SelectTrigger className="w-40">
+          <SelectTrigger className="w-40" aria-label="Filter by status">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -240,6 +250,7 @@ function PlacementRow({
   const [rate, setRate] = useState(placement.vaMonthlyRate?.toString() ?? "");
   const [pkg, setPkg] = useState(placement.clientPackageAmount?.toString() ?? "");
   const [busy, setBusy] = useState(false);
+  const [confirmingRemove, setConfirmingRemove] = useState(false);
 
   useEffect(() => {
     setRate(placement.vaMonthlyRate?.toString() ?? "");
@@ -274,12 +285,24 @@ function PlacementRow({
   };
 
   const toggleEnded = async () => {
+    // The badge is a one-click toggle, so the toast carries an Undo that
+    // puts back exactly the end date that was there before (null or a date).
+    const previousEndedOn = placement.endedOn;
     setBusy(true);
     try {
       await onUpdate(placement.id, {
-        endedOn: placement.endedOn === null ? toDateKey(new Date()) : null,
+        endedOn: previousEndedOn === null ? toDateKey(new Date()) : null,
       });
-      toast.success(placement.endedOn === null ? "Placement ended" : "Placement reopened");
+      toast.success(previousEndedOn === null ? "Placement ended" : "Placement reopened", {
+        action: {
+          label: "Undo",
+          onClick: () => {
+            onUpdate(placement.id, { endedOn: previousEndedOn }).catch((error: Error) =>
+              toast.error("Couldn't undo that", { description: error.message }),
+            );
+          },
+        },
+      });
     } catch (error) {
       toast.error("Couldn't update", { description: (error as Error).message });
     } finally {
@@ -292,6 +315,7 @@ function PlacementRow({
     try {
       await onDelete(placement.id);
       toast.success("Placement removed");
+      setConfirmingRemove(false);
     } catch (error) {
       toast.error("Couldn't remove", { description: (error as Error).message });
     } finally {
@@ -312,6 +336,7 @@ function PlacementRow({
           min="0"
           step="0.01"
           placeholder="N/A"
+          aria-label={`VA monthly rate for ${vaLabel} at ${clientLabel}`}
           value={rate}
           disabled={busy}
           onChange={(e) => setRate(e.target.value)}
@@ -332,6 +357,7 @@ function PlacementRow({
           min="0"
           step="0.01"
           placeholder="N/A"
+          aria-label={`Monthly package for ${vaLabel} at ${clientLabel}`}
           value={pkg}
           disabled={busy}
           onChange={(e) => setPkg(e.target.value)}
@@ -349,10 +375,16 @@ function PlacementRow({
       <td className="px-5 py-3 text-right font-semibold tabular-nums">{money(fee, currency)}</td>
       <td className="px-5 py-3">
         <button
+          type="button"
           onClick={() => void toggleEnded()}
           disabled={busy}
-          className="disabled:opacity-50"
+          className="rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
           title={placement.endedOn === null ? "Mark as ended today" : "Reopen this placement"}
+          aria-label={
+            placement.endedOn === null
+              ? `Active — mark ${vaLabel} at ${clientLabel} as ended today`
+              : `Ended ${formatDate(placement.endedOn)} — reopen ${vaLabel} at ${clientLabel}`
+          }
         >
           {placement.endedOn === null ? (
             <Badge variant="outline" className="text-emerald-600 dark:text-emerald-400">
@@ -370,11 +402,39 @@ function PlacementRow({
           size="icon"
           variant="ghost"
           disabled={busy}
-          aria-label="Remove placement"
-          onClick={() => void remove()}
+          aria-label={`Remove placement: ${vaLabel} at ${clientLabel}`}
+          onClick={() => setConfirmingRemove(true)}
         >
-          <Trash2 className="h-4 w-4" />
+          <Trash2 className="h-4 w-4" aria-hidden="true" />
         </Button>
+        <AlertDialog open={confirmingRemove} onOpenChange={setConfirmingRemove}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>
+                Remove {vaLabel} at {clientLabel}?
+              </AlertDialogTitle>
+              <AlertDialogDescription>
+                This deletes the placement and its history, so past retainer reports will no longer
+                include it. If the placement has just finished, end it instead — click its Active
+                badge — which keeps past reports correct. This can't be undone.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={busy}>Keep it</AlertDialogCancel>
+              <AlertDialogAction
+                disabled={busy}
+                onClick={(e) => {
+                  // Keep the dialog open until the delete resolves, so a
+                  // failure is shown against it rather than after it closes.
+                  e.preventDefault();
+                  void remove();
+                }}
+              >
+                Remove placement
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </td>
     </tr>
   );
@@ -473,6 +533,8 @@ function AddPlacementDialog({
             {vaChoice === NEW_VA && (
               <Input
                 autoFocus
+                aria-label="New VA full name"
+                autoComplete="off"
                 placeholder="Full name"
                 value={newVaName}
                 onChange={(e) => setNewVaName(e.target.value)}
