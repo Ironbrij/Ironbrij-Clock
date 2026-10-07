@@ -26,8 +26,11 @@ export function Combobox({
   disabled,
   className,
   triggerClassName,
+  "aria-label": ariaLabel,
 }: {
   id?: string;
+  /** Accessible name for a trigger with no visible `<Label htmlFor>` (e.g. a filter bar). */
+  "aria-label"?: string;
   options: ComboboxOption[];
   value: string;
   onChange: (value: string) => void;
@@ -50,6 +53,7 @@ export function Combobox({
           variant="outline"
           role="combobox"
           aria-expanded={open}
+          aria-label={ariaLabel}
           disabled={disabled}
           className={cn("w-full justify-between font-normal", triggerClassName)}
         >

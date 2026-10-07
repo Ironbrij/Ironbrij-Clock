@@ -154,10 +154,36 @@
     border-color: var(--color-border);
   }
 
+  /*
+   * color-scheme makes native scrollbars, date/time pickers and form
+   * controls follow the active theme. scroll-padding-top keeps the sticky
+   * page header from covering whatever keyboard focus scrolls into view.
+   */
+  html {
+    color-scheme: light;
+    scroll-padding-top: 6rem;
+  }
+
+  html.dark {
+    color-scheme: dark;
+  }
+
   body {
     background-color: var(--color-background);
     color: var(--color-foreground);
     font-family: var(--font-sans);
     -webkit-font-smoothing: antialiased;
+  }
+}
+
+/* Honour the OS "reduce motion" setting for every transition and animation. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }

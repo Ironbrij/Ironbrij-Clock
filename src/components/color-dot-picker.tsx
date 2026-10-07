@@ -18,14 +18,15 @@ export function ColorDotPicker({
           key={color}
           type="button"
           aria-label={`Select colour ${color}`}
+          aria-pressed={value === color}
           onClick={() => onChange(color)}
           className={cn(
-            "flex h-8 w-8 items-center justify-center rounded-full ring-offset-2 ring-offset-background transition-shadow",
+            "flex h-8 w-8 items-center justify-center rounded-full ring-offset-2 ring-offset-background transition-shadow focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
             value === color ? "ring-2 ring-ring" : "hover:ring-2 hover:ring-border",
           )}
           style={{ backgroundColor: color }}
         >
-          {value === color && <Check className="h-4 w-4 text-white" />}
+          {value === color && <Check className="h-4 w-4 text-white" aria-hidden="true" />}
         </button>
       ))}
     </div>

@@ -41,6 +41,7 @@ import { EntryFormDialog } from "@/components/entry-form-dialog";
 import { TimesheetGrid } from "@/components/timesheet-grid";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { formatDuration, formatHours } from "@/lib/mock-data";
+import { tintedChipStyle } from "@/lib/chip-style";
 import {
   addDays,
   formatClock,
@@ -62,7 +63,16 @@ import {
   type WorkspaceEntry,
 } from "@/lib/workspace-store";
 
+type TimeView = "list" | "grid" | "calendar";
+type CalendarMode = "month" | "week";
+
+// View (and the calendar's month/week mode) live in the URL so a refresh
+// keeps them. Defaults (list, month) are left out of the URL.
 export const Route = createFileRoute("/time")({
+  validateSearch: (search: Record<string, unknown>): { view?: TimeView; cal?: CalendarMode } => ({
+    view: search.view === "grid" || search.view === "calendar" ? search.view : undefined,
+    cal: search.cal === "week" ? "week" : undefined,
+  }),
   head: () => ({
     meta: [
       { title: "Time — IronTrack" },
@@ -92,7 +102,14 @@ const pad = (n: number) => n.toString().padStart(2, "0");
 const NO_PROJECT = "__no_project__";
 
 function TimePage() {
-  const [view, setView] = useState("list");
+  const search = Route.useSearch();
+  const navigate = Route.useNavigate();
+  const view: TimeView = search.view ?? "list";
+  const setView = (value: string) =>
+    void navigate({
+      search: (prev) => ({ ...prev, view: value === "list" ? undefined : (value as TimeView) }),
+      replace: true,
+    });
   const [addOpen, setAddOpen] = useState(false);
   const { settings } = useWorkspace();
 
@@ -299,7 +316,11 @@ function TimerBar() {
   return (
     <Card className="sticky top-20 z-10 shadow-card">
       <CardContent className="flex flex-col gap-4 p-5 lg:flex-row lg:flex-wrap lg:items-center">
+        <label htmlFor="timer-description" className="sr-only">
+          Description
+        </label>
         <DescriptionAutocomplete
+          id="timer-description"
           placeholder="What are you working on?"
           value={description}
           onChange={setDescription}
@@ -309,7 +330,7 @@ function TimerBar() {
         <div className="grid gap-3 sm:grid-cols-2 lg:w-[380px]">
           <div>
             <Select value={project} onValueChange={setProject} disabled={running}>
-              <SelectTrigger>
+              <SelectTrigger aria-label="Project">
                 <SelectValue placeholder="Project" />
               </SelectTrigger>
               <SelectContent>
@@ -350,7 +371,7 @@ function TimerBar() {
             )}
           </div>
           <Select value={task} onValueChange={setTask} disabled={running}>
-            <SelectTrigger>
+            <SelectTrigger aria-label="Task">
               <SelectValue placeholder="Task" />
             </SelectTrigger>
             <SelectContent>
@@ -417,9 +438,9 @@ function TimerBar() {
             className="h-12 w-12 rounded-full shadow-elevated transition-transform active:scale-95"
           >
             {running ? (
-              <Pause className="h-5 w-5 fill-current" />
+              <Pause className="h-5 w-5 fill-current" aria-hidden="true" />
             ) : (
-              <Play className="h-5 w-5 fill-current" />
+              <Play className="h-5 w-5 fill-current" aria-hidden="true" />
             )}
           </Button>
         </div>
@@ -523,7 +544,10 @@ function EntryList({ entries }: { entries: WorkspaceEntry[] }) {
                     className="flex h-9 w-9 items-center justify-center text-muted-foreground"
                     title="This week is locked — ask your manager to send it back to edit this entry"
                   >
-                    <Lock className="h-4 w-4" />
+                    <Lock className="h-4 w-4" aria-hidden="true" />
+                    <span className="sr-only">
+                      Locked — ask your manager to send this week back to edit it
+                    </span>
                   </span>
                 ) : entry.running ? (
                   // A stuck timer's start time can be corrected without
@@ -586,7 +610,7 @@ function EntryList({ entries }: { entries: WorkspaceEntry[] }) {
             <AlertDialogTitle>Delete this entry?</AlertDialogTitle>
             <AlertDialogDescription>
               {deletingEntry
-                ? `"${deletingEntry.description || "No description"}" — ${formatDuration(
+                ? `“${deletingEntry.description || "No description"}” — ${formatDuration(
                     deletingEntry.seconds,
                   )} on ${formatDayLong(fromDateKey(deletingEntry.date))}. This can't be undone.`
                 : ""}
@@ -769,14 +793,21 @@ function GridView() {
         <Button
           variant="outline"
           size="icon"
+          aria-label="Previous week"
           disabled={atOldestLoaded}
           onClick={() => setOffset((w) => w - 1)}
         >
-          <ChevronLeft className="h-4 w-4" />
+          <ChevronLeft className="h-4 w-4" aria-hidden="true" />
         </Button>
         <span className="truncate text-sm font-medium">{formatWeekRange(weekStart)}</span>
-        <Button variant="outline" size="icon" onClick={() => setOffset((w) => Math.min(0, w + 1))}>
-          <ChevronRight className="h-4 w-4" />
+        <Button
+          variant="outline"
+          size="icon"
+          aria-label="Next week"
+          disabled={offset >= 0}
+          onClick={() => setOffset((w) => Math.min(0, w + 1))}
+        >
+          <ChevronRight className="h-4 w-4" aria-hidden="true" />
         </Button>
         {atOldestLoaded && (
           <span className="text-xs text-muted-foreground">
@@ -791,7 +822,14 @@ function GridView() {
 
 function CalendarView() {
   const { entries, projectById } = useWorkspace();
-  const [mode, setMode] = useState("month");
+  const search = Route.useSearch();
+  const navigate = Route.useNavigate();
+  const mode: CalendarMode = search.cal ?? "month";
+  const setMode = (value: string) =>
+    void navigate({
+      search: (prev) => ({ ...prev, cal: value === "week" ? "week" : undefined }),
+      replace: true,
+    });
   // Independent per-mode offsets — switching Month/Week tabs shouldn't
   // jumble what "forward/back" meant in the other one.
   const [monthOffset, setMonthOffset] = useState(0);
@@ -842,16 +880,28 @@ function CalendarView() {
     <div className="grid gap-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-2">
-          <Button variant="outline" size="icon" disabled={atOldestLoaded} onClick={goPrev}>
-            <ChevronLeft className="h-4 w-4" />
+          <Button
+            variant="outline"
+            size="icon"
+            aria-label={mode === "month" ? "Previous month" : "Previous week"}
+            disabled={atOldestLoaded}
+            onClick={goPrev}
+          >
+            <ChevronLeft className="h-4 w-4" aria-hidden="true" />
           </Button>
           <span className="min-w-[10rem] text-sm font-medium">
             {mode === "month"
               ? viewMonth.toLocaleDateString("en-AU", { month: "long", year: "numeric" })
               : `${formatWeekRange(weekStart)} ${weekStart.getFullYear()}`}
           </span>
-          <Button variant="outline" size="icon" disabled={atNewest} onClick={goNext}>
-            <ChevronRight className="h-4 w-4" />
+          <Button
+            variant="outline"
+            size="icon"
+            aria-label={mode === "month" ? "Next month" : "Next week"}
+            disabled={atNewest}
+            onClick={goNext}
+          >
+            <ChevronRight className="h-4 w-4" aria-hidden="true" />
           </Button>
           {!isToday && (
             <Button variant="ghost" size="sm" onClick={goToday}>
@@ -911,10 +961,7 @@ function CalendarView() {
                         <div
                           key={e.id}
                           className="flex items-center gap-1.5 rounded-md px-1.5 py-1 text-[10px] font-medium"
-                          style={{
-                            backgroundColor: `color-mix(in oklab, ${color} 14%, transparent)`,
-                            color,
-                          }}
+                          style={tintedChipStyle(color)}
                           title={`${p?.name ?? "No project"} · ${e.description}`}
                         >
                           <ProjectDot color={color} />

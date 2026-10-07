@@ -1,27 +1,36 @@
 import { useEffect, useState } from "react";
 import { Moon, Sun } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { THEME_STORAGE_KEY } from "@/lib/theme";
 
 export function ThemeToggle() {
   const [dark, setDark] = useState(false);
 
+  // The theme class itself is applied before first paint by themeInitScript
+  // (see __root.tsx); this only syncs the button's icon and pressed state to
+  // whatever that script decided.
   useEffect(() => {
-    const stored = localStorage.getItem("ironbrij-theme");
-    const isDark = stored === "dark";
-    setDark(isDark);
-    document.documentElement.classList.toggle("dark", isDark);
+    setDark(document.documentElement.classList.contains("dark"));
   }, []);
 
   const toggle = () => {
     const next = !dark;
     setDark(next);
     document.documentElement.classList.toggle("dark", next);
-    localStorage.setItem("ironbrij-theme", next ? "dark" : "light");
+    try {
+      localStorage.setItem(THEME_STORAGE_KEY, next ? "dark" : "light");
+    } catch {
+      // Storage blocked — the toggle still works for this page view.
+    }
   };
 
   return (
-    <Button variant="ghost" size="icon" onClick={toggle} aria-label="Toggle dark mode">
-      {dark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+    <Button variant="ghost" size="icon" onClick={toggle} aria-label="Dark mode" aria-pressed={dark}>
+      {dark ? (
+        <Sun className="h-4 w-4" aria-hidden="true" />
+      ) : (
+        <Moon className="h-4 w-4" aria-hidden="true" />
+      )}
     </Button>
   );
 }

@@ -8,6 +8,13 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Combobox } from "@/components/combobox";
 import {
+  Pagination,
+  PaginationContent,
+  PaginationItem,
+  PaginationNextButton,
+  PaginationPreviousButton,
+} from "@/components/ui/pagination";
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -20,6 +27,7 @@ import { useWorkspace, type DetailedEntry } from "@/lib/workspace-store";
 import { CASUAL_SERVICE_CATEGORY_LABELS, type CasualServiceCategory } from "@/lib/workspace/types";
 
 const DEFAULT_RANGE_DAYS = 90;
+const PAGE_SIZE = 50;
 
 /**
  * M46: the admin *action* view (mark VA-paid) for Casual Service
@@ -70,8 +78,14 @@ export function CasualServiceTab() {
     };
   }, [from, to, canManage, detailedEntriesForRange]);
 
+  // O9: 90 days of casual entries can run to hundreds of rows, so the table
+  // is paged. Selection still spans every page — "select all" means every
+  // entry in the current filter, not just the visible page.
+  const [page, setPage] = useState(1);
+
   useEffect(() => {
     setSelected(new Set());
+    setPage(1);
   }, [from, to, categoryFilter, clientFilter, paidFilter]);
 
   const rows = useMemo(() => {
@@ -96,6 +110,10 @@ export function CasualServiceTab() {
       })
       .sort((a, b) => b.date.localeCompare(a.date));
   }, [entries, projects, members, clients, categoryFilter, clientFilter, paidFilter]);
+
+  const totalPages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
+  const currentPage = Math.min(page, totalPages);
+  const pagedRows = rows.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
 
   const allSelected = rows.length > 0 && rows.every((r) => selected.has(r.id));
   const toggleAll = () => {
@@ -154,6 +172,7 @@ export function CasualServiceTab() {
       <div className="flex flex-wrap items-center gap-3">
         <input
           type="date"
+          aria-label="From date"
           value={from}
           max={to}
           onChange={(e) => setFrom(e.target.value)}
@@ -162,6 +181,7 @@ export function CasualServiceTab() {
         <span className="text-sm text-muted-foreground">to</span>
         <input
           type="date"
+          aria-label="To date"
           value={to}
           min={from}
           max={todayKey}
@@ -172,7 +192,7 @@ export function CasualServiceTab() {
           value={categoryFilter}
           onValueChange={(v) => setCategoryFilter(v as "all" | CasualServiceCategory)}
         >
-          <SelectTrigger className="w-48">
+          <SelectTrigger className="w-48" aria-label="Filter by category">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -191,11 +211,12 @@ export function CasualServiceTab() {
           ]}
           value={clientFilter}
           onChange={setClientFilter}
+          aria-label="Filter by client"
           searchPlaceholder="Search clients…"
           triggerClassName="w-48"
         />
         <Select value={paidFilter} onValueChange={(v) => setPaidFilter(v as typeof paidFilter)}>
-          <SelectTrigger className="w-36">
+          <SelectTrigger className="w-36" aria-label="Filter by paid status">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -205,7 +226,7 @@ export function CasualServiceTab() {
           </SelectContent>
         </Select>
         <Button variant="outline" className="ml-auto" onClick={() => setEmailOpen(true)}>
-          <Mail className="mr-2 h-4 w-4" />
+          <Mail className="mr-2 h-4 w-4" aria-hidden="true" />
           Email client report…
         </Button>
       </div>
@@ -241,7 +262,12 @@ export function CasualServiceTab() {
             <thead>
               <tr className="border-b border-border text-xs uppercase tracking-wide text-muted-foreground">
                 <th className="w-10 px-5 py-3">
-                  <Checkbox checked={allSelected} onCheckedChange={toggleAll} />
+                  <Checkbox
+                    checked={allSelected}
+                    onCheckedChange={toggleAll}
+                    aria-label={`Select all ${rows.length} entries in this filter`}
+                    title={`Select all ${rows.length} entries in this filter, across every page`}
+                  />
                 </th>
                 <th className="px-5 py-3 text-left font-medium">Date</th>
                 <th className="px-5 py-3 text-left font-medium">Client</th>
@@ -266,12 +292,13 @@ export function CasualServiceTab() {
                   </td>
                 </tr>
               ) : (
-                rows.map((r) => (
+                pagedRows.map((r) => (
                   <tr key={r.id} className="border-b border-border last:border-0 hover:bg-muted/40">
                     <td className="px-5 py-3">
                       <Checkbox
                         checked={selected.has(r.id)}
                         onCheckedChange={() => toggleOne(r.id)}
+                        aria-label={`Select ${r.vaName}'s entry for ${r.clientName} on ${r.date}`}
                       />
                     </td>
                     <td className="whitespace-nowrap px-5 py-3 text-muted-foreground">
@@ -311,6 +338,32 @@ export function CasualServiceTab() {
             </tbody>
           </table>
         </CardContent>
+        {!loading && rows.length > 0 && (
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border px-5 py-3">
+            <p className="text-sm text-muted-foreground">
+              {rows.length} {rows.length === 1 ? "entry" : "entries"}
+              {totalPages > 1 && ` · page ${currentPage} of ${totalPages}`}
+            </p>
+            {totalPages > 1 && (
+              <Pagination className="mx-0 w-auto">
+                <PaginationContent>
+                  <PaginationItem>
+                    <PaginationPreviousButton
+                      disabled={currentPage <= 1}
+                      onClick={() => setPage(currentPage - 1)}
+                    />
+                  </PaginationItem>
+                  <PaginationItem>
+                    <PaginationNextButton
+                      disabled={currentPage >= totalPages}
+                      onClick={() => setPage(currentPage + 1)}
+                    />
+                  </PaginationItem>
+                </PaginationContent>
+              </Pagination>
+            )}
+          </div>
+        )}
       </Card>
     </div>
   );

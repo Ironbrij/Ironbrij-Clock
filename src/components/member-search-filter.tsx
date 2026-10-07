@@ -47,8 +47,13 @@ export function MemberSearchFilter({
   return (
     <div className={cn("flex flex-wrap items-center gap-3", className)}>
       <div className="relative min-w-[200px] flex-1">
-        <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+        <Search
+          className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
+          aria-hidden="true"
+        />
         <Input
+          aria-label="Search people"
+          autoComplete="off"
           placeholder={placeholder}
           value={search}
           onChange={(e) => onSearchChange(e.target.value)}
@@ -56,7 +61,7 @@ export function MemberSearchFilter({
         />
       </div>
       <Select value={teamFilter} onValueChange={onTeamFilterChange}>
-        <SelectTrigger className="w-44 shrink-0">
+        <SelectTrigger className="w-44 shrink-0" aria-label="Filter by team">
           <SelectValue />
         </SelectTrigger>
         <SelectContent>

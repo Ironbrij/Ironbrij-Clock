@@ -22,8 +22,8 @@ import {
   Pagination,
   PaginationContent,
   PaginationItem,
-  PaginationNext,
-  PaginationPrevious,
+  PaginationNextButton,
+  PaginationPreviousButton,
 } from "@/components/ui/pagination";
 import {
   Select,
@@ -39,6 +39,7 @@ import { retainerAccrualForRange } from "@/lib/retainer";
 import { salaryAccrualForWeek, weeksInRange } from "@/lib/weekly-salary";
 import { formatHours, formatMinutes } from "@/lib/mock-data";
 import { addDays, formatWeekRange, fromDateKey, startOfWeek, toDateKey } from "@/lib/time-utils";
+import { tintedChipStyle } from "@/lib/chip-style";
 import {
   DETAILED_ENTRIES_LIMIT,
   useClientBudgets,
@@ -54,7 +55,54 @@ import {
   type WorkspaceTag,
 } from "@/lib/workspace/types";
 
+type ReportView = "project" | "employee" | "detailed" | "casual" | "profit";
+const reportViews: ReportView[] = ["project", "employee", "detailed", "casual", "profit"];
+const rangePresets: RangePreset[] = [
+  "this_week",
+  "this_month",
+  "last_30",
+  "this_quarter",
+  "this_year",
+  "custom",
+];
+const reportAudiences: ReportAudience[] = ["all", "internal", "client"];
+
+/**
+ * The report's tab, range and shared filters, mirrored into the URL so a
+ * refresh keeps them and a filtered report can be shared as a link. Every
+ * key is optional and omitted at its default, so a plain /reports link is
+ * unchanged. Unknown values are dropped rather than trusted.
+ */
+type ReportsSearch = {
+  view?: ReportView;
+  range?: RangePreset;
+  from?: string;
+  to?: string;
+  team?: string;
+  client?: string;
+  tag?: string;
+  audience?: ReportAudience;
+};
+
+const isDateKey = (v: unknown): v is string =>
+  typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v);
+const optionalString = (v: unknown) => (typeof v === "string" && v ? v : undefined);
+
 export const Route = createFileRoute("/reports")({
+  validateSearch: (search: Record<string, unknown>): ReportsSearch => ({
+    view: reportViews.includes(search.view as ReportView) ? (search.view as ReportView) : undefined,
+    range: rangePresets.includes(search.range as RangePreset)
+      ? (search.range as RangePreset)
+      : undefined,
+    from: isDateKey(search.from) ? search.from : undefined,
+    to: isDateKey(search.to) ? search.to : undefined,
+    team: optionalString(search.team),
+    client: optionalString(search.client),
+    tag: optionalString(search.tag),
+    audience: reportAudiences.includes(search.audience as ReportAudience)
+      ? (search.audience as ReportAudience)
+      : undefined,
+  }),
   head: () => ({
     meta: [
       { title: "Reports — IronTrack" },
@@ -308,15 +356,21 @@ function downloadCsv(filename: string, rows: (string | number)[][]) {
 }
 
 function Reports() {
-  const [view, setView] = useState<"project" | "employee" | "detailed" | "casual" | "profit">(
-    "project",
-  );
-  const [preset, setPreset] = useState<RangePreset>("this_month");
+  // Seeded once from the URL (see ReportsSearch); the effect further down
+  // mirrors every change back into it.
+  const initialSearch = Route.useSearch();
+  const navigate = Route.useNavigate();
+  // `requestedView` is what the URL/tabs asked for; `view` (below, once
+  // canManage is known) is what actually renders — a Member following a
+  // manager's link to a manager-only tab gets By project instead of an
+  // empty table.
+  const [requestedView, setView] = useState<ReportView>(initialSearch.view ?? "project");
+  const [preset, setPreset] = useState<RangePreset>(initialSearch.range ?? "this_month");
   const todayKey = toDateKey(new Date());
-  const [customFrom, setCustomFrom] = useState(todayKey);
-  const [customTo, setCustomTo] = useState(todayKey);
-  const [teamFilter, setTeamFilter] = useState("all");
-  const [clientFilter, setClientFilter] = useState("all");
+  const [customFrom, setCustomFrom] = useState(initialSearch.from ?? todayKey);
+  const [customTo, setCustomTo] = useState(initialSearch.to ?? todayKey);
+  const [teamFilter, setTeamFilter] = useState(initialSearch.team ?? "all");
+  const [clientFilter, setClientFilter] = useState(initialSearch.client ?? "all");
   /**
    * M51: one tag filter for every tab, rather than the separate
    * Detailed-only and Casual-only pickers this replaces.
@@ -328,7 +382,7 @@ function Reports() {
    * thing by three different mechanisms. A single selection also survives
    * switching tabs, which the per-tab ones did not.
    */
-  const [tagFilter, setTagFilter] = useState("all");
+  const [tagFilter, setTagFilter] = useState(initialSearch.tag ?? "all");
 
   const [projSortKey, setProjSortKey] = useState<ProjectSortKey>("hours");
   const [projAsc, setProjAsc] = useState(false);
@@ -362,6 +416,10 @@ function Reports() {
   const [employeeFilter, setEmployeeFilter] = useState("all");
   const [detailedSearch, setDetailedSearch] = useState("");
   const [detailedPage, setDetailedPage] = useState(1);
+  // O9: the client-facing table could render every entry in range (up to
+  // DETAILED_ENTRIES_LIMIT, 5,000 rows) at once. Paged like Detailed; the
+  // total row and the CSV export still cover every row.
+  const [clientFacingPage, setClientFacingPage] = useState(1);
 
   // M46: casual-service rollup — its own tab, since it's a different
   // dimension (client x category) over the same time_entries, not just
@@ -393,7 +451,7 @@ function Reports() {
   // M51: shared by the three tabs derived from `detailedEntries`. The
   // Project and Employee tabs come from SQL aggregates with no service
   // category in them, so they can't honour this and don't offer it.
-  const [audience, setAudience] = useState<ReportAudience>("all");
+  const [audience, setAudience] = useState<ReportAudience>(initialSearch.audience ?? "all");
 
   const {
     projects,
@@ -416,6 +474,38 @@ function Reports() {
     casualClientLastServiceForAll,
   } = useWorkspace();
   const clientBudgets = useClientBudgets();
+  // Only By project is available to non-managers (the tab row is hidden for
+  // them), so any other requested tab falls back to it.
+  const view: ReportView = canManage ? requestedView : "project";
+
+  // Mirror tab, range and shared filters into the URL. replace, not push,
+  // so changing a filter doesn't pile up Back-button history. Defaults are
+  // left out so an untouched report keeps a plain /reports URL.
+  useEffect(() => {
+    void navigate({
+      search: {
+        view: requestedView === "project" ? undefined : requestedView,
+        range: preset === "this_month" ? undefined : preset,
+        from: preset === "custom" && customFrom ? customFrom : undefined,
+        to: preset === "custom" && customTo ? customTo : undefined,
+        team: teamFilter === "all" ? undefined : teamFilter,
+        client: clientFilter === "all" ? undefined : clientFilter,
+        tag: tagFilter === "all" ? undefined : tagFilter,
+        audience: audience === "all" ? undefined : audience,
+      },
+      replace: true,
+    });
+  }, [
+    navigate,
+    requestedView,
+    preset,
+    customFrom,
+    customTo,
+    teamFilter,
+    clientFilter,
+    tagFilter,
+    audience,
+  ]);
 
   const { from, to } = useMemo(() => {
     if (preset === "custom") {
@@ -603,6 +693,10 @@ function Reports() {
     tagFilter,
     detailedSearch,
   ]);
+  // Same for the client-facing table (Gross Profit → Client-facing only).
+  useEffect(() => {
+    setClientFacingPage(1);
+  }, [from, to, teamFilter, clientFilter, tagFilter, audience]);
 
   const projectRows = projects
     // Team scoping now happens inside projectHoursForRange/
@@ -1515,6 +1609,15 @@ function Reports() {
   })();
 
   const clientFacingTotalHours = clientFacingRows.reduce((s, r) => s + r.billedHours, 0);
+  const totalClientFacingPages = Math.max(
+    1,
+    Math.ceil(clientFacingRows.length / DETAILED_PAGE_SIZE),
+  );
+  const currentClientFacingPage = Math.min(clientFacingPage, totalClientFacingPages);
+  const pagedClientFacingRows = clientFacingRows.slice(
+    (currentClientFacingPage - 1) * DETAILED_PAGE_SIZE,
+    currentClientFacingPage * DETAILED_PAGE_SIZE,
+  );
 
   /** True when the Gross Profit tab should render the client-safe view instead of the margin table. */
   const showClientFacing = view === "profit" && audience === "client";
@@ -1596,11 +1699,13 @@ function Reports() {
     }
   };
   const casualSortHeader = (key: CasualSortKey, label: string) => (
-    <button onClick={() => toggleCasualSort(key)} className="hover:text-foreground">
+    <button type="button" onClick={() => toggleCasualSort(key)} className="hover:text-foreground">
       {label}
-      {casualSortKey === key ? (casualAsc ? " ↑" : " ↓") : ""}
+      <span aria-hidden="true">{casualSortKey === key ? (casualAsc ? " ↑" : " ↓") : ""}</span>
     </button>
   );
+  const casualAriaSort = (key: CasualSortKey) =>
+    casualSortKey === key ? (casualAsc ? "ascending" : "descending") : undefined;
 
   const exportCsv = () => {
     const clientLabel =
@@ -1911,14 +2016,14 @@ function Reports() {
       subtitle="Where the hours actually went."
       actions={
         <Button variant="outline" className="gap-2" onClick={exportCsv} disabled={loading}>
-          <Download className="h-4 w-4" /> Export
+          <Download className="h-4 w-4" aria-hidden="true" /> Export
         </Button>
       }
     >
       <div className="mb-6 flex flex-wrap items-center gap-3">
         <Select value={preset} onValueChange={(v) => setPreset(v as RangePreset)}>
-          <SelectTrigger className="w-44 gap-2">
-            <CalendarRange className="h-4 w-4 text-muted-foreground" />
+          <SelectTrigger className="w-44 gap-2" aria-label="Date range">
+            <CalendarRange className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -1952,7 +2057,7 @@ function Reports() {
           </div>
         )}
         <Select value={teamFilter} onValueChange={setTeamFilter}>
-          <SelectTrigger className="w-48">
+          <SelectTrigger className="w-48" aria-label="Filter by team">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -1972,6 +2077,7 @@ function Reports() {
           ]}
           value={clientFilter}
           onChange={setClientFilter}
+          aria-label="Filter by client"
           searchPlaceholder="Search clients…"
           triggerClassName="w-48"
         />
@@ -1982,7 +2088,7 @@ function Reports() {
             totals. */}
         {tags.length > 0 && (
           <Select value={tagFilter} onValueChange={setTagFilter}>
-            <SelectTrigger className="w-44">
+            <SelectTrigger className="w-44" aria-label="Filter by tag">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -1996,10 +2102,7 @@ function Reports() {
           </Select>
         )}
         {canManage && (
-          <Tabs
-            value={view}
-            onValueChange={(v) => setView(v as "project" | "employee" | "detailed" | "casual")}
-          >
+          <Tabs value={view} onValueChange={(v) => setView(v as ReportView)}>
             <TabsList>
               <TabsTrigger value="project">By project</TabsTrigger>
               <TabsTrigger value="employee">By employee</TabsTrigger>
@@ -2009,7 +2112,7 @@ function Reports() {
             </TabsList>
           </Tabs>
         )}
-        <span className="text-sm text-muted-foreground">
+        <span className="text-sm text-muted-foreground" aria-live="polite">
           {loading
             ? "Loading…"
             : `Total ${formatHours(total)}` +
@@ -2025,6 +2128,8 @@ function Reports() {
       {view === "detailed" && (
         <div className="mb-6 flex flex-wrap items-center gap-3">
           <Input
+            aria-label="Search description or task"
+            autoComplete="off"
             placeholder="Search description or task…"
             value={detailedSearch}
             onChange={(e) => setDetailedSearch(e.target.value)}
@@ -2037,6 +2142,7 @@ function Reports() {
             ]}
             value={projectFilter}
             onChange={setProjectFilter}
+            aria-label="Filter by project"
             searchPlaceholder="Search projects…"
             triggerClassName="w-48"
           />
@@ -2047,6 +2153,7 @@ function Reports() {
             ]}
             value={employeeFilter}
             onChange={setEmployeeFilter}
+            aria-label="Filter by employee"
             searchPlaceholder="Search employees…"
             triggerClassName="w-48"
           />
@@ -2060,7 +2167,7 @@ function Reports() {
       {(view === "detailed" || view === "casual" || view === "profit") && (
         <div className="mb-6 flex flex-wrap items-center gap-3">
           <Select value={audience} onValueChange={(v) => setAudience(v as ReportAudience)}>
-            <SelectTrigger className="w-52">
+            <SelectTrigger className="w-52" aria-label="Audience">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -2098,7 +2205,7 @@ function Reports() {
       {view === "profit" && (
         <div className="mb-6 flex flex-wrap items-center gap-3">
           <Select value={profitGroupBy} onValueChange={(v) => setProfitGroupBy(v as ProfitGroupBy)}>
-            <SelectTrigger className="w-48">
+            <SelectTrigger className="w-48" aria-label="Group by">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -2130,7 +2237,7 @@ function Reports() {
             value={casualGroupBy}
             onValueChange={(v) => setCasualGroupBy(v as "client" | "va" | "day" | "week")}
           >
-            <SelectTrigger className="w-40">
+            <SelectTrigger className="w-40" aria-label="Group by">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -2144,7 +2251,7 @@ function Reports() {
             value={casualCategoryFilter}
             onValueChange={(v) => setCasualCategoryFilter(v as "all" | CasualServiceCategory)}
           >
-            <SelectTrigger className="w-48">
+            <SelectTrigger className="w-48" aria-label="Filter by category">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -2219,17 +2326,23 @@ function Reports() {
                     ).map(([key, label]) => (
                       <th
                         key={key}
+                        aria-sort={
+                          projSortKey === key ? (projAsc ? "ascending" : "descending") : undefined
+                        }
                         className={
                           "px-5 py-3 font-medium " +
                           (key === "hours" || key === "billable" ? "text-right" : "text-left")
                         }
                       >
                         <button
+                          type="button"
                           onClick={() => toggleProjSort(key)}
                           className="hover:text-foreground"
                         >
                           {label}
-                          {projSortKey === key ? (projAsc ? " ↑" : " ↓") : ""}
+                          <span aria-hidden="true">
+                            {projSortKey === key ? (projAsc ? " ↑" : " ↓") : ""}
+                          </span>
                         </button>
                       </th>
                     ))}
@@ -2343,13 +2456,19 @@ function Reports() {
                             ? "text-right"
                             : "text-left")
                         }
+                        aria-sort={
+                          empSortKey === key ? (empAsc ? "ascending" : "descending") : undefined
+                        }
                       >
                         <button
+                          type="button"
                           onClick={() => toggleEmpSort(key)}
                           className="hover:text-foreground"
                         >
                           {label}
-                          {empSortKey === key ? (empAsc ? " ↑" : " ↓") : ""}
+                          <span aria-hidden="true">
+                            {empSortKey === key ? (empAsc ? " ↑" : " ↓") : ""}
+                          </span>
                         </button>
                       </th>
                     ))}
@@ -2474,10 +2593,7 @@ function Reports() {
                                 <span
                                   key={t.id}
                                   className="rounded-full px-2 py-0.5 text-xs font-medium"
-                                  style={{
-                                    backgroundColor: `color-mix(in oklab, ${t.color} 14%, transparent)`,
-                                    color: t.color,
-                                  }}
+                                  style={tintedChipStyle(t.color)}
                                 >
                                   {t.name}
                                 </span>
@@ -2527,24 +2643,16 @@ function Reports() {
                 <Pagination className="mx-0 w-auto">
                   <PaginationContent>
                     <PaginationItem>
-                      <PaginationPrevious
-                        className={
-                          currentDetailedPage <= 1
-                            ? "pointer-events-none opacity-50"
-                            : "cursor-pointer"
-                        }
+                      <PaginationPreviousButton
+                        disabled={currentDetailedPage <= 1}
                         onClick={() =>
                           currentDetailedPage > 1 && setDetailedPage(currentDetailedPage - 1)
                         }
                       />
                     </PaginationItem>
                     <PaginationItem>
-                      <PaginationNext
-                        className={
-                          currentDetailedPage >= totalDetailedPages
-                            ? "pointer-events-none opacity-50"
-                            : "cursor-pointer"
-                        }
+                      <PaginationNextButton
+                        disabled={currentDetailedPage >= totalDetailedPages}
                         onClick={() =>
                           currentDetailedPage < totalDetailedPages &&
                           setDetailedPage(currentDetailedPage + 1)
@@ -2661,21 +2769,36 @@ function Reports() {
               <table className="w-full min-w-[860px] text-sm">
                 <thead>
                   <tr className="border-b border-border text-xs uppercase tracking-wide text-muted-foreground">
-                    <th className="px-5 py-3 text-left font-medium">
+                    <th
+                      className="px-5 py-3 text-left font-medium"
+                      aria-sort={casualAriaSort("group")}
+                    >
                       {casualSortHeader("group", casualGroupByLabels[casualGroupBy])}
                     </th>
                     <th className="px-5 py-3 text-left font-medium">Category</th>
                     {tags.length > 0 && <th className="px-5 py-3 text-left font-medium">Tags</th>}
-                    <th className="px-5 py-3 text-right font-medium">
+                    <th
+                      className="px-5 py-3 text-right font-medium"
+                      aria-sort={casualAriaSort("entries")}
+                    >
                       {casualSortHeader("entries", "Entries")}
                     </th>
-                    <th className="px-5 py-3 text-right font-medium">
+                    <th
+                      className="px-5 py-3 text-right font-medium"
+                      aria-sort={casualAriaSort("rawHours")}
+                    >
                       {casualSortHeader("rawHours", "Raw Hours")}
                     </th>
-                    <th className="px-5 py-3 text-right font-medium">
+                    <th
+                      className="px-5 py-3 text-right font-medium"
+                      aria-sort={casualAriaSort("billableHours")}
+                    >
                       {casualSortHeader("billableHours", "Billable Hours")}
                     </th>
-                    <th className="px-5 py-3 text-right font-medium">
+                    <th
+                      className="px-5 py-3 text-right font-medium"
+                      aria-sort={casualAriaSort("paid")}
+                    >
                       {casualSortHeader("paid", "Paid")}
                     </th>
                     {casualGroupBy === "client" && (
@@ -2708,10 +2831,7 @@ function Reports() {
                                     <span
                                       key={t.id}
                                       className="rounded-full px-2 py-0.5 text-xs font-medium"
-                                      style={{
-                                        backgroundColor: `color-mix(in oklab, ${t.color} 14%, transparent)`,
-                                        color: t.color,
-                                      }}
+                                      style={tintedChipStyle(t.color)}
                                     >
                                       {t.name}
                                     </span>
@@ -2851,7 +2971,7 @@ function Reports() {
                     </td>
                   </tr>
                 ) : (
-                  clientFacingRows.map((r) => (
+                  pagedClientFacingRows.map((r) => (
                     <tr key={r.key} className="border-b border-border last:border-0">
                       <td className="px-5 py-3 font-medium">{r.employeeName}</td>
                       <td className="px-5 py-3">{r.clientLabel}</td>
@@ -2893,6 +3013,33 @@ function Reports() {
               )}
             </table>
           </CardContent>
+          {!profitTruncated && clientFacingRows.length > 0 && (
+            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border px-5 py-3">
+              <p className="text-sm text-muted-foreground">
+                {clientFacingRows.length} {clientFacingRows.length === 1 ? "line" : "lines"}
+                {totalClientFacingPages > 1 &&
+                  ` · page ${currentClientFacingPage} of ${totalClientFacingPages} · the total and the export include every line`}
+              </p>
+              {totalClientFacingPages > 1 && (
+                <Pagination className="mx-0 w-auto">
+                  <PaginationContent>
+                    <PaginationItem>
+                      <PaginationPreviousButton
+                        disabled={currentClientFacingPage <= 1}
+                        onClick={() => setClientFacingPage(currentClientFacingPage - 1)}
+                      />
+                    </PaginationItem>
+                    <PaginationItem>
+                      <PaginationNextButton
+                        disabled={currentClientFacingPage >= totalClientFacingPages}
+                        onClick={() => setClientFacingPage(currentClientFacingPage + 1)}
+                      />
+                    </PaginationItem>
+                  </PaginationContent>
+                </Pagination>
+              )}
+            </div>
+          )}
         </Card>
       ) : (
         <>
@@ -2946,7 +3093,11 @@ function Reports() {
                               className="ml-1 text-muted-foreground"
                               title="Someone in this department has no pay rate on file, so this is lower than the real figure"
                             >
-                              *
+                              <span aria-hidden="true">*</span>
+                              <span className="sr-only">
+                                (someone in this department has no pay rate on file, so this is
+                                lower than the real figure)
+                              </span>
                             </span>
                           )}
                           {r.salariedHours > 0 && (
@@ -2954,7 +3105,11 @@ function Reports() {
                               className="ml-1 text-muted-foreground"
                               title="Some hours here were worked by salaried staff, whose pay is in the Salaried payroll row instead"
                             >
-                              †
+                              <span aria-hidden="true">†</span>
+                              <span className="sr-only">
+                                (some hours were worked by salaried staff, whose pay is in the
+                                Salaried payroll row instead)
+                              </span>
                             </span>
                           )}
                         </td>

@@ -141,8 +141,9 @@ export function CasualReportEmailDialog({
 
         <div className="grid gap-4 sm:grid-cols-2">
           <div className="grid gap-2">
-            <Label>Client</Label>
+            <Label htmlFor="casual-report-client">Client</Label>
             <Combobox
+              id="casual-report-client"
               options={clientOptions}
               value={clientId}
               onChange={setClientId}
@@ -224,7 +225,7 @@ export function CasualReportEmailDialog({
             {loading ? "Building…" : preview ? "Rebuild preview" : "Preview"}
           </Button>
           <Button onClick={() => void send()} disabled={!preview || sending}>
-            <Mail className="mr-2 h-4 w-4" />
+            <Mail className="mr-2 h-4 w-4" aria-hidden="true" />
             {sending ? "Sending…" : "Send to client"}
           </Button>
         </DialogFooter>

@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useId, useMemo, useRef, useState } from "react";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverAnchor, PopoverContent } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
@@ -19,8 +19,12 @@ export function DescriptionAutocomplete({
   placeholder,
   disabled,
   className,
+  "aria-invalid": ariaInvalid,
+  "aria-describedby": ariaDescribedBy,
 }: {
   id?: string;
+  "aria-invalid"?: boolean;
+  "aria-describedby"?: string;
   value: string;
   onChange: (value: string) => void;
   suggestions: string[];
@@ -31,6 +35,8 @@ export function DescriptionAutocomplete({
   const [focused, setFocused] = useState(false);
   const [highlighted, setHighlighted] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
+  const listboxId = useId();
+  const optionId = (i: number) => `${listboxId}-option-${i}`;
 
   const matches = useMemo(() => {
     const query = value.trim().toLowerCase();
@@ -59,6 +65,13 @@ export function DescriptionAutocomplete({
           disabled={disabled}
           className={className}
           autoComplete="off"
+          aria-invalid={ariaInvalid}
+          aria-describedby={ariaDescribedBy}
+          role="combobox"
+          aria-autocomplete="list"
+          aria-expanded={open}
+          aria-controls={open ? listboxId : undefined}
+          aria-activedescendant={open ? optionId(highlighted) : undefined}
           onChange={(e) => {
             onChange(e.target.value);
             setHighlighted(0);
@@ -83,6 +96,8 @@ export function DescriptionAutocomplete({
         />
       </PopoverAnchor>
       <PopoverContent
+        id={listboxId}
+        role="listbox"
         align="start"
         sideOffset={4}
         className="w-(--radix-popover-trigger-width) p-1"
@@ -92,7 +107,10 @@ export function DescriptionAutocomplete({
         {matches.map((m, i) => (
           <button
             key={m}
+            id={optionId(i)}
             type="button"
+            role="option"
+            aria-selected={i === highlighted}
             // Fires before the input's blur, so preventDefault here keeps
             // focus in the input instead of losing it (and closing this
             // dropdown) before the click is registered.
