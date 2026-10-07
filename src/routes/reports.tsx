@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { Fragment, useEffect, useMemo, useState } from "react";
-import { CalendarRange, Download } from "lucide-react";
+import { CalendarRange, ChevronDown, Download } from "lucide-react";
 import {
   Bar,
   BarChart,
@@ -17,6 +17,12 @@ import { Combobox } from "@/components/combobox";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import {
   Pagination,
@@ -56,6 +62,14 @@ import {
 } from "@/lib/workspace/types";
 
 type ReportView = "project" | "employee" | "detailed" | "casual" | "profit";
+
+/**
+ * Which hour figure an export prints, for the exports that offer a choice.
+ * "billed" is the Paid Casual uplift and increment applied per entry (see
+ * casual-billing.ts); "actual" is the time as tracked. Only the hours change
+ * — nothing else in the file is recomputed from them.
+ */
+type ExportHoursBasis = "billed" | "actual";
 const reportViews: ReportView[] = ["project", "employee", "detailed", "casual", "profit"];
 const rangePresets: RangePreset[] = [
   "this_week",
@@ -1564,6 +1578,8 @@ function Reports() {
     /** The description the person actually typed on the entry. Empty when they left it blank. */
     description: string;
     billedHours: number;
+    /** The same work as tracked, before the Paid Casual uplift and increment. Only the export reads it. */
+    actualHours: number;
     /** Null when this client has no subscription allowance to draw down. */
     remainingHours: number | null;
   };
@@ -1588,6 +1604,7 @@ function Reports() {
         task: e.task || "—",
         description,
         billedHours: 0,
+        actualHours: 0,
         // Confirmed as the client's subscription allowance less everything
         // ever rendered against it — deliberately not scoped to this
         // report's date range, so it reads as a standing balance rather
@@ -1597,6 +1614,7 @@ function Reports() {
       // Per line, before summing — same reasoning as everywhere else the
       // increment is applied.
       row.billedHours += billableHoursForCasualEntry(e, e.serviceCategory, billingOpts);
+      row.actualHours += e.hours;
       map.set(key, row);
     }
     return Array.from(map.values()).sort(
@@ -1609,6 +1627,7 @@ function Reports() {
   })();
 
   const clientFacingTotalHours = clientFacingRows.reduce((s, r) => s + r.billedHours, 0);
+  const clientFacingTotalActualHours = clientFacingRows.reduce((s, r) => s + r.actualHours, 0);
   const totalClientFacingPages = Math.max(
     1,
     Math.ceil(clientFacingRows.length / DETAILED_PAGE_SIZE),
@@ -1707,7 +1726,18 @@ function Reports() {
   const casualAriaSort = (key: CasualSortKey) =>
     casualSortKey === key ? (casualAsc ? "ascending" : "descending") : undefined;
 
-  const exportCsv = () => {
+  /** True for the exports that offer a choice of hours — the rest print one fixed figure, or both side by side. */
+  const exportOffersHoursBasis = view === "detailed" || showClientFacing;
+
+  const exportCsv = (basis: ExportHoursBasis = "billed") => {
+    // Only set for the exports that offer the choice, so the other filenames
+    // are unchanged. Spelled out because the two files otherwise look alike
+    // once downloaded — a client copy sent at the wrong basis would be easy to miss.
+    const basisLabel = exportOffersHoursBasis
+      ? basis === "billed"
+        ? "_with-increment"
+        : "_actual-hours"
+      : "";
     const clientLabel =
       clientFilter === "all"
         ? "all-clients"
@@ -1758,21 +1788,35 @@ function Reports() {
       // M51: the client deliverable. Built only from `clientFacingRows`,
       // which has no cost, rate or margin field to leak — see its own
       // comment for why that is a projection rather than hidden columns.
-      downloadCsv(`ironbrij-client-hours_${clientLabel}${tagLabel}_${from}_to_${to}.csv`, [
-        ["Name", "Client", "Task", "Description", "Hours", "Remaining Hours", "Date range"],
-        ...clientFacingRows.map((r) => [
-          r.employeeName,
-          r.clientLabel,
-          r.task,
-          r.description,
-          r.billedHours.toFixed(2),
-          // A client with no subscription allowance has no balance to
-          // report, which is not the same as a balance of zero.
-          r.remainingHours == null ? "No allowance set" : r.remainingHours.toFixed(2),
-          `${from} to ${to}`,
-        ]),
-        ["Total", "", "", "", clientFacingTotalHours.toFixed(2), "", `${from} to ${to}`],
-      ]);
+      // The header stays plain "Hours" in both — this file goes to the
+      // client, and the basis is in the filename, not something to explain to them.
+      downloadCsv(
+        `ironbrij-client-hours_${clientLabel}${tagLabel}${basisLabel}_${from}_to_${to}.csv`,
+        [
+          ["Name", "Client", "Task", "Description", "Hours", "Remaining Hours", "Date range"],
+          ...clientFacingRows.map((r) => [
+            r.employeeName,
+            r.clientLabel,
+            r.task,
+            r.description,
+            (basis === "billed" ? r.billedHours : r.actualHours).toFixed(2),
+            // A client with no subscription allowance has no balance to
+            // report, which is not the same as a balance of zero. Already
+            // drawn down from tracked time, so it is the same in both files.
+            r.remainingHours == null ? "No allowance set" : r.remainingHours.toFixed(2),
+            `${from} to ${to}`,
+          ]),
+          [
+            "Total",
+            "",
+            "",
+            "",
+            (basis === "billed" ? clientFacingTotalHours : clientFacingTotalActualHours).toFixed(2),
+            "",
+            `${from} to ${to}`,
+          ],
+        ],
+      );
     } else if (view === "profit") {
       downloadCsv(
         `ironbrij-gross-profit-by-${profitGroupBy}_${clientLabel}${tagLabel}_${from}_to_${to}.csv`,
@@ -1950,19 +1994,36 @@ function Reports() {
     } else if (view === "detailed") {
       // The full filtered set, not just the current page — pagination is a
       // display convenience, not a limit on what the export should contain.
-      downloadCsv(`ironbrij-detailed-entries_${clientLabel}${tagLabel}_${from}_to_${to}.csv`, [
-        ["Date", "Employee", "Project", "Tags", "Task", "Description", "Hours", "Billable"],
-        ...filteredDetailed.map((r) => [
-          r.date,
-          r.employeeName,
-          r.projectName,
-          r.projectTags.map((t) => t.name).join(", "),
-          r.task || "",
-          r.description || "",
-          r.hours.toFixed(2),
-          r.billable ? "Yes" : "No",
-        ]),
-      ]);
+      // An internal file, so unlike the client copy the header says which
+      // basis it is — the two can end up open side by side.
+      downloadCsv(
+        `ironbrij-detailed-entries_${clientLabel}${tagLabel}${basisLabel}_${from}_to_${to}.csv`,
+        [
+          [
+            "Date",
+            "Employee",
+            "Project",
+            "Tags",
+            "Task",
+            "Description",
+            basis === "billed" ? "Hours (with increment)" : "Hours (actual)",
+            "Billable",
+          ],
+          ...filteredDetailed.map((r) => [
+            r.date,
+            r.employeeName,
+            r.projectName,
+            r.projectTags.map((t) => t.name).join(", "),
+            r.task || "",
+            r.description || "",
+            (basis === "billed"
+              ? billableHoursForCasualEntry(r, r.serviceCategory, billingOpts)
+              : r.hours
+            ).toFixed(2),
+            r.billable ? "Yes" : "No",
+          ]),
+        ],
+      );
     } else {
       downloadCsv(
         `ironbrij-casual-service-by-${casualGroupBy}_${clientLabel}${tagLabel}_${from}_to_${to}.csv`,
@@ -2015,9 +2076,31 @@ function Reports() {
       title="Reports"
       subtitle="Where the hours actually went."
       actions={
-        <Button variant="outline" className="gap-2" onClick={exportCsv} disabled={loading}>
-          <Download className="h-4 w-4" aria-hidden="true" /> Export
-        </Button>
+        exportOffersHoursBasis ? (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" className="gap-2" disabled={loading}>
+                <Download className="h-4 w-4" aria-hidden="true" /> Export
+                <ChevronDown className="h-4 w-4" aria-hidden="true" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onSelect={() => exportCsv("billed")}>
+                With increment
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => exportCsv("actual")}>Actual hours</DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        ) : (
+          <Button
+            variant="outline"
+            className="gap-2"
+            onClick={() => exportCsv()}
+            disabled={loading}
+          >
+            <Download className="h-4 w-4" aria-hidden="true" /> Export
+          </Button>
+        )
       }
     >
       <div className="mb-6 flex flex-wrap items-center gap-3">
