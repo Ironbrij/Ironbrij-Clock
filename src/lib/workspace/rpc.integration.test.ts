@@ -92,16 +92,14 @@ if (hasLocalSupabase) {
       if (error || !data.user) throw new Error(`createUser(${email}) failed: ${error?.message}`);
       const userId = data.user.id;
       createdUserIds.push(userId);
-      const { error: profileError } = await admin
-        .from("profiles")
-        .upsert({
-          id: userId,
-          email,
-          full_name: label,
-          role,
-          is_active: true,
-          is_pending: pending,
-        });
+      const { error: profileError } = await admin.from("profiles").upsert({
+        id: userId,
+        email,
+        full_name: label,
+        role,
+        is_active: true,
+        is_pending: pending,
+      });
       if (profileError)
         throw new Error(`profile upsert failed for ${email}: ${profileError.message}`);
       return signedInClient(userId, email, password);
