@@ -35,6 +35,11 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      # Typecheck alone misses build-only failures (SSR/Worker bundling,
+      # nitro's Cloudflare output), and main syncs straight into Lovable.
+      - name: Build
+        run: npm run build
+
       # Pinned rather than "latest" on purpose. Resolving "latest" makes the
       # action call the GitHub releases API unauthenticated, from a shared
       # runner IP, and run #30 on 2026-09-29 died on exactly that: "Failed to
@@ -100,6 +105,35 @@ jobs:
 
       - name: Run tests (unit + M43 RPC integration)
         run: npm run test
+
+      # src/integrations/supabase/types.ts is kept current by hand and had
+      # drifted (tables missing entirely), so a schema change could reach
+      # the app with its types still describing the old shape. Regenerate
+      # from the migrations this job just applied and fail on any difference.
+      # PostgrestVersion is dropped from both sides first: it reflects the
+      # local CLI's PostgREST, not the schema.
+      #
+      # To fix a failure, download the "supabase-types" artifact from this
+      # run and commit it as src/integrations/supabase/types.ts.
+      - name: Check Supabase types match the migrations
+        id: types_check
+        run: |
+          supabase gen types typescript --local \
+            | npx prettier --stdin-filepath src/integrations/supabase/types.ts \
+            > /tmp/types.generated.ts
+          strip_version() { grep -v 'PostgrestVersion: "' "$1"; }
+          if ! diff -u <(strip_version src/integrations/supabase/types.ts) \
+                       <(strip_version /tmp/types.generated.ts); then
+            echo "::error file=src/integrations/supabase/types.ts::types.ts doesn't match the migrations. Commit the supabase-types artifact from this run."
+            exit 1
+          fi
+
+      - name: Upload regenerated Supabase types
+        if: failure() && steps.types_check.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: supabase-types
+          path: /tmp/types.generated.ts
 
       - name: Stop local Supabase
         # Only if it actually started — `if: always()` alone would also run
