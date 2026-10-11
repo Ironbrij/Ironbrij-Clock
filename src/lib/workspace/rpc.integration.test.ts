@@ -371,5 +371,158 @@ if (hasLocalSupabase) {
         RPC_TIMEOUT,
       );
     });
+
+    // RLS audit 2026-10-11 (20261011000000_lock_down_profile_privileges.sql):
+    // a profile's owner could write its role/is_active/is_pending/email
+    // directly, so any non-admin could promote themselves and read every pay
+    // rate. These go through the plain table API exactly as an attacker
+    // would, never through the app's own hooks.
+    describe("profiles privileged columns", () => {
+      type ProfileUpdate = Database["public"]["Tables"]["profiles"]["Update"];
+
+      /** Signed in, but no profiles row yet — the state the first-sign-in bootstrap in use-members.ts starts from. */
+      async function signedInWithoutProfile(label: string) {
+        const email = `${label}-${suffix}@rpc-test.ironbrij.local`;
+        const { data, error } = await admin.auth.admin.createUser({
+          email,
+          password,
+          email_confirm: true,
+        });
+        if (error || !data.user) throw new Error(`createUser(${email}) failed: ${error?.message}`);
+        createdUserIds.push(data.user.id);
+        return { email, ...(await signedInClient(data.user.id, email, password)) };
+      }
+
+      it(
+        "blocks inserting your own profile as an admin",
+        async () => {
+          const fresh = await signedInWithoutProfile("self-insert-admin");
+          const { error } = await fresh.client.from("profiles").insert({
+            id: fresh.userId,
+            email: fresh.email,
+            role: "admin",
+            is_pending: false,
+          });
+          expect(error).not.toBeNull();
+
+          const { data } = await admin.from("profiles").select("id").eq("id", fresh.userId);
+          expect(data).toEqual([]);
+        },
+        RPC_TIMEOUT,
+      );
+
+      it(
+        "blocks inserting your own profile under someone else's email",
+        async () => {
+          const fresh = await signedInWithoutProfile("self-insert-email");
+          const { error } = await fresh.client.from("profiles").insert({
+            id: fresh.userId,
+            email: `not-me-${suffix}@example.com`,
+            full_name: "Not me",
+            is_pending: true,
+          });
+          expect(error?.message).toMatch(/must match the signed-in account/i);
+        },
+        RPC_TIMEOUT,
+      );
+
+      it(
+        "still lets a first sign-in create its own pending member profile",
+        async () => {
+          const fresh = await signedInWithoutProfile("self-insert-ok");
+          const { error } = await fresh.client.from("profiles").insert({
+            id: fresh.userId,
+            email: fresh.email,
+            full_name: "Bootstrap",
+            avatar_url: null,
+            job_title: "Team member",
+            is_pending: true,
+          });
+          expect(error).toBeNull();
+
+          const { data: profile } = await admin
+            .from("profiles")
+            .select("role, is_pending, is_active")
+            .eq("id", fresh.userId)
+            .single();
+          expect(profile).toEqual({ role: "member", is_pending: true, is_active: true });
+        },
+        RPC_TIMEOUT,
+      );
+
+      it(
+        "blocks a member from changing their own role, approval, active status or email",
+        async () => {
+          const member = await fixtureUser("self-escalate", "member");
+          const patches: ProfileUpdate[] = [
+            { role: "admin" },
+            { role: "manager" },
+            { is_pending: false },
+            { is_active: false },
+            { email: `hijack-${suffix}@example.com` },
+          ];
+          for (const patch of patches) {
+            const { error } = await member.client
+              .from("profiles")
+              .update(patch)
+              .eq("id", member.userId);
+            expect(error, JSON.stringify(patch)).not.toBeNull();
+          }
+
+          const { data: profile } = await admin
+            .from("profiles")
+            .select("role, is_pending, is_active, email")
+            .eq("id", member.userId)
+            .single();
+          expect(profile?.role).toBe("member");
+          expect(profile?.is_pending).toBe(true);
+          expect(profile?.is_active).toBe(true);
+          expect(profile?.email).toMatch(/^self-escalate-/);
+        },
+        RPC_TIMEOUT,
+      );
+
+      it(
+        "still lets a member edit their own name, job title and timezone",
+        async () => {
+          const member = await fixtureUser("self-edit", "member");
+          const { data, error } = await member.client
+            .from("profiles")
+            .update({ full_name: "Edited", job_title: "VA", timezone: "Australia/Perth" })
+            .eq("id", member.userId)
+            .select("id");
+          expect(error).toBeNull();
+          expect(data).toHaveLength(1);
+        },
+        RPC_TIMEOUT,
+      );
+
+      it(
+        "still lets an admin set another member's timezone and approve them",
+        async () => {
+          const member = await fixtureUser("admin-edits", "member");
+          const { data, error } = await adminUser.client
+            .from("profiles")
+            .update({ timezone: "Australia/Brisbane" })
+            .eq("id", member.userId)
+            .select("id");
+          expect(error).toBeNull();
+          expect(data).toHaveLength(1);
+
+          const { error: approveError } = await adminUser.client.rpc("approve_member", {
+            _user_id: member.userId,
+          });
+          expect(approveError).toBeNull();
+
+          const { data: profile } = await admin
+            .from("profiles")
+            .select("is_pending")
+            .eq("id", member.userId)
+            .single();
+          expect(profile?.is_pending).toBe(false);
+        },
+        RPC_TIMEOUT,
+      );
+    });
   });
 }

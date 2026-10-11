@@ -492,6 +492,24 @@ export type Database = {
           },
         ];
       };
+      signup_invites: {
+        Row: {
+          created_at: string;
+          email: string;
+          invited_by: string | null;
+        };
+        Insert: {
+          created_at?: string;
+          email: string;
+          invited_by?: string | null;
+        };
+        Update: {
+          created_at?: string;
+          email?: string;
+          invited_by?: string | null;
+        };
+        Relationships: [];
+      };
       tags: {
         Row: {
           color: string;
