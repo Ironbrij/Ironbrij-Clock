@@ -46,6 +46,7 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import type { Role } from "@/lib/mock-data";
 import { dotColors, useWorkspace } from "@/lib/workspace-store";
+import { PersonLink } from "@/components/detail-panel";
 
 export const Route = createFileRoute("/teams")({
   head: () => ({
@@ -251,14 +252,14 @@ function TeamsPage() {
                         </AvatarFallback>
                       </Avatar>
                       <div className="min-w-0">
-                        <p className="flex items-center gap-2 truncate text-sm font-medium">
-                          {m.name}
+                        <div className="flex items-center gap-2 truncate text-sm font-medium">
+                          <PersonLink id={m.id}>{m.name}</PersonLink>
                           {m.pending && (
                             <Badge variant="outline" className="text-[10px] font-medium">
                               Pending
                             </Badge>
                           )}
-                        </p>
+                        </div>
                         <p className="truncate text-xs text-muted-foreground">
                           {m.email ?? m.title}
                         </p>

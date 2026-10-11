@@ -44,6 +44,7 @@ import { billableHoursForCasualEntry } from "@/lib/casual-billing";
 import { currencies, timezones, useWorkspace, type Role } from "@/lib/workspace-store";
 import { toast } from "sonner";
 import { useEffect, useRef, useState, type ChangeEvent } from "react";
+import { PersonLink } from "@/components/detail-panel";
 
 const settingsTabs = ["profile", "notifications", "users", "admin"] as const;
 type SettingsTab = (typeof settingsTabs)[number];
@@ -541,7 +542,7 @@ function UsersTab() {
                               {m.initials}
                             </AvatarFallback>
                           </Avatar>
-                          {m.name}
+                          <PersonLink id={m.id}>{m.name}</PersonLink>
                         </div>
                       </td>
                       <td className="px-3 py-2.5 text-muted-foreground">{m.email ?? "—"}</td>
@@ -667,7 +668,7 @@ function UsersTab() {
                                   {m.initials}
                                 </AvatarFallback>
                               </Avatar>
-                              {m.name}
+                              <PersonLink id={m.id}>{m.name}</PersonLink>
                             </div>
                           </td>
                           <td className="px-3 py-2.5 text-muted-foreground">{m.email ?? "—"}</td>

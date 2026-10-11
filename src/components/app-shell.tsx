@@ -16,6 +16,7 @@ import {
   SlidersHorizontal,
   Users,
 } from "lucide-react";
+import { DetailPanelProvider } from "@/components/detail-panel";
 import { RunningTimerPill } from "@/components/running-timer";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -274,7 +275,9 @@ export function AppShell({
           tabIndex={-1}
           className="min-w-0 flex-1 px-5 py-6 focus:outline-none sm:px-8 sm:py-8"
         >
-          <div className="mx-auto w-full max-w-6xl">{children}</div>
+          <DetailPanelProvider>
+            <div className="mx-auto w-full max-w-6xl">{children}</div>
+          </DetailPanelProvider>
         </main>
         <nav
           aria-label="Main"

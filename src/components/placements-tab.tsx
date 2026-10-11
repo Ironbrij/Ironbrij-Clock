@@ -35,6 +35,7 @@ import { Combobox } from "@/components/combobox";
 import { managementFee, vaMonthlyCost } from "@/lib/retainer";
 import { fromDateKey, toDateKey } from "@/lib/time-utils";
 import { useWorkspace, type WorkspacePlacement } from "@/lib/workspace-store";
+import { ClientLink } from "@/components/detail-panel";
 
 const NEW_VA = "__new__";
 
@@ -333,7 +334,9 @@ function PlacementRow({
   return (
     <tr className="border-b border-border last:border-0 hover:bg-muted/40">
       <td className="px-5 py-3 font-medium">{vaLabel}</td>
-      <td className="px-5 py-3">{clientLabel}</td>
+      <td className="px-5 py-3">
+        <ClientLink id={placement.clientId}>{clientLabel}</ClientLink>
+      </td>
       <td className="whitespace-nowrap px-5 py-3 text-muted-foreground">
         {formatDate(placement.startedOn)}
       </td>

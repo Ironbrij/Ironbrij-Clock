@@ -16,6 +16,7 @@ import { formatHours } from "@/lib/mock-data";
 import type { WorkspaceClient, WorkspaceSettings } from "@/lib/workspace/types";
 import { type EmployeeSortKey, formatCurrency } from "./report-config";
 import type { EmployeeReportRow } from "./report-rows";
+import { PersonLink } from "@/components/detail-panel";
 
 type EmployeeReportViewProps = {
   clientFilter: string;
@@ -150,7 +151,9 @@ export function EmployeeReportView({
                           {r.initials}
                         </AvatarFallback>
                       </Avatar>
-                      <span className="font-medium">{r.name}</span>
+                      <PersonLink id={r.id} className="font-medium">
+                        {r.name}
+                      </PersonLink>
                     </span>
                   </td>
                   <td className="px-5 py-3 text-muted-foreground">{r.team}</td>

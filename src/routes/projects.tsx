@@ -76,6 +76,7 @@ import {
   type WorkspaceProject,
   type WorkspaceTaskCategory,
 } from "@/lib/workspace-store";
+import { ClientLink } from "@/components/detail-panel";
 
 const PROJECTS_PAGE_SIZE = 12;
 
@@ -1107,7 +1108,9 @@ function ClientsTab({
                           className="h-8 max-w-xs"
                         />
                       ) : (
-                        <p className="truncate text-sm font-medium">{c.name}</p>
+                        <p className="truncate text-sm font-medium">
+                          <ClientLink id={c.id}>{c.name}</ClientLink>
+                        </p>
                       )}
                       {!c.active && (
                         <Badge variant="outline" className="shrink-0 text-muted-foreground">

@@ -87,6 +87,7 @@ import {
   type WorkspaceEmployment,
   type WorkspaceEntry,
 } from "@/lib/workspace-store";
+import { PersonLink } from "@/components/detail-panel";
 
 // M37: lets other pages/actions deep-link straight into a specific tab
 // (and, for Entries, a specific person/week) instead of only ever landing
@@ -429,7 +430,9 @@ function WeekStatusPanel() {
                   <AvatarImage src={m.avatarUrl ?? undefined} alt={m.name} />
                   <AvatarFallback className="bg-secondary text-xs">{m.initials}</AvatarFallback>
                 </Avatar>
-                <span className="truncate text-sm">{m.name}</span>
+                <PersonLink id={m.id} className="text-sm">
+                  {m.name}
+                </PersonLink>
               </div>
               <div className="flex shrink-0 items-center gap-3">
                 {hoursByUser && (
@@ -640,7 +643,13 @@ function ApprovalsPanel() {
                         </AvatarFallback>
                       </Avatar>
                       <div className="min-w-0">
-                        <p className="truncate text-sm font-medium">{member?.name ?? "Unknown"}</p>
+                        <p className="truncate text-sm font-medium">
+                          {member ? (
+                            <PersonLink id={member.id}>{member.name}</PersonLink>
+                          ) : (
+                            "Unknown"
+                          )}
+                        </p>
                         <button
                           type="button"
                           aria-expanded={expanded}
@@ -1342,7 +1351,9 @@ function ScheduleRow({
             <AvatarImage src={member.avatarUrl ?? undefined} alt={member.name} />
             <AvatarFallback className="bg-secondary text-xs">{member.initials}</AvatarFallback>
           </Avatar>
-          <span className="font-medium">{member.name}</span>
+          <PersonLink id={member.id} className="font-medium">
+            {member.name}
+          </PersonLink>
         </div>
       </td>
       <td className="px-3 py-2.5">
