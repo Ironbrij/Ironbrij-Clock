@@ -32,6 +32,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Combobox } from "@/components/combobox";
+import { managementFee, vaMonthlyCost } from "@/lib/retainer";
 import { fromDateKey, toDateKey } from "@/lib/time-utils";
 import { useWorkspace, type WorkspacePlacement } from "@/lib/workspace-store";
 
@@ -54,17 +55,11 @@ const money = (amount: number | null, currency: string) => {
 };
 
 /**
- * M49: the management fee — derived, never stored, so it can't drift from
- * the two amounts it comes from. An unpriced side yields 0 rather than a
- * negative fee, matching what the source sheet shows for its "N/A" rows.
+ * A stored amount as an input's starting text. The hourly rate is stored to
+ * six decimals (converted placements keep their exact monthly cost), but is
+ * shown and compared at two, so blurring an untouched field never rewrites it.
  */
-export const managementFee = (p: {
-  vaMonthlyRate: number | null;
-  clientPackageAmount: number | null;
-}): number =>
-  p.vaMonthlyRate === null || p.clientPackageAmount === null
-    ? 0
-    : p.clientPackageAmount - p.vaMonthlyRate;
+const asInput = (n: number | null) => (n === null ? "" : String(Math.round(n * 100) / 100));
 
 /**
  * M49: the admin editor for VA retainer placements — the "VA Package"
@@ -159,20 +154,23 @@ export function PlacementsTab() {
           Add placement
         </Button>
         <p className="text-xs text-muted-foreground">
-          Management fee is the package price minus what the VA is paid — calculated, not entered.
-          Ending a placement keeps its history so past reports stay correct.
+          VA cost /mo is the hourly rate × weekly hours × 52 ÷ 12, and the management fee is the
+          package minus that — both calculated, not entered. Ending a placement keeps its history so
+          past reports stay correct.
         </p>
       </div>
 
       <Card className="shadow-card">
         <CardContent className="overflow-x-auto p-0">
-          <table className="w-full min-w-[880px] text-sm">
+          <table className="w-full min-w-[1080px] text-sm">
             <thead>
               <tr className="border-b border-border text-xs uppercase tracking-wide text-muted-foreground">
                 <th className="px-5 py-3 text-left font-medium">VA</th>
                 <th className="px-5 py-3 text-left font-medium">Client</th>
                 <th className="px-5 py-3 text-left font-medium">Started</th>
-                <th className="px-5 py-3 text-right font-medium">VA rate /mo</th>
+                <th className="px-5 py-3 text-right font-medium">VA rate /hr</th>
+                <th className="px-5 py-3 text-right font-medium">Hours /wk</th>
+                <th className="px-5 py-3 text-right font-medium">VA cost /mo</th>
                 <th className="px-5 py-3 text-right font-medium">Package /mo</th>
                 <th className="px-5 py-3 text-right font-medium">Management fee</th>
                 <th className="px-5 py-3 text-left font-medium">Status</th>
@@ -182,7 +180,7 @@ export function PlacementsTab() {
             <tbody>
               {rows.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="px-5 py-8 text-center text-sm text-muted-foreground">
+                  <td colSpan={10} className="px-5 py-8 text-center text-sm text-muted-foreground">
                     No placements in this filter.
                   </td>
                 </tr>
@@ -204,7 +202,7 @@ export function PlacementsTab() {
             {rows.length > 0 && (
               <tfoot>
                 <tr className="border-t-2 border-border bg-muted/50">
-                  <td className="px-5 py-3 font-semibold" colSpan={5}>
+                  <td className="px-5 py-3 font-semibold" colSpan={7}>
                     Total management fee /mo
                   </td>
                   <td className="px-5 py-3 text-right font-semibold tabular-nums">
@@ -241,26 +239,29 @@ function PlacementRow({
     id: string,
     patch: {
       endedOn?: string | null;
-      vaMonthlyRate?: number | null;
+      vaHourlyRate?: number | null;
+      contractedWeeklyHours?: number | null;
       clientPackageAmount?: number | null;
     },
   ) => Promise<void>;
   onDelete: (id: string) => Promise<void>;
 }) {
-  const [rate, setRate] = useState(placement.vaMonthlyRate?.toString() ?? "");
+  const [rate, setRate] = useState(asInput(placement.vaHourlyRate));
+  const [hours, setHours] = useState(asInput(placement.contractedWeeklyHours));
   const [pkg, setPkg] = useState(placement.clientPackageAmount?.toString() ?? "");
   const [busy, setBusy] = useState(false);
   const [confirmingRemove, setConfirmingRemove] = useState(false);
 
   useEffect(() => {
-    setRate(placement.vaMonthlyRate?.toString() ?? "");
+    setRate(asInput(placement.vaHourlyRate));
+    setHours(asInput(placement.contractedWeeklyHours));
     setPkg(placement.clientPackageAmount?.toString() ?? "");
-  }, [placement.vaMonthlyRate, placement.clientPackageAmount]);
+  }, [placement.vaHourlyRate, placement.contractedWeeklyHours, placement.clientPackageAmount]);
 
   // Same shape as the hourly-rate field in Manage → Schedule: no-op when
   // unchanged, reject anything unparseable, revert local state on failure.
   const saveAmount = async (
-    field: "vaMonthlyRate" | "clientPackageAmount",
+    field: "vaHourlyRate" | "contractedWeeklyHours" | "clientPackageAmount",
     value: string,
     original: string,
     reset: (v: string) => void,
@@ -270,6 +271,12 @@ function PlacementRow({
     const parsed = trimmed === "" ? null : Number(trimmed);
     if (trimmed !== "" && (Number.isNaN(parsed) || (parsed ?? 0) < 0)) {
       toast.error("Amount must be a positive number");
+      reset(original);
+      return;
+    }
+    // Same bounds as the column's CHECK constraint.
+    if (field === "contractedWeeklyHours" && parsed !== null && (parsed <= 0 || parsed > 168)) {
+      toast.error("Weekly hours must be more than 0 and at most 168");
       reset(original);
       return;
     }
@@ -336,20 +343,40 @@ function PlacementRow({
           min="0"
           step="0.01"
           placeholder="N/A"
-          aria-label={`VA monthly rate for ${vaLabel} at ${clientLabel}`}
+          aria-label={`VA hourly rate for ${vaLabel} at ${clientLabel}`}
           value={rate}
           disabled={busy}
           onChange={(e) => setRate(e.target.value)}
           onBlur={() =>
+            void saveAmount("vaHourlyRate", rate, asInput(placement.vaHourlyRate), setRate)
+          }
+          className="ml-auto h-8 w-24 text-right tabular-nums"
+        />
+      </td>
+      <td className="px-5 py-3 text-right">
+        <Input
+          type="number"
+          min="0.25"
+          max="168"
+          step="0.25"
+          placeholder="N/A"
+          aria-label={`Contracted hours per week for ${vaLabel} at ${clientLabel}`}
+          value={hours}
+          disabled={busy}
+          onChange={(e) => setHours(e.target.value)}
+          onBlur={() =>
             void saveAmount(
-              "vaMonthlyRate",
-              rate,
-              placement.vaMonthlyRate?.toString() ?? "",
-              setRate,
+              "contractedWeeklyHours",
+              hours,
+              asInput(placement.contractedWeeklyHours),
+              setHours,
             )
           }
-          className="ml-auto h-8 w-28 text-right tabular-nums"
+          className="ml-auto h-8 w-20 text-right tabular-nums"
         />
+      </td>
+      <td className="px-5 py-3 text-right tabular-nums text-muted-foreground">
+        {money(vaMonthlyCost(placement), currency)}
       </td>
       <td className="px-5 py-3 text-right">
         <Input
@@ -453,7 +480,8 @@ function AddPlacementDialog({
     clientId: string;
     startedOn: string;
     endedOn: string | null;
-    vaMonthlyRate: number | null;
+    vaHourlyRate: number | null;
+    contractedWeeklyHours: number | null;
     clientPackageAmount: number | null;
   }) => Promise<void>;
 }) {
@@ -464,6 +492,7 @@ function AddPlacementDialog({
   const [clientId, setClientId] = useState("");
   const [startedOn, setStartedOn] = useState(toDateKey(new Date()));
   const [rate, setRate] = useState("");
+  const [hours, setHours] = useState("40");
   const [pkg, setPkg] = useState("");
   const [saving, setSaving] = useState(false);
 
@@ -474,14 +503,24 @@ function AddPlacementDialog({
     setClientId("");
     setStartedOn(toDateKey(new Date()));
     setRate("");
+    setHours("40");
     setPkg("");
   }, [open]);
 
   const parse = (v: string) => (v.trim() === "" ? null : Number(v.trim()));
   const rateInvalid = rate.trim() !== "" && Number.isNaN(Number(rate.trim()));
   const pkgInvalid = pkg.trim() !== "" && Number.isNaN(Number(pkg.trim()));
+  const hoursValue = parse(hours);
+  const hoursInvalid =
+    hoursValue !== null && (Number.isNaN(hoursValue) || hoursValue <= 0 || hoursValue > 168);
+  const previewCost =
+    rateInvalid || hoursInvalid
+      ? null
+      : vaMonthlyCost({ vaHourlyRate: parse(rate), contractedWeeklyHours: hoursValue });
+  const previewPackage = pkgInvalid ? null : parse(pkg);
   const vaReady = vaChoice === NEW_VA ? newVaName.trim() !== "" : vaChoice !== "";
-  const canSubmit = !saving && vaReady && !!clientId && !!startedOn && !rateInvalid && !pkgInvalid;
+  const canSubmit =
+    !saving && vaReady && !!clientId && !!startedOn && !rateInvalid && !hoursInvalid && !pkgInvalid;
 
   const submit = async () => {
     if (!canSubmit) return;
@@ -493,7 +532,8 @@ function AddPlacementDialog({
         clientId,
         startedOn,
         endedOn: null,
-        vaMonthlyRate: parse(rate),
+        vaHourlyRate: parse(rate),
+        contractedWeeklyHours: hoursValue,
         clientPackageAmount: parse(pkg),
       });
       toast.success("Placement added");
@@ -511,8 +551,9 @@ function AddPlacementDialog({
         <DialogHeader>
           <DialogTitle>Add a placement</DialogTitle>
           <DialogDescription>
-            A VA placed with a client on a monthly retainer. Leave an amount blank if that side
-            isn&apos;t on a package — the management fee then reads zero rather than a negative.
+            A VA placed with a client: the VA is paid by the hour for their contracted weekly hours,
+            and the client pays a monthly package. Leave an amount blank if that side isn&apos;t
+            priced — the management fee then reads zero rather than a negative.
           </DialogDescription>
         </DialogHeader>
 
@@ -554,7 +595,7 @@ function AddPlacementDialog({
             />
           </div>
 
-          <div className="grid gap-4 sm:grid-cols-3">
+          <div className="grid gap-4 sm:grid-cols-2">
             <div className="grid gap-2">
               <Label htmlFor="placement-start">Started</Label>
               <Input
@@ -565,7 +606,7 @@ function AddPlacementDialog({
               />
             </div>
             <div className="grid gap-2">
-              <Label htmlFor="placement-rate">VA rate /mo ({settings.currency})</Label>
+              <Label htmlFor="placement-rate">VA rate /hr ({settings.currency})</Label>
               <Input
                 id="placement-rate"
                 type="number"
@@ -574,6 +615,22 @@ function AddPlacementDialog({
                 value={rate}
                 onChange={(e) => setRate(e.target.value)}
               />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="placement-hours">Hours /wk</Label>
+              <Input
+                id="placement-hours"
+                type="number"
+                min="0.25"
+                max="168"
+                step="0.25"
+                value={hours}
+                aria-invalid={hoursInvalid}
+                onChange={(e) => setHours(e.target.value)}
+              />
+              {hoursInvalid && (
+                <p className="text-xs text-destructive">More than 0 and at most 168.</p>
+              )}
             </div>
             <div className="grid gap-2">
               <Label htmlFor="placement-pkg">Package /mo ({settings.currency})</Label>
@@ -587,6 +644,13 @@ function AddPlacementDialog({
               />
             </div>
           </div>
+          {previewCost !== null && (
+            <p className="text-xs text-muted-foreground">
+              VA cost ≈ {money(previewCost, settings.currency)} /mo
+              {previewPackage !== null &&
+                ` · management fee ≈ ${money(previewPackage - previewCost, settings.currency)} /mo`}
+            </p>
+          )}
         </div>
 
         <DialogFooter>

@@ -1,14 +1,21 @@
 // M49: unit coverage for the one rule that decides every retainer figure —
 // how a monthly fee is spread across a reporting range, and where a
-// placement's live window clips it. Same scoped pure-function reasoning
+// placement's live window clips it — plus, since 2026-10-11, how an hourly
+// VA rate and contracted hours become the monthly cost. Same scoped pure-function reasoning
 // gross-profit.test.ts and casual-billing.test.ts already give.
 import { describe, expect, it } from "vitest";
-import { retainerAccrualForRange } from "./retainer";
+import { managementFee, retainerAccrualForRange, vaMonthlyCost } from "./retainer";
 
-const placement = (over: Partial<Parameters<typeof retainerAccrualForRange>[0]> = {}) => ({
+/** The hourly rate that makes a 40 h/week placement cost exactly `monthly` a month. */
+const hourlyFor = (monthly: number, weeklyHours = 40) => (monthly * 12) / (52 * weeklyHours);
+
+type Placement = Parameters<typeof retainerAccrualForRange>[0];
+const placement = (over: Partial<Placement> = {}): Placement => ({
   startedOn: "2026-01-01",
   endedOn: null,
-  vaMonthlyRate: 1000,
+  // $1,000/mo VA cost, expressed the post-2026-10-11 way.
+  vaHourlyRate: hourlyFor(1000),
+  contractedWeeklyHours: 40,
   clientPackageAmount: 1650,
   ...over,
 });
@@ -82,7 +89,7 @@ describe("retainerAccrualForRange", () => {
   it("reports a zero fee when the client has no package price (the sheet's N/A)", () => {
     // Gladys Grumo -> Jim O'Connor: $130 paid, package N/A, fee $0.00.
     const r = retainerAccrualForRange(
-      placement({ vaMonthlyRate: 130, clientPackageAmount: null }),
+      placement({ vaHourlyRate: hourlyFor(130), clientPackageAmount: null }),
       "2026-09-01",
       "2026-09-30",
     );
@@ -92,9 +99,9 @@ describe("retainerAccrualForRange", () => {
     expect(r.profit).toBe(0);
   });
 
-  it("reports a zero fee when the VA has no monthly rate", () => {
+  it("reports a zero fee when the VA has no hourly rate", () => {
     const r = retainerAccrualForRange(
-      placement({ vaMonthlyRate: null, clientPackageAmount: 500 }),
+      placement({ vaHourlyRate: null, clientPackageAmount: 500 }),
       "2026-09-01",
       "2026-09-30",
     );
@@ -108,5 +115,52 @@ describe("retainerAccrualForRange", () => {
     // millisecond arithmetic would lose an hour and round down to 30.
     const r = retainerAccrualForRange(placement(), "2026-10-01", "2026-10-31");
     expect(r.days).toBe(31);
+  });
+
+  it("reports a zero fee when contracted hours aren't set", () => {
+    const r = retainerAccrualForRange(
+      placement({ contractedWeeklyHours: null }),
+      "2026-09-01",
+      "2026-09-30",
+    );
+    expect(r.cost).toBe(0);
+    expect(r.profit).toBe(0);
+  });
+});
+
+describe("vaMonthlyCost", () => {
+  it("is hourly rate × weekly hours × 52 ÷ 12", () => {
+    // $25/h for 40 h/week: 25 * 40 * 52 / 12 = $4,333.33.
+    expect(vaMonthlyCost({ vaHourlyRate: 25, contractedWeeklyHours: 40 })).toBeCloseTo(4333.33, 2);
+    // Part-time: $25/h for 20 h/week is half.
+    expect(vaMonthlyCost({ vaHourlyRate: 25, contractedWeeklyHours: 20 })).toBeCloseTo(2166.67, 2);
+  });
+
+  it("is unknown (null), not zero, when either side is missing", () => {
+    expect(vaMonthlyCost({ vaHourlyRate: null, contractedWeeklyHours: 40 })).toBeNull();
+    expect(vaMonthlyCost({ vaHourlyRate: 25, contractedWeeklyHours: null })).toBeNull();
+  });
+
+  it("keeps a converted placement's monthly cost to the cent at the stored precision", () => {
+    // 20261011030000 back-calculates each existing rate at 40 h/week and
+    // stores it as numeric(12,6). Rounding to six decimals must not move the
+    // monthly cost by a cent, for any of the sheet's typical amounts.
+    for (const monthly of [130, 650, 1000, 1234.56, 2500, 4999.99]) {
+      const stored = Math.round(hourlyFor(monthly) * 1e6) / 1e6;
+      const cost = vaMonthlyCost({ vaHourlyRate: stored, contractedWeeklyHours: 40 }) ?? 0;
+      expect(Math.abs(cost - monthly)).toBeLessThan(0.005);
+    }
+  });
+});
+
+describe("managementFee", () => {
+  it("is the package minus the monthly VA cost", () => {
+    // Lani Tonogbanua -> AKA Contractors: $1,650 package, $1,000 VA cost.
+    expect(managementFee(placement())).toBeCloseTo(650, 6);
+  });
+
+  it("is zero, not negative, when either side is unpriced", () => {
+    expect(managementFee(placement({ clientPackageAmount: null }))).toBe(0);
+    expect(managementFee(placement({ vaHourlyRate: null }))).toBe(0);
   });
 });

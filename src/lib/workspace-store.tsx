@@ -198,7 +198,8 @@ type WorkspaceContextValue = {
     patch: {
       startedOn?: string;
       endedOn?: string | null;
-      vaMonthlyRate?: number | null;
+      vaHourlyRate?: number | null;
+      contractedWeeklyHours?: number | null;
       clientPackageAmount?: number | null;
     },
   ) => Promise<void>;

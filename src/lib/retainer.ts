@@ -17,6 +17,40 @@ const inclusiveDays = (fromKey: string, toKey: string): number => {
   return diff < 0 ? 0 : diff + 1;
 };
 
+/** Average weeks in a month: 52 weeks ÷ 12 months. */
+const WEEKS_PER_MONTH = 52 / 12;
+
+/**
+ * A placement's monthly VA cost. Since 2026-10-11 a VA's rate is set per
+ * hour, and placed VAs log no time in IronTrack, so the cost comes from
+ * their contracted hours: rate × weekly hours × 52 ÷ 12. Null when either
+ * is missing — the sheet's "N/A" rows — meaning the cost is unknown, not
+ * zero.
+ */
+export function vaMonthlyCost(placement: {
+  vaHourlyRate: number | null;
+  contractedWeeklyHours: number | null;
+}): number | null {
+  if (placement.vaHourlyRate === null || placement.contractedWeeklyHours === null) return null;
+  return placement.vaHourlyRate * placement.contractedWeeklyHours * WEEKS_PER_MONTH;
+}
+
+/**
+ * M49: the management fee — derived, never stored, so it can't drift from
+ * the amounts it comes from. An unpriced side yields 0 rather than a
+ * negative fee, matching what the source sheet shows for its "N/A" rows.
+ */
+export function managementFee(placement: {
+  vaHourlyRate: number | null;
+  contractedWeeklyHours: number | null;
+  clientPackageAmount: number | null;
+}): number {
+  const cost = vaMonthlyCost(placement);
+  return cost === null || placement.clientPackageAmount === null
+    ? 0
+    : placement.clientPackageAmount - cost;
+}
+
 export type PlacementAccrual = {
   /** Days the placement was live inside the range. 0 means it doesn't belong in the report at all. */
   days: number;
@@ -27,7 +61,8 @@ export type PlacementAccrual = {
 };
 
 /**
- * M49: spreads a monthly retainer across a reporting range.
+ * M49: spreads a monthly retainer across a reporting range. The VA side is
+ * the monthly cost from `vaMonthlyCost` (hourly rate × contracted hours).
  *
  * The workbook prices placements per month, but Reports runs on arbitrary
  * ranges — a week, a month, a quarter. Daily accrual (`monthly × 12 ÷ 365`
@@ -48,7 +83,8 @@ export function retainerAccrualForRange(
   placement: {
     startedOn: string;
     endedOn: string | null;
-    vaMonthlyRate: number | null;
+    vaHourlyRate: number | null;
+    contractedWeeklyHours: number | null;
     clientPackageAmount: number | null;
   },
   from: string,
@@ -63,7 +99,8 @@ export function retainerAccrualForRange(
   const perDay = (monthly: number | null) =>
     monthly === null ? 0 : (monthly * 12 * days) / DAYS_PER_YEAR;
 
-  const cost = perDay(placement.vaMonthlyRate);
+  const monthlyCost = vaMonthlyCost(placement);
+  const cost = perDay(monthlyCost);
   const revenue = perDay(placement.clientPackageAmount);
 
   return {
@@ -71,9 +108,6 @@ export function retainerAccrualForRange(
     cost,
     revenue,
     // Unpriced on either side means no fee to claim, not a negative one.
-    profit:
-      placement.vaMonthlyRate === null || placement.clientPackageAmount === null
-        ? 0
-        : revenue - cost,
+    profit: monthlyCost === null || placement.clientPackageAmount === null ? 0 : revenue - cost,
   };
 }

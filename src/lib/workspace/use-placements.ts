@@ -57,7 +57,7 @@ export function usePlacementsData(enabled: boolean, canManage: boolean, uid: str
       const { data, error } = await supabase
         .from("va_placements")
         .select(
-          "id, placed_va_id, client_id, started_on, ended_on, va_monthly_rate, client_package_amount",
+          "id, placed_va_id, client_id, started_on, ended_on, va_hourly_rate, contracted_weekly_hours, client_package_amount",
         )
         .order("started_on", { ascending: false });
       if (error) throw error;
@@ -78,7 +78,9 @@ export function usePlacementsData(enabled: boolean, canManage: boolean, uid: str
         clientId: p.client_id,
         startedOn: p.started_on,
         endedOn: p.ended_on,
-        vaMonthlyRate: p.va_monthly_rate === null ? null : Number(p.va_monthly_rate),
+        vaHourlyRate: p.va_hourly_rate === null ? null : Number(p.va_hourly_rate),
+        contractedWeeklyHours:
+          p.contracted_weekly_hours === null ? null : Number(p.contracted_weekly_hours),
         clientPackageAmount:
           p.client_package_amount === null ? null : Number(p.client_package_amount),
       })),
@@ -117,7 +119,8 @@ export function usePlacementsData(enabled: boolean, canManage: boolean, uid: str
         client_id: input.clientId,
         started_on: input.startedOn,
         ended_on: input.endedOn,
-        va_monthly_rate: input.vaMonthlyRate,
+        va_hourly_rate: input.vaHourlyRate,
+        contracted_weekly_hours: input.contractedWeeklyHours,
         client_package_amount: input.clientPackageAmount,
         updated_by: uid,
       });
@@ -133,7 +136,8 @@ export function usePlacementsData(enabled: boolean, canManage: boolean, uid: str
       patch: {
         startedOn?: string;
         endedOn?: string | null;
-        vaMonthlyRate?: number | null;
+        vaHourlyRate?: number | null;
+        contractedWeeklyHours?: number | null;
         clientPackageAmount?: number | null;
       },
     ) => {
@@ -143,7 +147,10 @@ export function usePlacementsData(enabled: boolean, canManage: boolean, uid: str
       };
       if (patch.startedOn !== undefined) row.started_on = patch.startedOn;
       if (patch.endedOn !== undefined) row.ended_on = patch.endedOn;
-      if (patch.vaMonthlyRate !== undefined) row.va_monthly_rate = patch.vaMonthlyRate;
+      if (patch.vaHourlyRate !== undefined) row.va_hourly_rate = patch.vaHourlyRate;
+      if (patch.contractedWeeklyHours !== undefined) {
+        row.contracted_weekly_hours = patch.contractedWeeklyHours;
+      }
       if (patch.clientPackageAmount !== undefined) {
         row.client_package_amount = patch.clientPackageAmount;
       }

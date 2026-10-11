@@ -772,6 +772,7 @@ export type Database = {
         Row: {
           client_id: string;
           client_package_amount: number | null;
+          contracted_weekly_hours: number | null;
           created_at: string;
           ended_on: string | null;
           id: string;
@@ -779,11 +780,13 @@ export type Database = {
           started_on: string;
           updated_at: string;
           updated_by: string | null;
+          va_hourly_rate: number | null;
           va_monthly_rate: number | null;
         };
         Insert: {
           client_id: string;
           client_package_amount?: number | null;
+          contracted_weekly_hours?: number | null;
           created_at?: string;
           ended_on?: string | null;
           id?: string;
@@ -791,11 +794,13 @@ export type Database = {
           started_on: string;
           updated_at?: string;
           updated_by?: string | null;
+          va_hourly_rate?: number | null;
           va_monthly_rate?: number | null;
         };
         Update: {
           client_id?: string;
           client_package_amount?: number | null;
+          contracted_weekly_hours?: number | null;
           created_at?: string;
           ended_on?: string | null;
           id?: string;
@@ -803,6 +808,7 @@ export type Database = {
           started_on?: string;
           updated_at?: string;
           updated_by?: string | null;
+          va_hourly_rate?: number | null;
           va_monthly_rate?: number | null;
         };
         Relationships: [
