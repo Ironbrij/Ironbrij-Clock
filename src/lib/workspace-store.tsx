@@ -216,9 +216,13 @@ type WorkspaceContextValue = {
   /** M47: emails someone that their timesheet for `weekStart` (a Monday date key) isn't submitted. Throws with a specific reason if refused. */
   remindToSubmit: (userId: string, weekStart: string) => Promise<void>;
   /** M52: composes the client's Casual Service Productivity Report for a week and returns it *without* sending — the exact email sendCasualReport would deliver. Throws with a specific reason if refused. */
-  previewCasualReport: (clientId: string, weekStart: string) => Promise<CasualReportPreview>;
+  previewCasualReport: (
+    clientId: string,
+    weekStart: string,
+    cc?: string[],
+  ) => Promise<CasualReportPreview>;
   /** M52: sends that same report to the client's contact email. Nothing is scheduled — one call, one email. */
-  sendCasualReport: (clientId: string, weekStart: string) => Promise<{ to: string }>;
+  sendCasualReport: (clientId: string, weekStart: string, cc?: string[]) => Promise<{ to: string }>;
 
   membersByTeam: (teamId: string) => WorkspaceMember[];
   teamMemberCount: (teamId: string) => number;

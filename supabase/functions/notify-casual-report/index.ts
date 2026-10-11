@@ -14,8 +14,10 @@
 //     from the same payload — the preview can't drift from the article.
 //   * Nothing the browser sends decides the content. The body is built from
 //     casual_report_for_client()'s return value, and the recipient address
-//     comes from the same place. The browser only ever names a client id and
-//     a week; it cannot supply an address, an hour figure or a line of HTML.
+//     comes from the same place. The browser names a client id and a week —
+//     and, since 2026-10-11, optional CC addresses (validated below, at most
+//     five). It still can't change the To address, an hour figure or a line
+//     of HTML.
 //   * The audit row is written *after* SendGrid accepts (see the migration
 //     for why this ordering is the opposite of M47's).
 //
@@ -74,6 +76,39 @@ type Report = {
   lines: ReportLine[];
   previous_sends: PreviousSend[];
 };
+
+const MAX_CC = 5;
+// Deliberately simple: SendGrid does the real deliverability check. This only
+// stops obvious typos and anything that could smuggle in a second address.
+const EMAIL_RE = /^[^\s@<>,;"]+@[^\s@<>,;"]+\.[^\s@<>,;"]+$/;
+
+/**
+ * Normalises the CC list the browser sent: trimmed, lower-cased, de-duplicated,
+ * and without the To address (SendGrid rejects a message that names the same
+ * address twice). Returns the bad entries instead if any don't look like an
+ * email address, so the manager is told exactly which one to fix.
+ */
+function normaliseCc(raw: unknown, recipient: string): { cc: string[] } | { error: string } {
+  if (raw === undefined || raw === null) return { cc: [] };
+  if (!Array.isArray(raw)) return { error: "cc must be a list of email addresses." };
+  const seen = new Set<string>([recipient.trim().toLowerCase()]);
+  const cc: string[] = [];
+  const bad: string[] = [];
+  for (const entry of raw) {
+    const email = typeof entry === "string" ? entry.trim().toLowerCase() : "";
+    if (!email) continue;
+    if (email.length > 254 || !EMAIL_RE.test(email)) {
+      bad.push(String(entry));
+      continue;
+    }
+    if (seen.has(email)) continue;
+    seen.add(email);
+    cc.push(email);
+  }
+  if (bad.length > 0) return { error: `Not a valid email address: ${bad.join(", ")}` };
+  if (cc.length > MAX_CC) return { error: `You can copy at most ${MAX_CC} people.` };
+  return { cc };
+}
 
 /** Parses "Name <email@domain>" (or a bare "email@domain") into SendGrid's separate name/email fields. */
 function parseFromAddress(raw: string): { name?: string; email: string } | null {
@@ -202,11 +237,13 @@ Deno.serve(async (req: Request) => {
   let clientId: string | undefined;
   let weekStart: string | undefined;
   let preview = false;
+  let rawCc: unknown;
   try {
     const body = await req.json();
     clientId = body?.client_id;
     weekStart = body?.week_start;
     preview = body?.preview === true;
+    rawCc = body?.cc;
   } catch {
     // handled by the check below
   }
@@ -247,6 +284,12 @@ Deno.serve(async (req: Request) => {
     return json({ error: "There's nothing to send for that week." }, 400);
   }
 
+  const ccResult = normaliseCc(rawCc, report.recipient_email);
+  if ("error" in ccResult) {
+    return json({ error: ccResult.error }, 400);
+  }
+  const cc = ccResult.cc;
+
   const { subject, html } = renderEmail(report, from.name);
 
   if (preview) {
@@ -254,6 +297,10 @@ Deno.serve(async (req: Request) => {
       {
         preview: true,
         to: report.recipient_email,
+        // Echoed back normalised, so the dialog shows exactly who'll be
+        // copied. Its presence also tells the dialog this deployment
+        // supports CC at all.
+        cc,
         contact_name: report.contact_name,
         subject,
         html,
@@ -281,6 +328,7 @@ Deno.serve(async (req: Request) => {
                 name: report.contact_name?.trim() || undefined,
               },
             ],
+            ...(cc.length > 0 ? { cc: cc.map((email) => ({ email })) } : {}),
             subject,
           },
         ],
@@ -306,12 +354,15 @@ Deno.serve(async (req: Request) => {
   // Sent. Record it — and if *this* fails, still report success, because the
   // client has the email either way and telling the manager otherwise would
   // invite a second send. The error lands in the function logs instead.
+  // _cc only when there is one, so this still records on a database that
+  // hasn't had 20261011040000 applied yet.
   const { error: logError } = await supabase.rpc("record_casual_report_email", {
     _client_id: clientId,
     _week_start: weekStart,
     _recipient: report.recipient_email,
     _line_count: report.line_count,
     _billed_hours: report.billed_hours,
+    ...(cc.length > 0 ? { _cc: cc } : {}),
   });
   if (logError) {
     console.error(
@@ -321,7 +372,8 @@ Deno.serve(async (req: Request) => {
   }
 
   console.log(
-    `notify-casual-report: sent ${report.client_name}/${weekStart} to ${report.recipient_email}`,
+    `notify-casual-report: sent ${report.client_name}/${weekStart} to ${report.recipient_email}` +
+      (cc.length > 0 ? ` (cc ${cc.length})` : ""),
   );
-  return json({ sent: 1, to: report.recipient_email, recorded: !logError }, 200);
+  return json({ sent: 1, to: report.recipient_email, cc, recorded: !logError }, 200);
 });

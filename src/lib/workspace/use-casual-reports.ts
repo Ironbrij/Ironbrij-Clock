@@ -7,8 +7,8 @@ import { supabase } from "@/integrations/supabase/client";
  *
  * Both calls go through the same edge function, `notify-casual-report`, which
  * composes the email from a SECURITY DEFINER RPC. Nothing here decides what
- * the client is told: this hook only ever names a client and a week, and gets
- * back the finished article. That is what makes the preview trustworthy —
+ * the client is told: this hook names a client, a week and any CC addresses,
+ * and gets back the finished article. That is what makes the preview trustworthy —
  * `preview` and send take the identical path, differing in one flag, so the
  * manager approves the exact payload that goes out.
  *
@@ -27,6 +27,12 @@ export type CasualReportPreviousSend = {
 export type CasualReportPreview = {
   /** The address the report will go to — from the client record, never from this app's state. */
   to: string;
+  /**
+   * Who'll be copied, as the edge function normalised it (lower-cased,
+   * de-duplicated, minus the To address). Undefined means the deployed
+   * function predates CC support, so CC addresses would be silently dropped.
+   */
+  cc: string[] | undefined;
   contactName: string | null;
   subject: string;
   /** The rendered email. Shown in a sandboxed iframe; never injected into the app's own DOM. */
@@ -38,6 +44,7 @@ export type CasualReportPreview = {
 
 type PreviewResponse = {
   to: string;
+  cc?: string[];
   contact_name: string | null;
   subject: string;
   html: string;
@@ -70,10 +77,14 @@ export function useCasualReportsData() {
   const qc = useQueryClient();
 
   const previewCasualReport = useCallback(
-    async (clientId: string, weekStart: string): Promise<CasualReportPreview> => {
+    async (
+      clientId: string,
+      weekStart: string,
+      cc: string[] = [],
+    ): Promise<CasualReportPreview> => {
       const { data, error } = await supabase.functions.invoke<PreviewResponse>(
         "notify-casual-report",
-        { body: { client_id: clientId, week_start: weekStart, preview: true } },
+        { body: { client_id: clientId, week_start: weekStart, cc, preview: true } },
       );
       if (error) {
         await unwrapFunctionError(error, "Couldn't build that report.");
@@ -81,6 +92,7 @@ export function useCasualReportsData() {
       if (!data) throw new Error("Couldn't build that report.");
       return {
         to: data.to,
+        cc: data.cc,
         contactName: data.contact_name,
         subject: data.subject,
         html: data.html,
@@ -98,10 +110,10 @@ export function useCasualReportsData() {
   );
 
   const sendCasualReport = useCallback(
-    async (clientId: string, weekStart: string): Promise<{ to: string }> => {
+    async (clientId: string, weekStart: string, cc: string[] = []): Promise<{ to: string }> => {
       const { data, error } = await supabase.functions.invoke<{ sent: number; to: string }>(
         "notify-casual-report",
-        { body: { client_id: clientId, week_start: weekStart } },
+        { body: { client_id: clientId, week_start: weekStart, cc } },
       );
       if (error) {
         await unwrapFunctionError(error, "The report couldn't be delivered.");
