@@ -31,16 +31,27 @@ export const inviteMembers = createServerFn({ method: "POST" })
     let invited = 0;
 
     for (const email of emails) {
+      // Recorded server-side *before* the invite, because the "Before User
+      // Created" hook runs inside inviteUserByEmail and checks this table —
+      // it no longer trusts user_metadata, which a caller can set on their
+      // own signup (20261011000000_lock_down_profile_privileges.sql).
+      const { error: inviteRecordError } = await supabaseAdmin
+        .from("signup_invites")
+        .upsert({ email, invited_by: context.userId });
+      if (inviteRecordError) {
+        failures.push({ email, reason: inviteRecordError.message });
+        continue;
+      }
+
       const { data: created, error } = await supabaseAdmin.auth.admin.inviteUserByEmail(email, {
         redirectTo: data.redirectTo,
-        data: { invited_by_admin: true },
       });
       if (error || !created?.user) {
         failures.push({ email, reason: error?.message ?? "Unknown error" });
         continue;
       }
       const userId = created.user.id;
-      await supabaseAdmin.from("profiles").upsert({
+      const { error: profileError } = await supabaseAdmin.from("profiles").upsert({
         id: userId,
         email,
         full_name: email.replace(/@.*$/, "").replace(/[._-]+/g, " "),
@@ -48,6 +59,14 @@ export const inviteMembers = createServerFn({ method: "POST" })
         role: data.role,
         is_pending: true,
       });
+      if (profileError) {
+        // Without a profile the invitee would land as a plain pending member
+        // with the wrong role, and the address can't be re-invited while its
+        // auth user exists — so undo the invite and let the admin retry.
+        await supabaseAdmin.auth.admin.deleteUser(userId);
+        failures.push({ email, reason: profileError.message });
+        continue;
+      }
 
       // inviteUserByEmail() always mints a fresh auth user (and therefore a
       // fresh profiles.id) even when this email was previously removed via
@@ -132,7 +151,7 @@ export const removeUserAccess = createServerFn({ method: "POST" })
     if (countError) throw new Error(countError.message);
     const { data: target } = await supabaseAdmin
       .from("profiles")
-      .select("role")
+      .select("role, email")
       .eq("id", data.userId)
       .maybeSingle();
     if (target?.role === "admin" && (activeAdmins ?? 0) === 0) {
@@ -149,6 +168,11 @@ export const removeUserAccess = createServerFn({ method: "POST" })
 
     await supabaseAdmin.from("team_members").delete().eq("user_id", data.userId);
     await supabaseAdmin.from("profiles").update({ is_active: false }).eq("id", data.userId);
+    // Otherwise the signup hook would still let this address create a fresh
+    // account; re-inviting them adds it back.
+    if (target?.email) {
+      await supabaseAdmin.from("signup_invites").delete().eq("email", target.email.toLowerCase());
+    }
 
     await supabaseAdmin.from("activity_log").insert({
       actor_id: context.userId,
