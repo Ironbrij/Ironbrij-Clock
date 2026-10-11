@@ -198,6 +198,57 @@ export type Database = {
           },
         ];
       };
+      casual_report_emails: {
+        Row: {
+          billed_hours: number;
+          cc_emails: string[];
+          client_id: string;
+          id: string;
+          line_count: number;
+          recipient_email: string;
+          sent_at: string;
+          sent_by: string | null;
+          week_start: string;
+        };
+        Insert: {
+          billed_hours?: number;
+          cc_emails?: string[];
+          client_id: string;
+          id?: string;
+          line_count?: number;
+          recipient_email: string;
+          sent_at?: string;
+          sent_by?: string | null;
+          week_start: string;
+        };
+        Update: {
+          billed_hours?: number;
+          cc_emails?: string[];
+          client_id?: string;
+          id?: string;
+          line_count?: number;
+          recipient_email?: string;
+          sent_at?: string;
+          sent_by?: string | null;
+          week_start?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "casual_report_emails_client_id_fkey";
+            columns: ["client_id"];
+            isOneToOne: false;
+            referencedRelation: "clients";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "casual_report_emails_sent_by_fkey";
+            columns: ["sent_by"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       clients: {
         Row: {
           basecamp_url: string | null;
@@ -897,11 +948,33 @@ export type Database = {
       };
       approve_member: { Args: { _user_id: string }; Returns: undefined };
       can_manage: { Args: { _user_id: string }; Returns: boolean };
+      casual_billed_hours: {
+        Args: {
+          _category: Database["public"]["Enums"]["casual_service_category"];
+          _increment_hours: number;
+          _seconds: number;
+          _uplift_pct: number;
+        };
+        Returns: number;
+      };
       casual_client_last_service: {
         Args: never;
         Returns: {
           client_id: string;
           last_service_date: string;
+        }[];
+      };
+      casual_report_for_client: {
+        Args: { _client_id: string; _week_start: string };
+        Returns: {
+          billed_hours: number;
+          client_name: string;
+          contact_name: string;
+          line_count: number;
+          lines: Json;
+          previous_sends: Json;
+          recipient_email: string;
+          week_start: string;
         }[];
       };
       create_announcement: {
@@ -980,6 +1053,17 @@ export type Database = {
           minutes: number;
           project_id: string;
         }[];
+      };
+      record_casual_report_email: {
+        Args: {
+          _billed_hours: number;
+          _cc?: string[];
+          _client_id: string;
+          _line_count: number;
+          _recipient: string;
+          _week_start: string;
+        };
+        Returns: string;
       };
       request_timesheet_reminder: {
         Args: { _user_id: string; _week_start: string };
