@@ -11,10 +11,13 @@ import {
   Megaphone,
   MoreHorizontal,
   Plane,
+  Receipt,
   Settings,
   SlidersHorizontal,
   Users,
 } from "lucide-react";
+import { DetailPanelProvider } from "@/components/detail-panel";
+import { RunningTimerPill } from "@/components/running-timer";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -22,25 +25,30 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { cn } from "@/lib/utils";
 import { useWorkspace } from "@/lib/workspace-store";
 
+// `managersOnly` pages are hidden from members' menus: Reports only offers a
+// member its project view, and every Manage tab is a "Managers and admins
+// only" empty state for them. Hiding a link isn't access control — RLS and
+// each page's own role check still decide what anyone can see if they type
+// the URL.
 const nav = [
-  { to: "/time", label: "Time", icon: Clock },
-  { to: "/timesheet", label: "Timesheet", icon: ClipboardList },
-  { to: "/", label: "Dashboard", icon: LayoutDashboard },
-  { to: "/announcements", label: "Announcements", icon: Megaphone },
-  { to: "/reports", label: "Reports", icon: BarChart3 },
-  { to: "/projects", label: "Projects", icon: FolderKanban },
-  { to: "/teams", label: "Team", icon: Users },
-  { to: "/time-off", label: "Time off", icon: Plane },
-  { to: "/manage", label: "Manage", icon: SlidersHorizontal },
-  { to: "/settings", label: "Settings", icon: Settings },
+  { to: "/time", label: "Time", icon: Clock, managersOnly: false },
+  { to: "/timesheet", label: "Timesheet", icon: ClipboardList, managersOnly: false },
+  { to: "/", label: "Dashboard", icon: LayoutDashboard, managersOnly: false },
+  { to: "/announcements", label: "Announcements", icon: Megaphone, managersOnly: false },
+  { to: "/reports", label: "Reports", icon: BarChart3, managersOnly: true },
+  { to: "/billing", label: "Billing", icon: Receipt, managersOnly: true },
+  { to: "/projects", label: "Projects", icon: FolderKanban, managersOnly: false },
+  { to: "/teams", label: "Team", icon: Users, managersOnly: false },
+  { to: "/time-off", label: "Time off", icon: Plane, managersOnly: false },
+  { to: "/manage", label: "Manage", icon: SlidersHorizontal, managersOnly: true },
+  { to: "/settings", label: "Settings", icon: Settings, managersOnly: false },
 ] as const;
 
 // Mobile only — the desktop sidebar has room for all of nav. These three
 // are what everyone, regardless of role, actually opens day to day;
 // everything else sits one tap behind "More" instead of competing for
 // space in a row of 9 icons.
-const mobilePrimaryNav = nav.filter((item) => ["/time", "/timesheet", "/"].includes(item.to));
-const mobileOverflowNav = nav.filter((item) => !["/time", "/timesheet", "/"].includes(item.to));
+const MOBILE_PRIMARY: string[] = ["/time", "/timesheet", "/"];
 
 export function AppShell({
   title,
@@ -62,6 +70,7 @@ export function AppShell({
     loadError,
     currentUser,
     isAdmin,
+    canManage,
     activeMembers,
     unseenActivityCount,
     unseenAnnouncementCount,
@@ -145,9 +154,15 @@ export function AppShell({
 
   const pendingCount = isAdmin ? activeMembers.filter((m) => m.pending).length : 0;
   // H22: pendingApprovals is already RLS-scoped to timesheets this viewer
-  // can review (shared-team for a manager, all for an admin), so folding
-  // it into the same badge as unseen activity needs no extra role check.
-  const manageBadgeCount = unseenActivityCount + pendingApprovals.length;
+  // can review (shared-team for a manager, all for an admin). Only they get
+  // the red count — they need someone to act. Unseen activity is just news,
+  // so it's a quiet dot instead; a red badge that's often only activity
+  // teaches people to ignore it.
+  const manageBadgeCount = pendingApprovals.length;
+  const manageHasUnseenActivity = unseenActivityCount > 0;
+  const visibleNav = nav.filter((item) => canManage || !item.managersOnly);
+  const mobilePrimaryNav = visibleNav.filter((item) => MOBILE_PRIMARY.includes(item.to));
+  const mobileOverflowNav = visibleNav.filter((item) => !MOBILE_PRIMARY.includes(item.to));
 
   return (
     <div className="flex min-h-screen w-full bg-background">
@@ -164,7 +179,7 @@ export function AppShell({
             alt="IronTrack"
             width={32}
             height={32}
-            className="h-8 w-8 shrink-0 dark:brightness-0 dark:invert"
+            className="h-8 w-8 shrink-0"
           />
           <div className="min-w-0">
             <span className="block truncate text-base font-semibold text-sidebar-foreground">
@@ -174,7 +189,7 @@ export function AppShell({
           </div>
         </Link>
         <nav aria-label="Main" className="flex flex-1 flex-col gap-1">
-          {nav.map((item) => {
+          {visibleNav.map((item) => {
             const active = pathname === item.to;
             const badgeCount =
               item.to === "/settings"
@@ -195,11 +210,22 @@ export function AppShell({
               >
                 <item.icon className="h-4 w-4 shrink-0" aria-hidden="true" />
                 {item.label}
-                {badgeCount > 0 && (
+                {badgeCount > 0 ? (
                   <span className="ml-auto inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-destructive px-1.5 text-[11px] font-bold text-destructive-foreground">
                     {badgeCount}
                     <span className="sr-only"> waiting on you</span>
                   </span>
+                ) : (
+                  item.to === "/manage" &&
+                  manageHasUnseenActivity && (
+                    <>
+                      <span
+                        className="ml-auto h-2 w-2 rounded-full bg-primary"
+                        aria-hidden="true"
+                      />
+                      <span className="sr-only"> (new activity)</span>
+                    </>
+                  )
                 )}
               </Link>
             );
@@ -238,7 +264,8 @@ export function AppShell({
             <h1 className="truncate text-xl font-semibold tracking-tight sm:text-2xl">{title}</h1>
             {subtitle && <p className="truncate text-sm text-muted-foreground">{subtitle}</p>}
           </div>
-          <div className="flex shrink-0 items-center gap-2">
+          <div className="flex min-w-0 shrink-0 items-center gap-2">
+            <RunningTimerPill />
             {actions}
             <ThemeToggle />
           </div>
@@ -248,7 +275,9 @@ export function AppShell({
           tabIndex={-1}
           className="min-w-0 flex-1 px-5 py-6 focus:outline-none sm:px-8 sm:py-8"
         >
-          <div className="mx-auto w-full max-w-6xl">{children}</div>
+          <DetailPanelProvider>
+            <div className="mx-auto w-full max-w-6xl">{children}</div>
+          </DetailPanelProvider>
         </main>
         <nav
           aria-label="Main"

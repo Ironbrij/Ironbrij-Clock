@@ -1,6 +1,15 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useState } from "react";
-import { ArrowRight, CheckCheck, Clock, Info, Megaphone, Users, X } from "lucide-react";
+import { useState, type ReactNode } from "react";
+import {
+  ArrowRight,
+  CheckCheck,
+  Clock,
+  Info,
+  Megaphone,
+  Users,
+  X,
+  type LucideIcon,
+} from "lucide-react";
 import { AppShell, ProjectDot } from "@/components/app-shell";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -35,6 +44,18 @@ export const Route = createFileRoute("/")({
   }),
   component: Dashboard,
 });
+
+type AttentionItem = {
+  key: string;
+  tone: "action" | "info";
+  icon: LucideIcon;
+  title: string;
+  detail?: string;
+  /** Full text for a detail line that may be truncated. */
+  detailTitle?: string;
+  action: ReactNode;
+  onDismiss?: () => void;
+};
 
 function greeting() {
   const hour = new Date().getHours();
@@ -174,6 +195,91 @@ function Dashboard() {
           ? "destructive"
           : "outline";
 
+  // One card for everything waiting on this person, instead of a stack of
+  // up to five banners pushing the week's numbers off the screen. "action"
+  // rows need them to do something and get the amber accent; "info" rows are
+  // just news.
+  const attentionItems: AttentionItem[] = [];
+  if (pendingApprovalCount > 0)
+    attentionItems.push({
+      key: "approvals",
+      tone: "action",
+      icon: CheckCheck,
+      title: `${pendingApprovalCount} ${pendingApprovalCount === 1 ? "timesheet" : "timesheets"} waiting on your review`,
+      detail: "Submitted and ready for approval — nothing else needed from the employee.",
+      action: (
+        <Button asChild size="sm" variant="outline">
+          <Link to="/manage" search={{ tab: "approvals" }}>
+            Review
+          </Link>
+        </Button>
+      ),
+    });
+  if (pendingCount > 0)
+    attentionItems.push({
+      key: "signups",
+      tone: "action",
+      icon: Users,
+      title: `${pendingCount} ${pendingCount === 1 ? "person" : "people"} waiting for approval`,
+      detail: "They've signed in but can't access the dashboard until you approve them.",
+      action: (
+        <Button asChild size="sm" variant="outline">
+          <Link to="/settings" search={{ tab: "users" }}>
+            Review
+          </Link>
+        </Button>
+      ),
+    });
+  if (!unsubmittedDismissed && unsubmittedPastWeeks.length > 0) {
+    const weeks = unsubmittedPastWeeks.map(
+      (w) => formatWeekRange(w.weekStart) + (w.status === "Rejected" ? " (sent back)" : ""),
+    );
+    attentionItems.push({
+      key: "unsubmitted",
+      tone: "action",
+      icon: Clock,
+      title:
+        unsubmittedPastWeeks.length === 1
+          ? "1 week is still waiting on you"
+          : `${unsubmittedPastWeeks.length} weeks are still waiting on you`,
+      detail: weeks.join(" · "),
+      detailTitle: weeks.join(" · "),
+      action: (
+        <Button asChild size="sm" variant="outline">
+          <Link to="/timesheet">Review</Link>
+        </Button>
+      ),
+      onDismiss: () => setUnsubmittedDismissed(true),
+    });
+  }
+  if (showWeekNudge)
+    attentionItems.push({
+      key: "week-nudge",
+      tone: "action",
+      icon: Info,
+      title: "Nothing logged this week yet",
+      detail: "Worth a quick catch-up before it wraps up.",
+      action: (
+        <Button asChild size="sm" variant="outline">
+          <Link to="/time">Log time</Link>
+        </Button>
+      ),
+      onDismiss: () => setWeekNudgeDismissed(true),
+    });
+  if (unseenAnnouncementCount > 0)
+    attentionItems.push({
+      key: "announcements",
+      tone: "info",
+      icon: Megaphone,
+      title: `${unseenAnnouncementCount} new ${unseenAnnouncementCount === 1 ? "announcement" : "announcements"}`,
+      detail: "Something's been shared with the team.",
+      action: (
+        <Button asChild size="sm" variant="outline">
+          <Link to="/announcements">Read</Link>
+        </Button>
+      ),
+    });
+
   return (
     <AppShell
       title={`${greeting()}${currentUser.name ? `, ${currentUser.name.split(" ")[0]}` : ""}`}
@@ -186,132 +292,55 @@ function Dashboard() {
         </Button>
       }
     >
-      {pendingApprovalCount > 0 && (
-        <Card className="border-amber-500/30 bg-amber-50/50 shadow-card dark:bg-amber-950/20">
-          <CardContent className="flex items-center gap-4 p-4">
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-amber-500/10">
-              <CheckCheck className="h-5 w-5 text-amber-600 dark:text-amber-400" />
-            </div>
-            <div className="min-w-0 flex-1">
-              <p className="text-sm font-semibold">
-                {pendingApprovalCount} {pendingApprovalCount === 1 ? "timesheet" : "timesheets"}{" "}
-                waiting on your review
-              </p>
-              <p className="text-xs text-muted-foreground">
-                Submitted and ready for approval — nothing else needed from the employee.
-              </p>
-            </div>
-            <Button asChild size="sm" variant="outline">
-              <Link to="/manage" search={{ tab: "approvals" }}>
-                Review
-              </Link>
-            </Button>
+      {attentionItems.length > 0 && (
+        <Card className="mb-6 shadow-card">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base">
+              {attentionItems.some((i) => i.tone === "action") ? "Needs your attention" : "For you"}
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="p-0">
+            <ul className="divide-y divide-border">
+              {attentionItems.map((item) => (
+                <li key={item.key} className="flex items-center gap-4 px-5 py-3">
+                  <div
+                    className={
+                      "flex h-9 w-9 shrink-0 items-center justify-center rounded-full " +
+                      (item.tone === "action"
+                        ? "bg-amber-500/10 text-amber-600 dark:text-amber-400"
+                        : "bg-muted text-muted-foreground")
+                    }
+                  >
+                    <item.icon className="h-4 w-4" aria-hidden="true" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium">{item.title}</p>
+                    {item.detail && (
+                      <p
+                        className="truncate text-xs text-muted-foreground"
+                        title={item.detailTitle}
+                      >
+                        {item.detail}
+                      </p>
+                    )}
+                  </div>
+                  {item.action}
+                  {item.onDismiss && (
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      className="h-8 w-8 shrink-0"
+                      aria-label="Dismiss"
+                      onClick={item.onDismiss}
+                    >
+                      <X className="h-4 w-4" aria-hidden="true" />
+                    </Button>
+                  )}
+                </li>
+              ))}
+            </ul>
           </CardContent>
         </Card>
-      )}
-
-      {unseenAnnouncementCount > 0 && (
-        <Card className="border-amber-500/30 bg-amber-50/50 shadow-card dark:bg-amber-950/20">
-          <CardContent className="flex items-center gap-4 p-4">
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-amber-500/10">
-              <Megaphone className="h-5 w-5 text-amber-600 dark:text-amber-400" />
-            </div>
-            <div className="min-w-0 flex-1">
-              <p className="text-sm font-semibold">
-                {unseenAnnouncementCount} new{" "}
-                {unseenAnnouncementCount === 1 ? "announcement" : "announcements"}
-              </p>
-              <p className="text-xs text-muted-foreground">
-                Something's been shared with the team.
-              </p>
-            </div>
-            <Button asChild size="sm" variant="outline">
-              <Link to="/announcements">Read</Link>
-            </Button>
-          </CardContent>
-        </Card>
-      )}
-
-      {pendingCount > 0 && (
-        <Card className="border-amber-500/30 bg-amber-50/50 shadow-card dark:bg-amber-950/20">
-          <CardContent className="flex items-center gap-4 p-4">
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-amber-500/10">
-              <Users className="h-5 w-5 text-amber-600 dark:text-amber-400" />
-            </div>
-            <div className="min-w-0 flex-1">
-              <p className="text-sm font-semibold">
-                {pendingCount} {pendingCount === 1 ? "person" : "people"} waiting for approval
-              </p>
-              <p className="text-xs text-muted-foreground">
-                They've signed in but can't access the dashboard until you approve them.
-              </p>
-            </div>
-            <Button asChild size="sm" variant="outline">
-              <Link to="/settings" search={{ tab: "users" }}>
-                Review
-              </Link>
-            </Button>
-          </CardContent>
-        </Card>
-      )}
-
-      {!unsubmittedDismissed && unsubmittedPastWeeks.length > 0 && (
-        <Card className="border-amber-500/30 bg-amber-50/50 shadow-card dark:bg-amber-950/20">
-          <CardContent className="flex items-center gap-4 p-4">
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-amber-500/10">
-              <Clock className="h-5 w-5 text-amber-600 dark:text-amber-400" />
-            </div>
-            <div className="min-w-0 flex-1">
-              <p className="text-sm font-semibold">
-                {unsubmittedPastWeeks.length === 1
-                  ? "1 week is still waiting on you"
-                  : `${unsubmittedPastWeeks.length} weeks are still waiting on you`}
-              </p>
-              <p
-                className="truncate text-xs text-muted-foreground"
-                title={unsubmittedPastWeeks.map((w) => formatWeekRange(w.weekStart)).join(" · ")}
-              >
-                {unsubmittedPastWeeks
-                  .map(
-                    (w) =>
-                      formatWeekRange(w.weekStart) +
-                      (w.status === "Rejected" ? " (sent back)" : ""),
-                  )
-                  .join(" · ")}
-              </p>
-            </div>
-            <Button asChild size="sm" variant="outline">
-              <Link to="/timesheet">Review</Link>
-            </Button>
-            <Button
-              size="icon"
-              variant="ghost"
-              className="h-8 w-8 shrink-0"
-              aria-label="Dismiss"
-              onClick={() => setUnsubmittedDismissed(true)}
-            >
-              <X className="h-4 w-4" />
-            </Button>
-          </CardContent>
-        </Card>
-      )}
-
-      {showWeekNudge && (
-        <div className="flex items-start justify-between gap-3 rounded-lg border border-border bg-muted/40 px-4 py-3 text-sm text-muted-foreground">
-          <div className="flex items-start gap-2">
-            <Info className="mt-0.5 h-4 w-4 shrink-0" />
-            <p>Nothing logged this week yet — worth a quick catch-up before it wraps up.</p>
-          </div>
-          <Button
-            size="icon"
-            variant="ghost"
-            className="h-6 w-6 shrink-0"
-            aria-label="Dismiss"
-            onClick={() => setWeekNudgeDismissed(true)}
-          >
-            <X className="h-3.5 w-3.5" />
-          </Button>
-        </div>
       )}
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">

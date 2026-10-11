@@ -26,12 +26,25 @@ npm run format       # prettier --write .
 
 `npm run test` (vitest, config in `vitest.config.ts` — deliberately separate from `vite.config.ts`,
 which is a wrapped `@lovable.dev/vite-tanstack-config` config that warns against adding plugins to
-it manually) currently covers pure business logic only (`src/lib/time-utils.ts`,
-`src/lib/mock-data.ts`) — date/time math, day-splitting, schedule parsing, formatters. It does not
-touch the `SECURITY DEFINER` Postgres functions (`submit_timesheet`, `review_timesheet`,
-`stop_timer`, etc.), which need a real Postgres instance to test against and aren't covered by any
-automated suite yet; changes to those still rely on manual verification against a linked Supabase
-project. `bun.lock` and `bunfig.toml` are
+it manually) runs two kinds of test:
+
+- **Unit tests** (`src/lib/**/*.test.ts`) — pure business logic: date/time math, day-splitting,
+  billing/gross-profit/retainer/salary rules, formatters, query paging.
+- **Database integration tests** (`src/lib/workspace/rpc.integration.test.ts`) — the
+  `SECURITY DEFINER` functions and RLS rules, exercised through the plain table/RPC API as a
+  signed-in user would. They need a real Supabase instance with every migration applied and skip
+  themselves unless `TEST_SUPABASE_URL`/`TEST_SUPABASE_ANON_KEY`/`TEST_SUPABASE_SERVICE_ROLE_KEY`
+  are set. Locally that means `supabase start` (needs Docker); CI does it on every push and PR.
+  Add a test here for any new policy, grant, trigger or `SECURITY DEFINER` function. Fixtures from
+  `fixtureUser()` are approved accounts unless you pass `{ pending: true }`.
+
+CI (`.github/workflows/ci.yml`) runs lint, typecheck, build, the full test suite against a
+throwaway local Supabase, and a check that `src/integrations/supabase/types.ts` matches what the
+migrations generate. That file is maintained by hand — when you add or change a table/function,
+update it in the same change. If the types check fails, the run uploads the regenerated file as
+the `supabase-types` artifact; commit that.
+
+`bun.lock` and `bunfig.toml` are
 present alongside `package-lock.json`; `bunfig.toml` enforces a 24h supply-chain delay on new
 package versions (`minimumReleaseAge`), so check with the user before adding a dependency that
 needs to bypass it via `minimumReleaseAgeExcludes`.
@@ -54,7 +67,8 @@ Next/Remix-style route files. `routeTree.gen.ts` is auto-generated; never hand-e
 Almost all app state flows through one context, `WorkspaceProvider` in `src/lib/workspace-store.tsx`,
 consumed via `useWorkspace()`. It composes a set of domain hooks under `src/lib/workspace/`
 (`use-members`, `use-projects`, `use-clients`, `use-teams`, `use-time-entries`, `use-timesheets`,
-`use-settings`, `use-employment`, `use-tags`, `use-task-categories`, `use-activity-log`), each
+`use-settings`, `use-employment`, `use-tags`, `use-task-categories`, `use-activity-log`,
+`use-announcements`, `use-billing-rates`, `use-placements`, `use-casual-reports`), each
 wrapping TanStack Query around Supabase tables. `workspace-store.tsx` re-exports everything under
 its original names so existing `@/lib/workspace-store` imports keep working — new domain logic
 belongs in a `src/lib/workspace/use-*.ts` file, not bolted directly onto `workspace-store.tsx`.
@@ -62,6 +76,23 @@ belongs in a `src/lib/workspace/use-*.ts` file, not bolted directly onto `worksp
 Time entries only load a rolling window (`ENTRIES_HISTORY_DAYS` in `src/lib/time-utils.ts`, 400
 days) — UI code that navigates history must stop honestly at `oldestLoadedWeekStart()` rather than
 rendering an unfetched week as if it were empty.
+
+**Supabase returns at most 1,000 rows per request** (the project's API "Max rows" setting), and
+`.limit()` can't raise that — `.limit(5000)` silently comes back with 1,000 rows and no error. Any
+read that can exceed 1,000 rows must go through `fetchAllRows()` in `src/lib/workspace/utils.ts`,
+which pages with `.range()` up to a cap you choose, and must end its ordering with a unique column
+(`.order("id")`) so pages can't overlap. A result of exactly the cap means "possibly truncated":
+anything derived from it (money figures especially) must say so rather than show a short total —
+see `DETAILED_ENTRIES_LIMIT` and the Reports truncation notices. RPCs that return sets are capped
+the same way.
+
+### Reports
+
+`src/routes/reports.tsx` owns the Reports page's state, data fetching, every derived figure and the
+CSV export. Each tab's markup lives in `src/components/reports/*-report-view.tsx` as a
+presentation-only component that receives already-computed rows. Shared labels, presets, audience
+rules and small helpers are in `report-config.ts`, and row shapes in `report-rows.ts`. Put new
+report logic in the route (or a pure, unit-tested module under `src/lib/`), not in a view.
 
 Several hooks (e.g. `use-time-entries.ts`) subscribe to Supabase Realtime (`postgres_changes`) so
 state updates live across tabs/devices without a manual refresh; when adding a new mutable table
@@ -101,6 +132,21 @@ migrations (e.g. `20260812000000_enforce_entry_policies.sql`) for the establishe
 `STABLE SECURITY DEFINER` functions (`has_role`, `shares_team`, `week_is_locked`,
 `description_required`, `manual_entry_allowed`, ...) composed inside policy `USING`/`WITH CHECK`
 clauses, each with a `REVOKE ALL ... GRANT EXECUTE TO authenticated`.
+
+**Accounts and roles.** A new account starts _pending_ until an admin approves it
+(`approve_member`). Pending is enforced in the database, not just by `AppShell`: `is_approved()`
+gates the directory/project/announcement read policies, and `has_role()`/`can_manage()` ignore
+pending (and inactive) accounts. A pending account can only read its own profile, its own entries
+and timesheets, and `workspace_settings`. On `profiles`, end users hold column-level grants for
+the fields the app edits (`full_name`, `avatar_url`, `job_title`, `timezone`) and nothing else. A
+trigger (`guard_profile_privileged_columns`) also rejects direct changes to `role`, `is_active`,
+`is_pending` and `email`: those go through `set_member_role`/`approve_member` or the service-role
+functions in `admin.functions.ts`. The signup hook (`hook_restrict_signup_to_invited`) admits an
+email only if it's on the company domain, in `signup_invites` (written by `inviteMembers`, cleared
+by `removeUserAccess`), or attached to an active profile. It never trusts `user_metadata`, which
+the person signing up controls. Supabase grants `ALL` on every new public table to
+`anon`/`authenticated` by default, and a table-level grant overrides any column list, so a new
+table that needs column-level limits must `REVOKE ALL` first.
 
 A blocked UPDATE/DELETE under RLS doesn't raise a Postgres error — the row is just silently excluded
 from the policy's `USING` clause, so the query reports success while changing nothing. The existing

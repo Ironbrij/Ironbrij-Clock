@@ -1,6 +1,7 @@
-import { createFileRoute } from "@tanstack/react-router";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createFileRoute, Link } from "@tanstack/react-router";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  ArrowRight,
   ChevronLeft,
   ChevronRight,
   Copy,
@@ -38,7 +39,7 @@ import {
 } from "@/components/ui/select";
 import { DescriptionAutocomplete } from "@/components/description-autocomplete";
 import { EntryFormDialog } from "@/components/entry-form-dialog";
-import { TimesheetGrid } from "@/components/timesheet-grid";
+import { useLongRunningTimerWarnings } from "@/components/running-timer";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { formatDuration, formatHours } from "@/lib/mock-data";
 import { tintedChipStyle } from "@/lib/chip-style";
@@ -56,21 +57,21 @@ import {
   toDateKey,
   weekdayNames,
 } from "@/lib/time-utils";
-import {
-  useClientBudgets,
-  useThisWeekStart,
-  useWorkspace,
-  type WorkspaceEntry,
-} from "@/lib/workspace-store";
+import { useClientBudgets, useWorkspace, type WorkspaceEntry } from "@/lib/workspace-store";
 
-type TimeView = "list" | "grid" | "calendar";
+type TimeView = "list" | "calendar";
 type CalendarMode = "month" | "week";
 
 // View (and the calendar's month/week mode) live in the URL so a refresh
 // keeps them. Defaults (list, month) are left out of the URL.
+//
+// Time is for recording time; reviewing and submitting the week is
+// Timesheet's job. Time used to have its own Grid tab showing the same
+// TimesheetGrid as Timesheet, minus the Submit button, so people had to learn
+// which page did what. An old ?view=grid link now just opens the list.
 export const Route = createFileRoute("/time")({
   validateSearch: (search: Record<string, unknown>): { view?: TimeView; cal?: CalendarMode } => ({
-    view: search.view === "grid" || search.view === "calendar" ? search.view : undefined,
+    view: search.view === "calendar" ? search.view : undefined,
     cal: search.cal === "week" ? "week" : undefined,
   }),
   head: () => ({
@@ -78,13 +79,12 @@ export const Route = createFileRoute("/time")({
       { title: "Time — IronTrack" },
       {
         name: "description",
-        content:
-          "Track time with a live timer and review your entries as a list, weekly grid or calendar.",
+        content: "Track time with a live timer and see your entries as a list or calendar.",
       },
       { property: "og:title", content: "Time — IronTrack" },
       {
         property: "og:description",
-        content: "Live timer plus list, grid and calendar views of your tracked time.",
+        content: "Live timer plus list and calendar views of your tracked time.",
       },
     ],
   }),
@@ -120,20 +120,26 @@ function TimePage() {
         <Tabs value={view} onValueChange={setView}>
           <TabsList>
             <TabsTrigger value="list">List</TabsTrigger>
-            <TabsTrigger value="grid">Grid</TabsTrigger>
             <TabsTrigger value="calendar">Calendar</TabsTrigger>
           </TabsList>
         </Tabs>
-        {settings.allowManualEntry && (
-          <Button variant="outline" size="sm" className="gap-2" onClick={() => setAddOpen(true)}>
-            <Plus className="h-4 w-4" />
-            Add manual entry
+        <div className="flex flex-wrap items-center gap-2">
+          {settings.allowManualEntry && (
+            <Button variant="outline" size="sm" className="gap-2" onClick={() => setAddOpen(true)}>
+              <Plus className="h-4 w-4" aria-hidden="true" />
+              Add manual entry
+            </Button>
+          )}
+          <Button asChild variant="ghost" size="sm" className="gap-2">
+            <Link to="/timesheet">
+              Review &amp; submit this week
+              <ArrowRight className="h-4 w-4" aria-hidden="true" />
+            </Link>
           </Button>
-        )}
+        </div>
       </div>
       <div className="mt-4">
         {view === "list" && <ListView />}
-        {view === "grid" && <GridView />}
         {view === "calendar" && <CalendarView />}
       </div>
       <EntryFormDialog open={addOpen} onOpenChange={setAddOpen} entry={null} />
@@ -287,31 +293,10 @@ function TimerBar() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [toggle, busy]);
 
-  // Warns once per threshold if a timer's been running an unusually long
-  // time — almost always means someone forgot to stop it, not that they've
-  // genuinely been on one task for 8+ hours straight. Based on wall-clock
-  // elapsed time (not a per-second counter), so it correctly catches up and
-  // fires immediately if the tab was closed or backgrounded past a
-  // threshold, rather than only while actively watching the clock tick.
-  const warnedThresholds = useRef<Set<number>>(new Set());
-  useEffect(() => {
-    if (!runningEntry) {
-      warnedThresholds.current.clear();
-      return;
-    }
-    const thresholdsHours = [4, 8, 12];
-    for (const hours of thresholdsHours) {
-      const thresholdSeconds = hours * 3600;
-      if (seconds >= thresholdSeconds && !warnedThresholds.current.has(thresholdSeconds)) {
-        warnedThresholds.current.add(thresholdSeconds);
-        toast.warning(`Still running after ${hours} hour${hours > 1 ? "s" : ""}`, {
-          description: "If you forgot to stop this timer, you can stop it now.",
-          duration: 15000,
-          action: { label: "Stop timer", onClick: () => void toggle() },
-        });
-      }
-    }
-  }, [seconds, runningEntry, toggle]);
+  // The 4/8/12-hour "did you forget?" warnings, shared with the header pill
+  // (running-timer.tsx) so they fire on every page. Stopping from here uses
+  // toggle, which keeps whatever is typed in the description box.
+  useLongRunningTimerWarnings(runningEntry?.id ?? null, seconds, () => void toggle());
 
   return (
     <Card className="sticky top-20 z-10 shadow-card">
@@ -775,48 +760,6 @@ function CopyYesterdayButton() {
         </AlertDialogContent>
       </AlertDialog>
     </>
-  );
-}
-
-function GridView() {
-  const thisWeek = useThisWeekStart();
-  const [offset, setOffset] = useState(0);
-  const weekStart = useMemo(() => addDays(thisWeek, offset * 7), [thisWeek, offset]);
-  // Entries are only ever fetched back to oldestLoadedWeekStart() — past
-  // that, "no hours" would be a lie (unfetched, not empty), so navigation
-  // stops here instead of silently rendering a blank week.
-  const atOldestLoaded = weekStart <= oldestLoadedWeekStart();
-
-  return (
-    <div className="grid gap-4">
-      <div className="flex flex-wrap items-center gap-2">
-        <Button
-          variant="outline"
-          size="icon"
-          aria-label="Previous week"
-          disabled={atOldestLoaded}
-          onClick={() => setOffset((w) => w - 1)}
-        >
-          <ChevronLeft className="h-4 w-4" aria-hidden="true" />
-        </Button>
-        <span className="truncate text-sm font-medium">{formatWeekRange(weekStart)}</span>
-        <Button
-          variant="outline"
-          size="icon"
-          aria-label="Next week"
-          disabled={offset >= 0}
-          onClick={() => setOffset((w) => Math.min(0, w + 1))}
-        >
-          <ChevronRight className="h-4 w-4" aria-hidden="true" />
-        </Button>
-        {atOldestLoaded && (
-          <span className="text-xs text-muted-foreground">
-            That's as far back as this view loads — check Reports for anything older.
-          </span>
-        )}
-      </div>
-      <TimesheetGrid weekStart={weekStart} />
-    </div>
   );
 }
 

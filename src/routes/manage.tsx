@@ -1,4 +1,4 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, redirect } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Activity,
@@ -31,9 +31,6 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
-import { BillingRatesTab } from "@/components/billing-rates-tab";
-import { CasualServiceTab } from "@/components/casual-service-tab";
-import { PlacementsTab } from "@/components/placements-tab";
 import { Combobox } from "@/components/combobox";
 import { EntryFormDialog } from "@/components/entry-form-dialog";
 import { Input } from "@/components/ui/input";
@@ -90,6 +87,7 @@ import {
   type WorkspaceEmployment,
   type WorkspaceEntry,
 } from "@/lib/workspace-store";
+import { PersonLink } from "@/components/detail-panel";
 
 // M37: lets other pages/actions deep-link straight into a specific tab
 // (and, for Entries, a specific person/week) instead of only ever landing
@@ -103,6 +101,16 @@ export const Route = createFileRoute("/manage")({
     memberId: typeof search.memberId === "string" ? search.memberId : undefined,
     weekStart: typeof search.weekStart === "string" ? search.weekStart : undefined,
   }),
+  // Casual Service, Billing Rates and Placements moved to /billing; keep old
+  // links and bookmarks working.
+  beforeLoad: ({ search }) => {
+    if (search.tab === "casual" || search.tab === "rates" || search.tab === "placements") {
+      throw redirect({
+        to: "/billing",
+        search: { tab: search.tab === "casual" ? undefined : search.tab },
+      });
+    }
+  },
   head: () => ({
     meta: [
       { title: "Manage — IronTrack" },
@@ -121,18 +129,18 @@ export const Route = createFileRoute("/manage")({
   component: ManagePage,
 });
 
+// Approvals first: it's the weekly task most managers open Manage for, and
+// its status panel also shows who hasn't submitted yet. The default (first)
+// tab is the one a bare /manage link opens.
 const sections: { id: string; label: string }[] = [
+  { id: "approvals", label: "Approvals" },
   { id: "schedule", label: "Schedule" },
   { id: "entries", label: "Entries" },
-  { id: "approvals", label: "Approvals" },
   { id: "activity", label: "Activity" },
-  { id: "casual", label: "Casual Service" },
-  { id: "rates", label: "Billing Rates" },
-  { id: "placements", label: "Placements" },
 ];
 
 function ManagePage() {
-  const { unseenActivityCount, markActivitySeen } = useWorkspace();
+  const { unseenActivityCount, markActivitySeen, pendingApprovals } = useWorkspace();
   const search = Route.useSearch();
   const [tab, setTab] = useState(
     search.tab && sections.some((s) => s.id === search.tab) ? search.tab : sections[0].id,
@@ -184,10 +192,17 @@ function ManagePage() {
           {sections.map((s) => (
             <TabsTrigger key={s.id} value={s.id} className="relative">
               {s.label}
+              {s.id === "approvals" && pendingApprovals.length > 0 && (
+                <span className="ml-1.5 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-destructive px-1.5 text-[11px] font-bold text-destructive-foreground">
+                  {pendingApprovals.length}
+                  <span className="sr-only"> waiting</span>
+                </span>
+              )}
+              {/* Same quiet dot as the Manage nav item: activity is news, not a to-do. */}
               {s.id === "activity" && unseenActivityCount > 0 && (
                 <>
                   <span
-                    className="absolute -right-1 -top-1 h-2 w-2 rounded-full bg-destructive"
+                    className="absolute -right-1 -top-1 h-2 w-2 rounded-full bg-primary"
                     aria-hidden="true"
                   />
                   <span className="sr-only"> ({unseenActivityCount} new)</span>
@@ -215,12 +230,6 @@ function ManagePage() {
           initialMemberId={entriesTarget?.memberId}
           initialWeekStart={entriesTarget?.weekStart}
         />
-      ) : tab === "casual" ? (
-        <CasualServiceTab />
-      ) : tab === "rates" ? (
-        <BillingRatesTab />
-      ) : tab === "placements" ? (
-        <PlacementsTab />
       ) : null}
     </AppShell>
   );
@@ -421,7 +430,9 @@ function WeekStatusPanel() {
                   <AvatarImage src={m.avatarUrl ?? undefined} alt={m.name} />
                   <AvatarFallback className="bg-secondary text-xs">{m.initials}</AvatarFallback>
                 </Avatar>
-                <span className="truncate text-sm">{m.name}</span>
+                <PersonLink id={m.id} className="text-sm">
+                  {m.name}
+                </PersonLink>
               </div>
               <div className="flex shrink-0 items-center gap-3">
                 {hoursByUser && (
@@ -632,7 +643,13 @@ function ApprovalsPanel() {
                         </AvatarFallback>
                       </Avatar>
                       <div className="min-w-0">
-                        <p className="truncate text-sm font-medium">{member?.name ?? "Unknown"}</p>
+                        <p className="truncate text-sm font-medium">
+                          {member ? (
+                            <PersonLink id={member.id}>{member.name}</PersonLink>
+                          ) : (
+                            "Unknown"
+                          )}
+                        </p>
                         <button
                           type="button"
                           aria-expanded={expanded}
@@ -1334,7 +1351,9 @@ function ScheduleRow({
             <AvatarImage src={member.avatarUrl ?? undefined} alt={member.name} />
             <AvatarFallback className="bg-secondary text-xs">{member.initials}</AvatarFallback>
           </Avatar>
-          <span className="font-medium">{member.name}</span>
+          <PersonLink id={member.id} className="font-medium">
+            {member.name}
+          </PersonLink>
         </div>
       </td>
       <td className="px-3 py-2.5">

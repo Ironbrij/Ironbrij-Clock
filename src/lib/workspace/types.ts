@@ -128,8 +128,8 @@ export type WorkspacePlacedVA = { id: string; fullName: string };
 /**
  * M49: one VA↔client retainer placement. `endedOn` null means still live —
  * that's the status, and it also bounds the daily accrual in
- * src/lib/retainer.ts. Both amounts are null for the sheet's "N/A" rows.
- * The management fee is derived (package − rate, or 0), never stored.
+ * src/lib/retainer.ts. Amounts are null for the sheet's "N/A" rows. The
+ * management fee is derived (package − monthly VA cost, or 0), never stored.
  */
 export type WorkspacePlacement = {
   id: string;
@@ -137,7 +137,11 @@ export type WorkspacePlacement = {
   clientId: string;
   startedOn: string;
   endedOn: string | null;
-  vaMonthlyRate: number | null;
+  /** What the VA is paid per hour. Null for the sheet's "N/A" rows. */
+  vaHourlyRate: number | null;
+  /** Hours a week the VA is contracted for — with the hourly rate, this gives the monthly cost (src/lib/retainer.ts). */
+  contractedWeeklyHours: number | null;
+  /** What the client pays per month. */
   clientPackageAmount: number | null;
 };
 

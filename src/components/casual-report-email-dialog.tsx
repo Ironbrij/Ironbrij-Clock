@@ -11,6 +11,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -24,6 +25,17 @@ import { useWorkspace, type CasualReportPreview } from "@/lib/workspace-store";
 
 /** How many past weeks the picker offers. Eight covers "I forgot for a month or two" without becoming a scroll. */
 const WEEKS_OFFERED = 8;
+
+/** Same cap and shape check as the edge function, so a typo is flagged before Preview. */
+const MAX_CC = 5;
+const EMAIL_RE = /^[^\s@<>,;"]+@[^\s@<>,;"]+\.[^\s@<>,;"]+$/;
+
+/** Splits the CC box on commas, semicolons or whitespace. */
+const parseCc = (raw: string) =>
+  raw
+    .split(/[,;\s]+/)
+    .map((e) => e.trim())
+    .filter(Boolean);
 
 /** "22–28 Sep 2026", collapsing month and year when the week doesn't straddle them. */
 function weekLabel(weekStartKey: string) {
@@ -74,6 +86,7 @@ export function CasualReportEmailDialog({
 
   const [clientId, setClientId] = useState(initialClientId ?? "");
   const [weekStart, setWeekStart] = useState(weeks[0]);
+  const [ccRaw, setCcRaw] = useState("");
   const [preview, setPreview] = useState<CasualReportPreview | null>(null);
   const [loading, setLoading] = useState(false);
   const [sending, setSending] = useState(false);
@@ -91,21 +104,39 @@ export function CasualReportEmailDialog({
     [clients, clientId],
   );
 
+  const ccList = useMemo(() => parseCc(ccRaw), [ccRaw]);
+  const ccKey = ccList.join(",").toLowerCase();
+  const ccInvalid = ccList.filter((e) => !EMAIL_RE.test(e));
+  const ccError =
+    ccInvalid.length > 0
+      ? `Not a valid email address: ${ccInvalid.join(", ")}`
+      : ccList.length > MAX_CC
+        ? `You can copy at most ${MAX_CC} people.`
+        : null;
+  // The deployed edge function predates CC support: it would send to the
+  // client and silently skip everyone copied, so Send stays off until it's
+  // redeployed or the CC box is cleared.
+  const ccUnsupported = !!preview && preview.cc === undefined && ccList.length > 0;
+
   // Any change to what would be sent invalidates the approved preview, so
-  // Send can never deliver something nobody looked at.
+  // Send can never deliver something nobody looked at — including who's
+  // copied on it.
   useEffect(() => {
     setPreview(null);
-  }, [clientId, weekStart]);
+  }, [clientId, weekStart, ccKey]);
 
   useEffect(() => {
-    if (open) setClientId(initialClientId ?? "");
+    if (open) {
+      setClientId(initialClientId ?? "");
+      setCcRaw("");
+    }
   }, [open, initialClientId]);
 
   const loadPreview = async () => {
-    if (!clientId) return;
+    if (!clientId || ccError) return;
     setLoading(true);
     try {
-      setPreview(await previewCasualReport(clientId, weekStart));
+      setPreview(await previewCasualReport(clientId, weekStart, ccList));
     } catch (error) {
       setPreview(null);
       toast.error("Couldn't build that report", { description: (error as Error).message });
@@ -115,11 +146,15 @@ export function CasualReportEmailDialog({
   };
 
   const send = async () => {
-    if (!clientId || !preview) return;
+    if (!clientId || !preview || ccUnsupported) return;
     setSending(true);
     try {
-      const { to } = await sendCasualReport(clientId, weekStart);
-      toast.success(`Report sent to ${to || preview.to}`);
+      // The CC list the preview approved, as the function normalised it.
+      const cc = preview.cc ?? [];
+      const { to } = await sendCasualReport(clientId, weekStart, cc);
+      toast.success(`Report sent to ${to || preview.to}`, {
+        description: cc.length > 0 ? `Copied to ${cc.join(", ")}` : undefined,
+      });
       onOpenChange(false);
     } catch (error) {
       toast.error("Couldn't send the report", { description: (error as Error).message });
@@ -166,6 +201,30 @@ export function CasualReportEmailDialog({
               </SelectContent>
             </Select>
           </div>
+          <div className="grid gap-2 sm:col-span-2">
+            <Label htmlFor="casual-report-cc">
+              Cc <span className="font-normal text-muted-foreground">(optional)</span>
+            </Label>
+            <Input
+              id="casual-report-cc"
+              type="text"
+              inputMode="email"
+              autoComplete="off"
+              spellCheck={false}
+              placeholder="name@example.com, another@example.com"
+              value={ccRaw}
+              aria-invalid={!!ccError}
+              aria-describedby="casual-report-cc-help"
+              onChange={(e) => setCcRaw(e.target.value)}
+            />
+            <p
+              id="casual-report-cc-help"
+              className={"text-xs " + (ccError ? "text-destructive" : "text-muted-foreground")}
+            >
+              {ccError ??
+                `Copies go to these people as well as the client. Separate with commas, up to ${MAX_CC}.`}
+            </p>
+          </div>
         </div>
 
         {preview && (
@@ -175,6 +234,11 @@ export function CasualReportEmailDialog({
                 <span className="text-muted-foreground">To</span> {preview.to}
                 {preview.contactName ? ` (${preview.contactName})` : ""}
               </p>
+              {preview.cc && preview.cc.length > 0 && (
+                <p className="mt-1">
+                  <span className="text-muted-foreground">Cc</span> {preview.cc.join(", ")}
+                </p>
+              )}
               <p className="mt-1">
                 <span className="text-muted-foreground">Subject</span> {preview.subject}
               </p>
@@ -183,6 +247,13 @@ export function CasualReportEmailDialog({
                 {preview.billedHours.toFixed(2)}h billed
               </p>
             </div>
+
+            {ccUnsupported && (
+              <p className="rounded-md border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+                CC isn&apos;t available yet: the email function needs redeploying first. Clear the
+                Cc box to send to the client only.
+              </p>
+            )}
 
             {preview.previousSends.length > 0 && (
               <p className="rounded-md border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm">
@@ -220,11 +291,11 @@ export function CasualReportEmailDialog({
           <Button
             variant="outline"
             onClick={() => void loadPreview()}
-            disabled={!clientId || loading || sending}
+            disabled={!clientId || !!ccError || loading || sending}
           >
             {loading ? "Building…" : preview ? "Rebuild preview" : "Preview"}
           </Button>
-          <Button onClick={() => void send()} disabled={!preview || sending}>
+          <Button onClick={() => void send()} disabled={!preview || ccUnsupported || sending}>
             <Mail className="mr-2 h-4 w-4" aria-hidden="true" />
             {sending ? "Sending…" : "Send to client"}
           </Button>

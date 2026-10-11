@@ -34,6 +34,7 @@ import {
 import { Combobox } from "@/components/combobox";
 import { fromDateKey, toDateKey } from "@/lib/time-utils";
 import { useWorkspace } from "@/lib/workspace-store";
+import { ClientLink } from "@/components/detail-panel";
 
 const CLIENT_DEFAULT = "__default__";
 
@@ -165,6 +166,7 @@ export function BillingRatesTab() {
                   <RateRow
                     key={r.id}
                     id={r.id}
+                    clientId={r.clientId}
                     clientLabel={r.clientLabel}
                     scopeLabel={r.scopeLabel}
                     isOverride={r.userId !== null}
@@ -187,6 +189,7 @@ export function BillingRatesTab() {
 
 function RateRow({
   id,
+  clientId,
   clientLabel,
   scopeLabel,
   isOverride,
@@ -196,6 +199,7 @@ function RateRow({
   onDelete,
 }: {
   id: string;
+  clientId: string;
   clientLabel: string;
   scopeLabel: string;
   isOverride: boolean;
@@ -250,7 +254,9 @@ function RateRow({
 
   return (
     <tr className="border-b border-border last:border-0 hover:bg-muted/40">
-      <td className="px-5 py-3 font-medium">{clientLabel}</td>
+      <td className="px-5 py-3 font-medium">
+        <ClientLink id={clientId}>{clientLabel}</ClientLink>
+      </td>
       <td className="px-5 py-3">
         {isOverride ? (
           <Badge variant="outline">{scopeLabel}</Badge>

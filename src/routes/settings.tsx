@@ -44,6 +44,7 @@ import { billableHoursForCasualEntry } from "@/lib/casual-billing";
 import { currencies, timezones, useWorkspace, type Role } from "@/lib/workspace-store";
 import { toast } from "sonner";
 import { useEffect, useRef, useState, type ChangeEvent } from "react";
+import { PersonLink } from "@/components/detail-panel";
 
 const settingsTabs = ["profile", "notifications", "users", "admin"] as const;
 type SettingsTab = (typeof settingsTabs)[number];
@@ -127,12 +128,13 @@ function SettingsPage() {
           <Card className="mb-4 max-w-2xl shadow-card">
             <CardContent className="flex items-center justify-between gap-4 p-6">
               <div className="min-w-0">
-                <p className="flex items-center gap-2 text-sm font-medium">
+                {/* A div, not a <p>: Badge renders a <div>, which a <p> can't contain. */}
+                <div className="flex items-center gap-2 text-sm font-medium">
                   Timesheet submitted for your review
                   <Badge variant="secondary" className="text-[10px]">
                     Live
                   </Badge>
-                </p>
+                </div>
                 <p className="text-xs text-muted-foreground">
                   Reviewers get an email automatically when someone on their team submits a
                   timesheet — not yet a preference you can turn off.
@@ -540,7 +542,7 @@ function UsersTab() {
                               {m.initials}
                             </AvatarFallback>
                           </Avatar>
-                          {m.name}
+                          <PersonLink id={m.id}>{m.name}</PersonLink>
                         </div>
                       </td>
                       <td className="px-3 py-2.5 text-muted-foreground">{m.email ?? "—"}</td>
@@ -666,7 +668,7 @@ function UsersTab() {
                                   {m.initials}
                                 </AvatarFallback>
                               </Avatar>
-                              {m.name}
+                              <PersonLink id={m.id}>{m.name}</PersonLink>
                             </div>
                           </td>
                           <td className="px-3 py-2.5 text-muted-foreground">{m.email ?? "—"}</td>
