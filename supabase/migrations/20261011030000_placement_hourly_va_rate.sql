@@ -12,10 +12,13 @@
 -- existing monthly rates are converted below, and keeping six decimals keeps
 -- each converted placement's monthly cost within a fraction of a cent of
 -- what it was. Two decimals would drift by up to ~$0.87/month per placement.
+-- Safe to run more than once (IF NOT EXISTS, and the backfill only touches
+-- rows not yet converted), in case it's applied by hand before the normal
+-- migration run.
 ALTER TABLE public.va_placements
-  ADD COLUMN va_hourly_rate numeric(12,6)
+  ADD COLUMN IF NOT EXISTS va_hourly_rate numeric(12,6)
     CHECK (va_hourly_rate IS NULL OR va_hourly_rate >= 0),
-  ADD COLUMN contracted_weekly_hours numeric(5,2)
+  ADD COLUMN IF NOT EXISTS contracted_weekly_hours numeric(5,2)
     CHECK (contracted_weekly_hours IS NULL OR (contracted_weekly_hours > 0 AND contracted_weekly_hours <= 168));
 
 -- Nobody has recorded contracted hours yet, so existing placements are
@@ -26,7 +29,9 @@ ALTER TABLE public.va_placements
 UPDATE public.va_placements
 SET contracted_weekly_hours = 40,
     va_hourly_rate = va_monthly_rate * 12 / (52 * 40)
-WHERE va_monthly_rate IS NOT NULL;
+WHERE va_monthly_rate IS NOT NULL
+  AND va_hourly_rate IS NULL
+  AND contracted_weekly_hours IS NULL;
 
 -- Kept for history and rollback; nothing reads or writes it any more.
 COMMENT ON COLUMN public.va_placements.va_monthly_rate IS
