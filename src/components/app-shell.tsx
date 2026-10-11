@@ -178,7 +178,7 @@ export function AppShell({
             alt="IronTrack"
             width={32}
             height={32}
-            className="h-8 w-8 shrink-0 dark:brightness-0 dark:invert"
+            className="h-8 w-8 shrink-0"
           />
           <div className="min-w-0">
             <span className="block truncate text-base font-semibold text-sidebar-foreground">
