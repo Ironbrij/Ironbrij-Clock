@@ -105,7 +105,7 @@ function Timesheet() {
   const atOldestLoaded = weekStart <= oldestLoadedWeekStart();
 
   return (
-    <AppShell title="Timesheet" subtitle="Everything you logged this week, in one place.">
+    <AppShell title="Timesheet" subtitle="Review your week, then submit it for approval.">
       <div className="mb-4 grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4">
         <div className="flex min-w-0 flex-wrap items-center gap-2">
           <Button
