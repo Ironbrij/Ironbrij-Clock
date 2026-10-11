@@ -127,12 +127,13 @@ function SettingsPage() {
           <Card className="mb-4 max-w-2xl shadow-card">
             <CardContent className="flex items-center justify-between gap-4 p-6">
               <div className="min-w-0">
-                <p className="flex items-center gap-2 text-sm font-medium">
+                {/* A div, not a <p>: Badge renders a <div>, which a <p> can't contain. */}
+                <div className="flex items-center gap-2 text-sm font-medium">
                   Timesheet submitted for your review
                   <Badge variant="secondary" className="text-[10px]">
                     Live
                   </Badge>
-                </p>
+                </div>
                 <p className="text-xs text-muted-foreground">
                   Reviewers get an email automatically when someone on their team submits a
                   timesheet — not yet a preference you can turn off.
