@@ -1,4 +1,4 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, redirect } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Activity,
@@ -31,9 +31,6 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
-import { BillingRatesTab } from "@/components/billing-rates-tab";
-import { CasualServiceTab } from "@/components/casual-service-tab";
-import { PlacementsTab } from "@/components/placements-tab";
 import { Combobox } from "@/components/combobox";
 import { EntryFormDialog } from "@/components/entry-form-dialog";
 import { Input } from "@/components/ui/input";
@@ -103,6 +100,16 @@ export const Route = createFileRoute("/manage")({
     memberId: typeof search.memberId === "string" ? search.memberId : undefined,
     weekStart: typeof search.weekStart === "string" ? search.weekStart : undefined,
   }),
+  // Casual Service, Billing Rates and Placements moved to /billing; keep old
+  // links and bookmarks working.
+  beforeLoad: ({ search }) => {
+    if (search.tab === "casual" || search.tab === "rates" || search.tab === "placements") {
+      throw redirect({
+        to: "/billing",
+        search: { tab: search.tab === "casual" ? undefined : search.tab },
+      });
+    }
+  },
   head: () => ({
     meta: [
       { title: "Manage — IronTrack" },
@@ -129,9 +136,6 @@ const sections: { id: string; label: string }[] = [
   { id: "schedule", label: "Schedule" },
   { id: "entries", label: "Entries" },
   { id: "activity", label: "Activity" },
-  { id: "casual", label: "Casual Service" },
-  { id: "rates", label: "Billing Rates" },
-  { id: "placements", label: "Placements" },
 ];
 
 function ManagePage() {
@@ -225,12 +229,6 @@ function ManagePage() {
           initialMemberId={entriesTarget?.memberId}
           initialWeekStart={entriesTarget?.weekStart}
         />
-      ) : tab === "casual" ? (
-        <CasualServiceTab />
-      ) : tab === "rates" ? (
-        <BillingRatesTab />
-      ) : tab === "placements" ? (
-        <PlacementsTab />
       ) : null}
     </AppShell>
   );
