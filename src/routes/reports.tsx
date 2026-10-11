@@ -1,22 +1,10 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { CalendarRange, ChevronDown, Download } from "lucide-react";
-import {
-  Bar,
-  BarChart,
-  CartesianGrid,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-  Cell,
-} from "recharts";
 import { toast } from "sonner";
-import { AppShell, ProjectDot } from "@/components/app-shell";
+import { AppShell } from "@/components/app-shell";
 import { Combobox } from "@/components/combobox";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -24,13 +12,6 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
-import {
-  Pagination,
-  PaginationContent,
-  PaginationItem,
-  PaginationNextButton,
-  PaginationPreviousButton,
-} from "@/components/ui/pagination";
 import {
   Select,
   SelectContent,
@@ -43,9 +24,8 @@ import { billableHoursForCasualEntry } from "@/lib/casual-billing";
 import { grossProfitForEntry, resolveInvoiceRate } from "@/lib/gross-profit";
 import { retainerAccrualForRange } from "@/lib/retainer";
 import { salaryAccrualForWeek, weeksInRange } from "@/lib/weekly-salary";
-import { formatHours, formatMinutes } from "@/lib/mock-data";
+import { formatHours } from "@/lib/mock-data";
 import { addDays, formatWeekRange, fromDateKey, startOfWeek, toDateKey } from "@/lib/time-utils";
-import { tintedChipStyle } from "@/lib/chip-style";
 import {
   DETAILED_ENTRIES_LIMIT,
   useClientBudgets,
@@ -57,29 +37,52 @@ import {
   dotColors,
   NO_CLIENT,
   type CasualServiceCategory,
-  type EmploymentType,
-  type WorkspaceTag,
 } from "@/lib/workspace/types";
-
-type ReportView = "project" | "employee" | "detailed" | "casual" | "profit";
-
-/**
- * Which hour figure an export prints, for the exports that offer a choice.
- * "billed" is the Paid Casual uplift and increment applied per entry (see
- * casual-billing.ts); "actual" is the time as tracked. Only the hours change
- * — nothing else in the file is recomputed from them.
- */
-type ExportHoursBasis = "billed" | "actual";
-const reportViews: ReportView[] = ["project", "employee", "detailed", "casual", "profit"];
-const rangePresets: RangePreset[] = [
-  "this_week",
-  "this_month",
-  "last_30",
-  "this_quarter",
-  "this_year",
-  "custom",
-];
-const reportAudiences: ReportAudience[] = ["all", "internal", "client"];
+import { CasualReportView } from "@/components/reports/casual-report-view";
+import { ClientFacingReportView } from "@/components/reports/client-facing-report-view";
+import { DetailedReportView } from "@/components/reports/detailed-report-view";
+import { EmployeeReportView } from "@/components/reports/employee-report-view";
+import { ProfitReportView } from "@/components/reports/profit-report-view";
+import { ProjectReportView } from "@/components/reports/project-report-view";
+import {
+  AUDIENCE_LABELS,
+  CASUAL_CHART_MAX_BARS,
+  CASUAL_CHART_MAX_TICKS,
+  DEPARTMENT_LABELS,
+  DEPARTMENT_ORDER,
+  DETAILED_PAGE_SIZE,
+  EMPLOYMENT_LABELS,
+  SERVICE_LINE_LABELS,
+  casualGroupByLabels,
+  computeRange,
+  departmentFor,
+  downloadCsv,
+  filterByAudience,
+  formatCurrency,
+  isInternalWork,
+  presetLabels,
+  profitGroupByLabels,
+  rangePresets,
+  reportAudiences,
+  reportViews,
+  truncateChartLabel,
+  type CasualSortKey,
+  type DepartmentKey,
+  type EmployeeSortKey,
+  type ExportHoursBasis,
+  type ProfitGroupBy,
+  type ProjectSortKey,
+  type RangePreset,
+  type ReportAudience,
+  type ReportView,
+} from "@/components/reports/report-config";
+import type {
+  CasualGroup,
+  ClientFacingRow,
+  DepartmentRow,
+  ProfitGroup,
+  ProfitRow,
+} from "@/components/reports/report-rows";
 
 /**
  * The report's tab, range and shared filters, mirrored into the URL so a
@@ -131,243 +134,6 @@ export const Route = createFileRoute("/reports")({
   }),
   component: Reports,
 });
-
-type ProjectSortKey = "name" | "hours" | "billable" | "team";
-type EmployeeSortKey = "name" | "hours" | "billable" | "team" | "overtime" | "amount";
-type CasualSortKey = "group" | "entries" | "rawHours" | "billableHours" | "paid";
-type RangePreset = "this_week" | "this_month" | "last_30" | "this_quarter" | "this_year" | "custom";
-
-const DETAILED_PAGE_SIZE = 50;
-
-const presetLabels: Record<RangePreset, string> = {
-  this_week: "This week",
-  this_month: "This month",
-  last_30: "Last 30 days",
-  this_quarter: "This quarter",
-  this_year: "This year",
-  custom: "Custom range",
-};
-
-const casualGroupByLabels: Record<"client" | "va" | "day" | "week", string> = {
-  client: "Client",
-  va: "VA",
-  day: "Day",
-  week: "Week",
-};
-
-type ProfitGroupBy = "va" | "client" | "team" | "service" | "employment";
-
-const profitGroupByLabels: Record<ProfitGroupBy, string> = {
-  va: "VA",
-  client: "Client",
-  team: "Team",
-  service: "Service line",
-  employment: "Employment type",
-};
-
-/**
- * M51: the service-line split the product owner asked for — "segregate IB,
- * VIP and Casual". Every entry already carries a service_category; this is
- * the same set with a bucket for the null case, which is by far the most
- * common one (ordinary retainer and project work) and would otherwise
- * vanish from a grouped view entirely.
- *
- * Shorter than CASUAL_SERVICE_CATEGORY_LABELS on purpose: those are written
- * to disambiguate a dropdown option, these are a table's leftmost column.
- */
-const SERVICE_LINE_LABELS: Record<CasualServiceCategory | "none", string> = {
-  ironbrij: "Ironbrij (internal)",
-  paid_casual: "Paid Casual",
-  vip_client: "VIP Client",
-  promotional: "Promotional",
-  none: "Retainer & other",
-};
-
-/** M51: full_time/part_time, plus the bucket for a member with no employment row yet. */
-const EMPLOYMENT_LABELS: Record<EmploymentType | "unset", string> = {
-  full_time: "Full-time",
-  part_time: "Part-time",
-  unset: "Employment type not set",
-};
-
-/**
- * M51: who a report is being produced for.
- *
- *   - `all` — everything, with full cost and margin. The default, and
- *     exactly what these tabs showed before M51.
- *   - `internal` — internal work only, at raw tracked hours.
- *   - `client` — client-facing work only, at billed hours, with every cost,
- *     rate, wage and margin figure removed rather than merely hidden.
- */
-type ReportAudience = "all" | "internal" | "client";
-
-const AUDIENCE_LABELS: Record<ReportAudience, string> = {
-  all: "All work",
-  internal: "Internal only",
-  client: "Client-facing only",
-};
-
-/**
- * M51: what counts as internal.
- *
- * Deliberately **not** keyed on `is_billable`, which is the obvious-looking
- * choice and is wrong here. The Ironbrij project is itself flagged billable,
- * so every internal entry logged against it carries `is_billable = true` —
- * keying on that would sweep the company's own internal work straight into
- * a client-facing report. The two honest signals are the entry's service
- * category and whether it belongs to a client at all.
- */
-const isInternalWork = (e: {
-  serviceCategory: CasualServiceCategory | null;
-  clientId: string | null;
-}) => e.serviceCategory === "ironbrij" || e.clientId === null;
-
-/** Keeps only the rows the chosen audience should ever see. */
-function filterByAudience<
-  T extends { serviceCategory: CasualServiceCategory | null; clientId: string | null },
->(rows: T[], audience: ReportAudience): T[] {
-  if (audience === "all") return rows;
-  const wantInternal = audience === "internal";
-  return rows.filter((r) => isInternalWork(r) === wantInternal);
-}
-
-/**
- * M52: the accounts workbook's Gross Profit sheet has a *department* axis —
- * Full Time / Part Time / Casual / VIP — and neither of M51's two new
- * groupings reproduces it, because it mixes the two. A full-time VA's casual
- * work belongs to Casual on that sheet, not to Full Time, so an
- * employment-type split can never reconcile against it, and a service-line
- * split loses the full-time/part-time distinction the feedback is about.
- *
- * One bucket per entry, drawn from whichever dimension actually decides how
- * the work is priced:
- *
- *   - Ironbrij-category work, and work with no client at all, is Internal.
- *     Backup cover lives here too — confirmed as internal work rather than a
- *     category of its own.
- *   - Paid Casual, VIP Client and Promotional each get their own department,
- *     whoever did the work, because the casual programme is priced per
- *     service line rather than per employment type. Only Paid Casual is
- *     uplifted and rounded up (see casual-billing.ts).
- *   - Everything else is ordinary external-client work, split by the VA's
- *     employment type. This is the half the feedback spelled out: pay rate ×
- *     hours is what they are paid, invoice rate × hours is what the client is
- *     invoiced, and the difference is the gross profit.
- */
-type DepartmentKey =
-  EmploymentType | "unset" | "paid_casual" | "vip_client" | "promotional" | "internal";
-
-const DEPARTMENT_LABELS: Record<DepartmentKey, string> = {
-  full_time: "Full-time (client work)",
-  part_time: "Part-time (client work)",
-  unset: "Employment type not set",
-  paid_casual: "Paid Casual Service",
-  vip_client: "VIP Client",
-  promotional: "Promotional",
-  internal: "Internal (incl. backup)",
-};
-
-/** Fixed presentation order — the workbook's, not whatever order the entries arrived in. */
-const DEPARTMENT_ORDER: DepartmentKey[] = [
-  "full_time",
-  "part_time",
-  "unset",
-  "paid_casual",
-  "vip_client",
-  "promotional",
-  "internal",
-];
-
-/**
- * Which department one entry belongs to. Internal is tested first, so that
- * casual-category work logged with no client — which can't be invoiced, and
- * which `isInternalWork` already treats as internal everywhere else in this
- * tab — doesn't land in a client-facing department.
- */
-const departmentFor = (
-  e: { serviceCategory: CasualServiceCategory | null; clientId: string | null },
-  employmentType: EmploymentType | undefined,
-): DepartmentKey => {
-  if (isInternalWork(e)) return "internal";
-  // The 'ironbrij' re-test is for the type checker: isInternalWork has
-  // already returned for that category, but it isn't a type predicate.
-  const category = e.serviceCategory;
-  if (category !== null && category !== "ironbrij") return category;
-  return employmentType ?? "unset";
-};
-
-// Same dimension names, phrased for the chart title ("Billable hours by
-// client/VA/day/week") rather than a table column header.
-const casualGroupByChartLabels: Record<"client" | "va" | "day" | "week", string> = {
-  client: "client",
-  va: "VA",
-  day: "day",
-  week: "week",
-};
-
-// Client/VA bars past this point collapse into a single "Other" bar — a
-// workspace with 60 clients would otherwise render 60 unreadable slivers.
-// The table below still lists every group, so nothing is hidden outright.
-const CASUAL_CHART_MAX_BARS = 12;
-// Roughly how many x-axis ticks fit legibly across the chart's width.
-const CASUAL_CHART_MAX_TICKS = 12;
-
-// A bar gets ~60px of width; the untruncated name stays in the tooltip.
-function truncateChartLabel(label: string, max = 14) {
-  return label.length > max ? `${label.slice(0, max - 1)}…` : label;
-}
-
-// M38: only ever called for the fixed presets — "custom" is resolved
-// directly in Reports() from the two date inputs instead, since there's
-// no formula to compute it from.
-function computeRange(preset: Exclude<RangePreset, "custom">): { from: string; to: string } {
-  const today = new Date();
-  const to = toDateKey(today);
-  switch (preset) {
-    case "this_week":
-      return { from: toDateKey(startOfWeek(today)), to };
-    case "last_30":
-      return { from: toDateKey(addDays(today, -29)), to };
-    case "this_quarter": {
-      const quarterStart = new Date(today.getFullYear(), Math.floor(today.getMonth() / 3) * 3, 1);
-      return { from: toDateKey(quarterStart), to };
-    }
-    case "this_year":
-      return { from: toDateKey(new Date(today.getFullYear(), 0, 1)), to };
-    case "this_month":
-    default:
-      return { from: toDateKey(new Date(today.getFullYear(), today.getMonth(), 1)), to };
-  }
-}
-
-// H17: every value in `currencies` (workspace/types.ts) is a real ISO 4217
-// code today, but this guards against a future bad value rather than
-// letting Intl throw and blank the whole column.
-function formatCurrency(amount: number, currency: string) {
-  try {
-    return new Intl.NumberFormat(undefined, {
-      style: "currency",
-      currency,
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    }).format(amount);
-  } catch {
-    return `${amount.toFixed(2)} ${currency}`;
-  }
-}
-
-function downloadCsv(filename: string, rows: (string | number)[][]) {
-  const csv = rows
-    .map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(","))
-    .join("\n");
-  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  a.click();
-  URL.revokeObjectURL(url);
-}
 
 function Reports() {
   // Seeded once from the URL (see ReportsSearch); the effect further down
@@ -1010,17 +776,6 @@ function Reports() {
   // number, not the top-level unit. So the category rows nest under their
   // group, and the group carries the subtotal that drives sorting, the
   // chart, and the export order.
-  type CasualGroup = {
-    groupKey: string;
-    groupLabel: string;
-    tags: WorkspaceTag[];
-    lastServiceDate: string | null;
-    categories: (typeof casualRows)[number][];
-    entryCount: number;
-    rawHours: number;
-    billableHours: number;
-    paidCount: number;
-  };
 
   const casualGroups = (() => {
     const byGroup = new Map<string, CasualGroup>();
@@ -1182,27 +937,6 @@ function Reports() {
     return { ...e, ...money, payRate, invoiceRate };
   });
 
-  type ProfitRow = {
-    key: string;
-    groupKey: string;
-    groupLabel: string;
-    clientLabel: string;
-    /** M51: hours actually tracked — the basis for `cost`, and what the internal view shows. */
-    actualHours: number;
-    /** M51: hours invoiced — uplifted and rounded up. The basis for `revenue`. */
-    billedHours: number;
-    cost: number;
-    revenue: number;
-    profit: number;
-    /** Billed hours that actually produced revenue — the denominator for a blended invoice rate. */
-    ratedHours: number;
-    /** Chargeable billed hours with no invoice rate on file, so the row is knowingly incomplete. */
-    unpricedHours: number;
-    costKnown: boolean;
-    /** M50: actual hours worked by salaried staff, whose cost sits in the salary block rather than here. */
-    salariedHours: number;
-  };
-
   const profitRows: ProfitRow[] = (() => {
     const map = new Map<string, ProfitRow>();
     for (const e of pricedProfitEntries) {
@@ -1281,21 +1015,6 @@ function Reports() {
     }
     return Array.from(map.values());
   })();
-
-  type ProfitGroup = {
-    key: string;
-    label: string;
-    rows: ProfitRow[];
-    actualHours: number;
-    billedHours: number;
-    cost: number;
-    revenue: number;
-    profit: number;
-    ratedHours: number;
-    unpricedHours: number;
-    costKnown: boolean;
-    salariedHours: number;
-  };
 
   const profitGroups: ProfitGroup[] = (() => {
     const map = new Map<string, ProfitGroup>();
@@ -1466,20 +1185,6 @@ function Reports() {
    * against part of it would overstate the department. Withheld under a client
    * filter, the same rule the salary block itself uses.
    */
-  type DepartmentRow = {
-    key: DepartmentKey | "salary";
-    label: string;
-    actualHours: number;
-    billedHours: number;
-    /** What the VAs in this department are paid — actual hours × pay rate. */
-    paid: number;
-    /** What the client is invoiced — billed hours × invoice rate. */
-    invoice: number;
-    /** Someone here has no pay rate on file, so `paid` is knowingly short. */
-    hasUnpricedWork: boolean;
-    /** Hours costed at zero because their owner is salaried — their pay is in the salary row. */
-    salariedHours: number;
-  };
 
   const departmentRows: DepartmentRow[] = (() => {
     const map = new Map<DepartmentKey, DepartmentRow>();
@@ -1570,19 +1275,6 @@ function Reports() {
    * still applies, but internal work can never appear here even if the
    * audience control says "All work".
    */
-  type ClientFacingRow = {
-    key: string;
-    employeeName: string;
-    clientLabel: string;
-    task: string;
-    /** The description the person actually typed on the entry. Empty when they left it blank. */
-    description: string;
-    billedHours: number;
-    /** The same work as tracked, before the Paid Casual uplift and increment. Only the export reads it. */
-    actualHours: number;
-    /** Null when this client has no subscription allowance to draw down. */
-    remainingHours: number | null;
-  };
 
   const clientFacingRows: ClientFacingRow[] = (() => {
     const map = new Map<string, ClientFacingRow>();
@@ -2363,1320 +2055,90 @@ function Reports() {
       )}
 
       {view === "project" ? (
-        <>
-          <Card className="shadow-card">
-            <CardHeader>
-              <CardTitle className="text-base">Hours by project · {rangeLabel}</CardTitle>
-            </CardHeader>
-            <CardContent className="h-72 pl-0">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={projectRows} margin={{ top: 8, right: 16, bottom: 8, left: 8 }}>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)" />
-                  <XAxis
-                    dataKey="name"
-                    tickFormatter={(v: string) => v.split(" ")[0]}
-                    tickLine={false}
-                    axisLine={false}
-                    fontSize={12}
-                    stroke="var(--muted-foreground)"
-                  />
-                  <YAxis
-                    tickLine={false}
-                    axisLine={false}
-                    fontSize={12}
-                    stroke="var(--muted-foreground)"
-                  />
-                  <Tooltip
-                    cursor={{ fill: "var(--muted)" }}
-                    contentStyle={{
-                      background: "var(--popover)",
-                      border: "1px solid var(--border)",
-                      borderRadius: 12,
-                      color: "var(--popover-foreground)",
-                      fontSize: 12,
-                    }}
-                    formatter={(value) => [`${(value as number).toFixed(1)} h`, "Logged"]}
-                  />
-                  <Bar dataKey="hours" radius={[6, 6, 0, 0]}>
-                    {projectRows.map((r) => (
-                      <Cell key={r.id} fill={r.color} />
-                    ))}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
-            </CardContent>
-          </Card>
-
-          <Card className="mt-6 shadow-card">
-            <CardContent className="overflow-x-auto p-0">
-              <table className="w-full min-w-[580px] text-sm">
-                <thead>
-                  <tr className="border-b border-border text-xs uppercase tracking-wide text-muted-foreground">
-                    {(
-                      [
-                        ["name", "Project"],
-                        ["team", "Team"],
-                        ["hours", "Hours"],
-                        ["billable", "Billable"],
-                      ] as [ProjectSortKey, string][]
-                    ).map(([key, label]) => (
-                      <th
-                        key={key}
-                        aria-sort={
-                          projSortKey === key ? (projAsc ? "ascending" : "descending") : undefined
-                        }
-                        className={
-                          "px-5 py-3 font-medium " +
-                          (key === "hours" || key === "billable" ? "text-right" : "text-left")
-                        }
-                      >
-                        <button
-                          type="button"
-                          onClick={() => toggleProjSort(key)}
-                          className="hover:text-foreground"
-                        >
-                          {label}
-                          <span aria-hidden="true">
-                            {projSortKey === key ? (projAsc ? " ↑" : " ↓") : ""}
-                          </span>
-                        </button>
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {sortedProjects.map((r) => (
-                    <tr
-                      key={r.id}
-                      className="border-b border-border last:border-0 hover:bg-muted/40"
-                    >
-                      <td className="px-5 py-3">
-                        <span className="flex items-center gap-2">
-                          <ProjectDot color={r.color} />
-                          <span className="font-medium">{r.name}</span>
-                        </span>
-                      </td>
-                      <td className="px-5 py-3 text-muted-foreground">{r.team}</td>
-                      <td className="px-5 py-3 text-right tabular-nums">{formatHours(r.hours)}</td>
-                      <td className="px-5 py-3 text-right tabular-nums text-muted-foreground">
-                        {formatHours(r.billableHours)}
-                        {r.billablePct != null && (
-                          <span className="ml-1 text-xs">({r.billablePct}%)</span>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </CardContent>
-          </Card>
-        </>
+        <ProjectReportView
+          projAsc={projAsc}
+          projSortKey={projSortKey}
+          projectRows={projectRows}
+          rangeLabel={rangeLabel}
+          sortedProjects={sortedProjects}
+          toggleProjSort={toggleProjSort}
+        />
       ) : view === "employee" ? (
-        <>
-          <Card className="shadow-card">
-            <CardHeader>
-              <CardTitle className="text-base">
-                Hours by employee · {rangeLabel}
-                {clientFilter !== "all" &&
-                  ` · ${clientFilter === "none" ? "No client" : (clients.find((c) => c.id === clientFilter)?.name ?? "")}`}
-              </CardTitle>
-              {clientFilter !== "all" && (
-                <p className="text-xs text-muted-foreground">
-                  Hours shown are just for this client. Overtime and $ amount still reflect each
-                  person's full billable workload across everything, not only this slice.
-                </p>
-              )}
-            </CardHeader>
-            <CardContent className="h-72 pl-0">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={employeeRows} margin={{ top: 8, right: 16, bottom: 8, left: 8 }}>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)" />
-                  <XAxis
-                    dataKey="name"
-                    tickFormatter={(v: string) => v.split(" ")[0]}
-                    tickLine={false}
-                    axisLine={false}
-                    fontSize={12}
-                    stroke="var(--muted-foreground)"
-                  />
-                  <YAxis
-                    tickLine={false}
-                    axisLine={false}
-                    fontSize={12}
-                    stroke="var(--muted-foreground)"
-                  />
-                  <Tooltip
-                    cursor={{ fill: "var(--muted)" }}
-                    contentStyle={{
-                      background: "var(--popover)",
-                      border: "1px solid var(--border)",
-                      borderRadius: 12,
-                      color: "var(--popover-foreground)",
-                      fontSize: 12,
-                    }}
-                    formatter={(value) => [`${(value as number).toFixed(1)} h`, "Logged"]}
-                  />
-                  <Bar dataKey="hours" radius={[6, 6, 0, 0]}>
-                    {employeeRows.map((r) => (
-                      <Cell key={r.id} fill={r.teamColor} />
-                    ))}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
-            </CardContent>
-          </Card>
-
-          <Card className="mt-6 shadow-card">
-            <CardContent className="overflow-x-auto p-0">
-              <table className="w-full min-w-[680px] text-sm">
-                <thead>
-                  <tr className="border-b border-border text-xs uppercase tracking-wide text-muted-foreground">
-                    {(
-                      [
-                        ["name", "Employee"],
-                        ["team", "Team"],
-                        ["hours", "Hours"],
-                        ["billable", "Billable"],
-                        ["overtime", "Overtime"],
-                        ["amount", `Amount (${settings.currency})`],
-                      ] as [EmployeeSortKey, string][]
-                    ).map(([key, label]) => (
-                      <th
-                        key={key}
-                        className={
-                          "px-5 py-3 font-medium " +
-                          (key === "hours" ||
-                          key === "billable" ||
-                          key === "overtime" ||
-                          key === "amount"
-                            ? "text-right"
-                            : "text-left")
-                        }
-                        aria-sort={
-                          empSortKey === key ? (empAsc ? "ascending" : "descending") : undefined
-                        }
-                      >
-                        <button
-                          type="button"
-                          onClick={() => toggleEmpSort(key)}
-                          className="hover:text-foreground"
-                        >
-                          {label}
-                          <span aria-hidden="true">
-                            {empSortKey === key ? (empAsc ? " ↑" : " ↓") : ""}
-                          </span>
-                        </button>
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {sortedEmployees.map((r) => (
-                    <tr
-                      key={r.id}
-                      className="border-b border-border last:border-0 hover:bg-muted/40"
-                    >
-                      <td className="px-5 py-3">
-                        <span className="flex items-center gap-2">
-                          <Avatar className="h-6 w-6 shrink-0">
-                            <AvatarImage src={r.avatarUrl ?? undefined} alt={r.name} />
-                            <AvatarFallback className="bg-secondary text-[10px]">
-                              {r.initials}
-                            </AvatarFallback>
-                          </Avatar>
-                          <span className="font-medium">{r.name}</span>
-                        </span>
-                      </td>
-                      <td className="px-5 py-3 text-muted-foreground">{r.team}</td>
-                      <td className="px-5 py-3 text-right tabular-nums">{formatHours(r.hours)}</td>
-                      <td className="px-5 py-3 text-right tabular-nums text-muted-foreground">
-                        {formatHours(r.billableHours)}
-                        {r.billablePct != null && (
-                          <span className="ml-1 text-xs">({r.billablePct}%)</span>
-                        )}
-                      </td>
-                      <td
-                        className={
-                          "px-5 py-3 text-right tabular-nums " +
-                          (r.overtime != null && r.overtime > 0
-                            ? "font-medium text-destructive"
-                            : "text-muted-foreground")
-                        }
-                        title={r.overtime == null ? "Not tracked for part-time staff" : undefined}
-                      >
-                        {r.overtime != null && r.overtime > 0 ? formatHours(r.overtime) : "—"}
-                      </td>
-                      <td
-                        className="px-5 py-3 text-right tabular-nums text-muted-foreground"
-                        title={r.amount == null ? "No hourly rate set for this person" : undefined}
-                      >
-                        {r.amount == null ? "—" : formatCurrency(r.amount, settings.currency)}
-                      </td>
-                    </tr>
-                  ))}
-                  {sortedEmployees.length === 0 && (
-                    <tr>
-                      <td
-                        colSpan={6}
-                        className="px-5 py-8 text-center text-sm text-muted-foreground"
-                      >
-                        No one in this filter yet.
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </CardContent>
-          </Card>
-        </>
+        <EmployeeReportView
+          clientFilter={clientFilter}
+          clients={clients}
+          empAsc={empAsc}
+          empSortKey={empSortKey}
+          employeeRows={employeeRows}
+          rangeLabel={rangeLabel}
+          settings={settings}
+          sortedEmployees={sortedEmployees}
+          toggleEmpSort={toggleEmpSort}
+        />
       ) : view === "detailed" ? (
-        <>
-          <Card className="shadow-card">
-            <CardContent className="overflow-x-auto p-0">
-              <table className="w-full min-w-[860px] text-sm">
-                <thead>
-                  <tr className="border-b border-border text-xs uppercase tracking-wide text-muted-foreground">
-                    <th className="px-5 py-3 text-left font-medium">Date</th>
-                    <th className="px-5 py-3 text-left font-medium">Employee</th>
-                    <th className="px-5 py-3 text-left font-medium">Project</th>
-                    {tags.length > 0 && <th className="px-5 py-3 text-left font-medium">Tags</th>}
-                    <th className="px-5 py-3 text-left font-medium">Task</th>
-                    <th className="px-5 py-3 text-left font-medium">Description</th>
-                    <th className="px-5 py-3 text-right font-medium">Hours</th>
-                    <th className="px-5 py-3 text-center font-medium">Billable</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {pagedDetailed.map((r) => (
-                    <tr
-                      key={r.id}
-                      className="border-b border-border last:border-0 hover:bg-muted/40"
-                    >
-                      <td className="whitespace-nowrap px-5 py-3 text-muted-foreground">
-                        {fromDateKey(r.date).toLocaleDateString(undefined, {
-                          month: "short",
-                          day: "numeric",
-                          year: "numeric",
-                        })}
-                      </td>
-                      <td className="px-5 py-3">
-                        <span className="flex items-center gap-2">
-                          <Avatar className="h-6 w-6 shrink-0">
-                            <AvatarImage
-                              src={r.employeeAvatarUrl ?? undefined}
-                              alt={r.employeeName}
-                            />
-                            <AvatarFallback className="bg-secondary text-[10px]">
-                              {r.employeeInitials}
-                            </AvatarFallback>
-                          </Avatar>
-                          <span className="font-medium">{r.employeeName}</span>
-                        </span>
-                      </td>
-                      <td className="px-5 py-3">
-                        <span className="flex items-center gap-2">
-                          <ProjectDot color={r.projectColor} />
-                          {r.projectName}
-                        </span>
-                      </td>
-                      {tags.length > 0 && (
-                        <td className="px-5 py-3">
-                          {r.projectTags.length === 0 ? (
-                            <span className="text-muted-foreground">—</span>
-                          ) : (
-                            <div className="flex flex-wrap gap-1">
-                              {r.projectTags.map((t) => (
-                                <span
-                                  key={t.id}
-                                  className="rounded-full px-2 py-0.5 text-xs font-medium"
-                                  style={tintedChipStyle(t.color)}
-                                >
-                                  {t.name}
-                                </span>
-                              ))}
-                            </div>
-                          )}
-                        </td>
-                      )}
-                      <td className="px-5 py-3 text-muted-foreground">{r.task || "—"}</td>
-                      <td
-                        className="max-w-[280px] truncate px-5 py-3 text-muted-foreground"
-                        title={r.description || undefined}
-                      >
-                        {r.description || "—"}
-                      </td>
-                      <td className="px-5 py-3 text-right tabular-nums">
-                        {formatMinutes(r.minutes)}
-                      </td>
-                      <td className="px-5 py-3 text-center text-xs text-muted-foreground">
-                        {r.billable ? "Billable" : "Non-billable"}
-                      </td>
-                    </tr>
-                  ))}
-                  {pagedDetailed.length === 0 && (
-                    <tr>
-                      <td
-                        colSpan={tags.length > 0 ? 8 : 7}
-                        className="px-5 py-8 text-center text-sm text-muted-foreground"
-                      >
-                        No entries in this filter.
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </CardContent>
-          </Card>
-
-          {filteredDetailed.length > 0 && (
-            <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
-              <p className="text-sm text-muted-foreground">
-                {filteredDetailed.length} {filteredDetailed.length === 1 ? "entry" : "entries"}
-                {totalDetailedPages > 1 &&
-                  ` · page ${currentDetailedPage} of ${totalDetailedPages}`}
-              </p>
-              {totalDetailedPages > 1 && (
-                <Pagination className="mx-0 w-auto">
-                  <PaginationContent>
-                    <PaginationItem>
-                      <PaginationPreviousButton
-                        disabled={currentDetailedPage <= 1}
-                        onClick={() =>
-                          currentDetailedPage > 1 && setDetailedPage(currentDetailedPage - 1)
-                        }
-                      />
-                    </PaginationItem>
-                    <PaginationItem>
-                      <PaginationNextButton
-                        disabled={currentDetailedPage >= totalDetailedPages}
-                        onClick={() =>
-                          currentDetailedPage < totalDetailedPages &&
-                          setDetailedPage(currentDetailedPage + 1)
-                        }
-                      />
-                    </PaginationItem>
-                  </PaginationContent>
-                </Pagination>
-              )}
-            </div>
-          )}
-        </>
+        <DetailedReportView
+          currentDetailedPage={currentDetailedPage}
+          filteredDetailed={filteredDetailed}
+          pagedDetailed={pagedDetailed}
+          setDetailedPage={setDetailedPage}
+          tags={tags}
+          totalDetailedPages={totalDetailedPages}
+        />
       ) : view === "casual" ? (
-        <>
-          {/* M46: KPI row — the workbook's Dashboard KPI cards. Delta vs
-              last week only renders for the this_week preset (see
-              casualHasLastWeekData's own comment) — every other range has
-              no well-defined "previous period" to compare against here. */}
-          <div className="mb-6 grid gap-4 sm:grid-cols-3">
-            <CasualKpiCard
-              label="Active clients"
-              value={String(casualActiveClients)}
-              delta={
-                casualHasLastWeekData
-                  ? pctChange(casualActiveClients, lastWeekCasualActiveClients)
-                  : null
-              }
-            />
-            <CasualKpiCard
-              label="Active VAs"
-              value={String(casualActiveVAs)}
-              delta={
-                casualHasLastWeekData ? pctChange(casualActiveVAs, lastWeekCasualActiveVAs) : null
-              }
-            />
-            <CasualKpiCard
-              label="Billable hours"
-              value={formatHours(casualTotalBillableHours)}
-              delta={
-                casualHasLastWeekData
-                  ? pctChange(casualTotalBillableHours, lastWeekCasualTotalBillableHours)
-                  : null
-              }
-            />
-          </div>
-
-          <Card className="mb-6 shadow-card">
-            <CardHeader>
-              <CardTitle className="text-base">
-                Billable hours by {casualGroupByChartLabels[casualGroupBy]} · {rangeLabel}
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="h-64 pl-0">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart
-                  data={casualGroupChartData}
-                  margin={{ top: 8, right: 16, bottom: 8, left: 8 }}
-                >
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)" />
-                  <XAxis
-                    dataKey="axisLabel"
-                    interval={casualChartTickInterval}
-                    tickLine={false}
-                    axisLine={false}
-                    fontSize={12}
-                    stroke="var(--muted-foreground)"
-                  />
-                  <YAxis
-                    tickLine={false}
-                    axisLine={false}
-                    fontSize={12}
-                    stroke="var(--muted-foreground)"
-                  />
-                  <Tooltip
-                    cursor={{ fill: "var(--muted)" }}
-                    contentStyle={{
-                      background: "var(--popover)",
-                      border: "1px solid var(--border)",
-                      borderRadius: 12,
-                      color: "var(--popover-foreground)",
-                      fontSize: 12,
-                    }}
-                    labelFormatter={(_label, payload) =>
-                      (payload?.[0]?.payload as { groupLabel?: string } | undefined)?.groupLabel ??
-                      ""
-                    }
-                    formatter={(value) => [`${(value as number).toFixed(1)} h`, "Billable"]}
-                  />
-                  <Bar dataKey="hours" radius={[6, 6, 0, 0]}>
-                    {casualGroupChartData.map((d) => (
-                      <Cell key={d.groupKey} fill={d.color} />
-                    ))}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
-            </CardContent>
-          </Card>
-
-          <Card className="shadow-card">
-            <CardHeader>
-              <CardTitle className="text-base">Casual Service · {rangeLabel}</CardTitle>
-              <p className="text-xs text-muted-foreground">
-                Ad-hoc work billed outside the standard subscription retainer. "Billable Hours" adds
-                the workspace's client billing uplift
-                {settings.clientBillingUpliftPct > 0
-                  ? ` (${settings.clientBillingUpliftPct}%)`
-                  : ""}{" "}
-                and then rounds up to the billing increment, for Paid Casual Service only — VIP
-                Client, Promotional and Ironbrij all bill at exact tracked hours. Raw tracked hours
-                are shown alongside for reference and are never overwritten.
-              </p>
-            </CardHeader>
-            <CardContent className="overflow-x-auto p-0">
-              <table className="w-full min-w-[860px] text-sm">
-                <thead>
-                  <tr className="border-b border-border text-xs uppercase tracking-wide text-muted-foreground">
-                    <th
-                      className="px-5 py-3 text-left font-medium"
-                      aria-sort={casualAriaSort("group")}
-                    >
-                      {casualSortHeader("group", casualGroupByLabels[casualGroupBy])}
-                    </th>
-                    <th className="px-5 py-3 text-left font-medium">Category</th>
-                    {tags.length > 0 && <th className="px-5 py-3 text-left font-medium">Tags</th>}
-                    <th
-                      className="px-5 py-3 text-right font-medium"
-                      aria-sort={casualAriaSort("entries")}
-                    >
-                      {casualSortHeader("entries", "Entries")}
-                    </th>
-                    <th
-                      className="px-5 py-3 text-right font-medium"
-                      aria-sort={casualAriaSort("rawHours")}
-                    >
-                      {casualSortHeader("rawHours", "Raw Hours")}
-                    </th>
-                    <th
-                      className="px-5 py-3 text-right font-medium"
-                      aria-sort={casualAriaSort("billableHours")}
-                    >
-                      {casualSortHeader("billableHours", "Billable Hours")}
-                    </th>
-                    <th
-                      className="px-5 py-3 text-right font-medium"
-                      aria-sort={casualAriaSort("paid")}
-                    >
-                      {casualSortHeader("paid", "Paid")}
-                    </th>
-                    {casualGroupBy === "client" && (
-                      <th className="px-5 py-3 text-left font-medium">Last Service</th>
-                    )}
-                  </tr>
-                </thead>
-                <tbody>
-                  {sortedCasualGroups.map((g) => {
-                    // A group with one category would repeat itself exactly
-                    // in the detail row below, so it collapses into a
-                    // single row naming that category instead.
-                    const singleCategory = g.categories.length === 1;
-                    return (
-                      <Fragment key={g.groupKey}>
-                        <tr className="border-b border-border bg-muted/30">
-                          <td className="px-5 py-3 font-semibold">{g.groupLabel}</td>
-                          <td className="px-5 py-3 text-muted-foreground">
-                            {singleCategory
-                              ? CASUAL_SERVICE_CATEGORY_LABELS[g.categories[0].serviceCategory]
-                              : `${g.categories.length} categories`}
-                          </td>
-                          {tags.length > 0 && (
-                            <td className="px-5 py-3">
-                              {g.tags.length === 0 ? (
-                                <span className="text-muted-foreground">—</span>
-                              ) : (
-                                <div className="flex flex-wrap gap-1">
-                                  {g.tags.map((t) => (
-                                    <span
-                                      key={t.id}
-                                      className="rounded-full px-2 py-0.5 text-xs font-medium"
-                                      style={tintedChipStyle(t.color)}
-                                    >
-                                      {t.name}
-                                    </span>
-                                  ))}
-                                </div>
-                              )}
-                            </td>
-                          )}
-                          <td className="px-5 py-3 text-right tabular-nums">{g.entryCount}</td>
-                          <td className="px-5 py-3 text-right tabular-nums text-muted-foreground">
-                            {formatHours(g.rawHours)}
-                          </td>
-                          <td className="px-5 py-3 text-right font-semibold tabular-nums">
-                            {formatHours(g.billableHours)}
-                          </td>
-                          <td className="px-5 py-3 text-right tabular-nums text-muted-foreground">
-                            {g.paidCount}/{g.entryCount}
-                          </td>
-                          {casualGroupBy === "client" && (
-                            <td className="px-5 py-3 text-muted-foreground">
-                              {g.lastServiceDate
-                                ? fromDateKey(g.lastServiceDate).toLocaleDateString(undefined, {
-                                    month: "short",
-                                    day: "numeric",
-                                    year: "numeric",
-                                  })
-                                : "—"}
-                            </td>
-                          )}
-                        </tr>
-                        {!singleCategory &&
-                          g.categories.map((r) => (
-                            <tr
-                              key={r.serviceCategory}
-                              className="border-b border-border text-muted-foreground hover:bg-muted/40"
-                            >
-                              <td className="px-5 py-2" />
-                              <td className="py-2 pl-9 pr-5">
-                                {CASUAL_SERVICE_CATEGORY_LABELS[r.serviceCategory]}
-                              </td>
-                              {tags.length > 0 && <td className="px-5 py-2" />}
-                              <td className="px-5 py-2 text-right tabular-nums">{r.entryCount}</td>
-                              <td className="px-5 py-2 text-right tabular-nums">
-                                {formatHours(r.rawHours)}
-                              </td>
-                              <td className="px-5 py-2 text-right tabular-nums">
-                                {formatHours(r.billableHours)}
-                              </td>
-                              <td className="px-5 py-2 text-right tabular-nums">
-                                {r.paidCount}/{r.entryCount}
-                              </td>
-                              {casualGroupBy === "client" && <td className="px-5 py-2" />}
-                            </tr>
-                          ))}
-                      </Fragment>
-                    );
-                  })}
-                  {sortedCasualGroups.length === 0 && (
-                    <tr>
-                      <td
-                        colSpan={(casualGroupBy === "client" ? 7 : 6) + (tags.length > 0 ? 1 : 0)}
-                        className="px-5 py-8 text-center text-sm text-muted-foreground"
-                      >
-                        No casual-service entries in this filter.
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-                {sortedCasualGroups.length > 0 && (
-                  <tfoot>
-                    <tr className="border-t-2 border-border bg-muted/50">
-                      <td className="px-5 py-3 font-semibold">
-                        All {sortedCasualGroups.length} {casualGroupByChartLabels[casualGroupBy]}
-                        {sortedCasualGroups.length === 1 ? "" : "s"}
-                      </td>
-                      <td className="px-5 py-3" />
-                      {tags.length > 0 && <td className="px-5 py-3" />}
-                      <td className="px-5 py-3 text-right font-semibold tabular-nums">
-                        {casualGrandTotals.entryCount}
-                      </td>
-                      <td className="px-5 py-3 text-right font-semibold tabular-nums">
-                        {formatHours(casualGrandTotals.rawHours)}
-                      </td>
-                      <td className="px-5 py-3 text-right font-semibold tabular-nums">
-                        {formatHours(casualGrandTotals.billableHours)}
-                      </td>
-                      <td className="px-5 py-3 text-right font-semibold tabular-nums">
-                        {casualGrandTotals.paidCount}/{casualGrandTotals.entryCount}
-                      </td>
-                      {casualGroupBy === "client" && <td className="px-5 py-3" />}
-                    </tr>
-                  </tfoot>
-                )}
-              </table>
-            </CardContent>
-          </Card>
-        </>
+        <CasualReportView
+          casualActiveClients={casualActiveClients}
+          casualActiveVAs={casualActiveVAs}
+          casualAriaSort={casualAriaSort}
+          casualChartTickInterval={casualChartTickInterval}
+          casualGrandTotals={casualGrandTotals}
+          casualGroupBy={casualGroupBy}
+          casualGroupChartData={casualGroupChartData}
+          casualHasLastWeekData={casualHasLastWeekData}
+          casualSortHeader={casualSortHeader}
+          casualTotalBillableHours={casualTotalBillableHours}
+          lastWeekCasualActiveClients={lastWeekCasualActiveClients}
+          lastWeekCasualActiveVAs={lastWeekCasualActiveVAs}
+          lastWeekCasualTotalBillableHours={lastWeekCasualTotalBillableHours}
+          rangeLabel={rangeLabel}
+          settings={settings}
+          sortedCasualGroups={sortedCasualGroups}
+          tags={tags}
+        />
       ) : showClientFacing ? (
         /* M51: the client-facing view. A separate table fed by a separate
            projection, so there is no cost or margin value in scope here to
            be shown by accident. */
-        <Card className="shadow-card">
-          <CardHeader>
-            <CardTitle className="text-base">Client hours · {rangeLabel}</CardTitle>
-            <p className="text-xs text-muted-foreground">
-              Safe to send out — no cost, pay rate or margin figures. Hours are what's invoiced
-              {settings.clientBillingUpliftPct > 0
-                ? `, including the ${settings.clientBillingUpliftPct}% uplift on Paid Casual work, rounded up`
-                : ", rounded up"}
-              . Remaining hours are the client's whole subscription allowance less everything ever
-              rendered against it, not just this range.
-            </p>
-          </CardHeader>
-          <CardContent className="overflow-x-auto p-0">
-            {profitTruncated && (
-              <p className="border-b border-border bg-destructive/10 px-5 py-3 text-sm text-destructive">
-                This range has more entries than a single report can load, so these totals would be
-                incomplete. Narrow the date range and try again.
-              </p>
-            )}
-            <table className="w-full min-w-[900px] text-sm">
-              <thead>
-                <tr className="border-b border-border text-xs uppercase tracking-wide text-muted-foreground">
-                  <th className="px-5 py-3 text-left font-medium">Name</th>
-                  <th className="px-5 py-3 text-left font-medium">Client</th>
-                  <th className="px-5 py-3 text-left font-medium">Task</th>
-                  <th className="px-5 py-3 text-left font-medium">Description</th>
-                  <th className="px-5 py-3 text-right font-medium">Hours</th>
-                  <th className="px-5 py-3 text-right font-medium">Remaining Hours</th>
-                </tr>
-              </thead>
-              <tbody>
-                {profitTruncated ? null : clientFacingRows.length === 0 ? (
-                  <tr>
-                    <td colSpan={6} className="px-5 py-8 text-center text-sm text-muted-foreground">
-                      No client-facing work in this range.
-                    </td>
-                  </tr>
-                ) : (
-                  pagedClientFacingRows.map((r) => (
-                    <tr key={r.key} className="border-b border-border last:border-0">
-                      <td className="px-5 py-3 font-medium">{r.employeeName}</td>
-                      <td className="px-5 py-3">{r.clientLabel}</td>
-                      <td className="px-5 py-3 text-muted-foreground">{r.task}</td>
-                      <td className="max-w-xs px-5 py-3 text-muted-foreground">
-                        {r.description || <span title="No description was entered">—</span>}
-                      </td>
-                      <td className="px-5 py-3 text-right tabular-nums">
-                        {formatHours(r.billedHours)}
-                      </td>
-                      <td className="px-5 py-3 text-right tabular-nums text-muted-foreground">
-                        {r.remainingHours == null ? (
-                          <span title="This client has no subscription allowance set">—</span>
-                        ) : r.remainingHours < 0 ? (
-                          <span className="text-destructive">
-                            {formatHours(Math.abs(r.remainingHours))} over
-                          </span>
-                        ) : (
-                          formatHours(r.remainingHours)
-                        )}
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-              {!profitTruncated && clientFacingRows.length > 0 && (
-                <tfoot>
-                  <tr className="border-t-2 border-border bg-muted/50">
-                    <td className="px-5 py-3 font-semibold">Total</td>
-                    <td className="px-5 py-3" />
-                    <td className="px-5 py-3" />
-                    <td className="px-5 py-3" />
-                    <td className="px-5 py-3 text-right font-semibold tabular-nums">
-                      {formatHours(clientFacingTotalHours)}
-                    </td>
-                    <td className="px-5 py-3" />
-                  </tr>
-                </tfoot>
-              )}
-            </table>
-          </CardContent>
-          {!profitTruncated && clientFacingRows.length > 0 && (
-            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border px-5 py-3">
-              <p className="text-sm text-muted-foreground">
-                {clientFacingRows.length} {clientFacingRows.length === 1 ? "line" : "lines"}
-                {totalClientFacingPages > 1 &&
-                  ` · page ${currentClientFacingPage} of ${totalClientFacingPages} · the total and the export include every line`}
-              </p>
-              {totalClientFacingPages > 1 && (
-                <Pagination className="mx-0 w-auto">
-                  <PaginationContent>
-                    <PaginationItem>
-                      <PaginationPreviousButton
-                        disabled={currentClientFacingPage <= 1}
-                        onClick={() => setClientFacingPage(currentClientFacingPage - 1)}
-                      />
-                    </PaginationItem>
-                    <PaginationItem>
-                      <PaginationNextButton
-                        disabled={currentClientFacingPage >= totalClientFacingPages}
-                        onClick={() => setClientFacingPage(currentClientFacingPage + 1)}
-                      />
-                    </PaginationItem>
-                  </PaginationContent>
-                </Pagination>
-              )}
-            </div>
-          )}
-        </Card>
+        <ClientFacingReportView
+          clientFacingRows={clientFacingRows}
+          clientFacingTotalHours={clientFacingTotalHours}
+          currentClientFacingPage={currentClientFacingPage}
+          pagedClientFacingRows={pagedClientFacingRows}
+          profitTruncated={profitTruncated}
+          rangeLabel={rangeLabel}
+          setClientFacingPage={setClientFacingPage}
+          settings={settings}
+          totalClientFacingPages={totalClientFacingPages}
+        />
       ) : (
-        <>
-          {/* M52: gross profit by department. Sits above the main table
-              because it answers a different question — "what did each
-              department earn" rather than "where did the margin come from" —
-              and because it's the block that reconciles against the accounts
-              workbook's own Gross Profit sheet. */}
-          {!profitTruncated && departmentRows.length > 0 && (
-            <Card className="mb-4 shadow-card">
-              <CardHeader>
-                <CardTitle className="text-base">
-                  Gross profit by department · {rangeLabel}
-                </CardTitle>
-                <p className="text-xs text-muted-foreground">
-                  Paid is each VA's pay rate × actual tracked hours; Invoice is the client's invoice
-                  rate × billed hours. Only Paid Casual Service hours are uplifted and rounded up,
-                  so every other department invoices the hours actually worked. Casual, VIP and
-                  Promotional work counts under its own department rather than under Full-time or
-                  Part-time, whoever did it.
-                  {!salariesApply &&
-                    " Salaried payroll is withheld while a client filter is active, since payroll isn't work done for one client."}
-                </p>
-              </CardHeader>
-              <CardContent className="overflow-x-auto p-0">
-                <table className="w-full min-w-[760px] text-sm">
-                  <thead>
-                    <tr className="border-b border-border text-xs uppercase tracking-wide text-muted-foreground">
-                      <th className="px-5 py-3 text-left font-medium">Department</th>
-                      <th className="px-5 py-3 text-right font-medium">Actual Hours</th>
-                      <th className="px-5 py-3 text-right font-medium">Billed Hours</th>
-                      <th className="px-5 py-3 text-right font-medium">Paid</th>
-                      <th className="px-5 py-3 text-right font-medium">Invoice</th>
-                      <th className="px-5 py-3 text-right font-medium">Gross Profit</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {departmentRows.map((r) => (
-                      <tr key={r.key} className="border-b border-border last:border-0">
-                        <td className="px-5 py-3 font-medium">{r.label}</td>
-                        <td className="px-5 py-3 text-right tabular-nums">
-                          {r.key === "salary" ? "—" : formatHours(r.actualHours)}
-                        </td>
-                        <td className="px-5 py-3 text-right tabular-nums">
-                          {r.key === "salary" ? "—" : formatHours(r.billedHours)}
-                        </td>
-                        <td className="px-5 py-3 text-right tabular-nums">
-                          {formatCurrency(r.paid, settings.currency)}
-                          {r.hasUnpricedWork && (
-                            <span
-                              className="ml-1 text-muted-foreground"
-                              title="Someone in this department has no pay rate on file, so this is lower than the real figure"
-                            >
-                              <span aria-hidden="true">*</span>
-                              <span className="sr-only">
-                                (someone in this department has no pay rate on file, so this is
-                                lower than the real figure)
-                              </span>
-                            </span>
-                          )}
-                          {r.salariedHours > 0 && (
-                            <span
-                              className="ml-1 text-muted-foreground"
-                              title="Some hours here were worked by salaried staff, whose pay is in the Salaried payroll row instead"
-                            >
-                              <span aria-hidden="true">†</span>
-                              <span className="sr-only">
-                                (some hours were worked by salaried staff, whose pay is in the
-                                Salaried payroll row instead)
-                              </span>
-                            </span>
-                          )}
-                        </td>
-                        <td className="px-5 py-3 text-right tabular-nums">
-                          {r.key === "salary" ? "—" : formatCurrency(r.invoice, settings.currency)}
-                        </td>
-                        <td className="px-5 py-3 text-right font-semibold tabular-nums">
-                          {formatCurrency(r.invoice - r.paid, settings.currency)}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                  <tfoot>
-                    <tr className="border-t-2 border-border bg-muted/50">
-                      <td className="px-5 py-3 font-semibold">Total</td>
-                      <td className="px-5 py-3 text-right font-semibold tabular-nums">
-                        {formatHours(departmentTotals.actualHours)}
-                      </td>
-                      <td className="px-5 py-3 text-right font-semibold tabular-nums">
-                        {formatHours(departmentTotals.billedHours)}
-                      </td>
-                      <td className="px-5 py-3 text-right font-semibold tabular-nums">
-                        {formatCurrency(departmentTotals.paid, settings.currency)}
-                      </td>
-                      <td className="px-5 py-3 text-right font-semibold tabular-nums">
-                        {formatCurrency(departmentTotals.invoice, settings.currency)}
-                      </td>
-                      <td className="px-5 py-3 text-right font-semibold tabular-nums">
-                        {formatCurrency(
-                          departmentTotals.invoice - departmentTotals.paid,
-                          settings.currency,
-                        )}
-                      </td>
-                    </tr>
-                  </tfoot>
-                </table>
-              </CardContent>
-            </Card>
-          )}
-
-          <Card className="shadow-card">
-            <CardContent className="overflow-x-auto p-0">
-              {profitTruncated && (
-                <p className="border-b border-border bg-destructive/10 px-5 py-3 text-sm text-destructive">
-                  This range has more entries than a single report can load, so these totals would
-                  be incomplete. Narrow the date range and try again.
-                </p>
-              )}
-              <table className="w-full min-w-[980px] text-sm">
-                <thead>
-                  <tr className="border-b border-border text-xs uppercase tracking-wide text-muted-foreground">
-                    <th className="px-5 py-3 text-left font-medium">
-                      {profitGroupByLabels[profitGroupBy]}
-                    </th>
-                    <th className="px-5 py-3 text-left font-medium">Client</th>
-                    {/* M51: "Actual" and "Billed" rather than one "Hours"
-                        column — the gap between them is the uplift, and
-                        which one a money column was computed from is the
-                        difference between a correct figure and a 20%
-                        error. */}
-                    <th className="px-5 py-3 text-right font-medium">Actual Hours</th>
-                    <th className="px-5 py-3 text-right font-medium">Billed Hours</th>
-                    <th className="px-5 py-3 text-right font-medium">Pay Rate</th>
-                    <th className="px-5 py-3 text-right font-medium">Actual Wages</th>
-                    <th className="px-5 py-3 text-right font-medium">Invoice Rate</th>
-                    <th className="px-5 py-3 text-right font-medium">Revenue</th>
-                    <th className="px-5 py-3 text-right font-medium">Gross Profit</th>
-                    <th className="px-5 py-3 text-right font-medium">Margin</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {profitTruncated ? null : profitGroups.length === 0 ? (
-                    <tr>
-                      <td
-                        colSpan={10}
-                        className="px-5 py-8 text-center text-sm text-muted-foreground"
-                      >
-                        No tracked hours in this range.
-                      </td>
-                    </tr>
-                  ) : (
-                    profitGroups.map((g) => {
-                      // A group with a single client would repeat itself
-                      // exactly in the detail row below, so it collapses.
-                      const single = g.rows.length === 1;
-                      return (
-                        <Fragment key={g.key}>
-                          <tr className="border-b border-border bg-muted/30">
-                            <td className="px-5 py-3 font-semibold">{g.label}</td>
-                            <td className="px-5 py-3 text-muted-foreground">
-                              {single ? g.rows[0].clientLabel : `${g.rows.length} clients`}
-                            </td>
-                            <td className="px-5 py-3 text-right tabular-nums">
-                              {formatHours(g.actualHours)}
-                            </td>
-                            <td className="px-5 py-3 text-right tabular-nums">
-                              {formatHours(g.billedHours)}
-                            </td>
-                            <td className="px-5 py-3" />
-                            <td className="px-5 py-3 text-right tabular-nums text-muted-foreground">
-                              {costCellLabel(g)}
-                            </td>
-                            <td className="px-5 py-3" />
-                            <td className="px-5 py-3 text-right tabular-nums text-muted-foreground">
-                              {g.ratedHours > 0
-                                ? formatCurrency(g.revenue, settings.currency)
-                                : "—"}
-                            </td>
-                            <td className="px-5 py-3 text-right font-semibold tabular-nums">
-                              {formatCurrency(g.profit, settings.currency)}
-                            </td>
-                            <td className="px-5 py-3 text-right tabular-nums text-muted-foreground">
-                              {g.revenue > 0
-                                ? `${((g.profit / g.revenue) * 100).toFixed(1)}%`
-                                : "—"}
-                            </td>
-                          </tr>
-                          {!single &&
-                            g.rows.map((r) => (
-                              <tr
-                                key={r.key}
-                                className="border-b border-border last:border-0 hover:bg-muted/40"
-                              >
-                                <td className="px-5 py-3" />
-                                <td className="py-3 pl-9 pr-5">{r.clientLabel}</td>
-                                <td className="px-5 py-3 text-right tabular-nums">
-                                  {formatHours(r.actualHours)}
-                                </td>
-                                <td className="px-5 py-3 text-right tabular-nums">
-                                  {formatHours(r.billedHours)}
-                                </td>
-                                <td className="px-5 py-3 text-right tabular-nums text-muted-foreground">
-                                  {/* Divided by actual hours, matching what
-                                      cost is computed from — billed hours
-                                      here would understate the rate by the
-                                      uplift. */}
-                                  {r.costKnown && r.actualHours > 0
-                                    ? formatCurrency(r.cost / r.actualHours, settings.currency)
-                                    : "—"}
-                                </td>
-                                <td className="px-5 py-3 text-right tabular-nums">
-                                  {costCellLabel(r)}
-                                </td>
-                                <td className="px-5 py-3 text-right tabular-nums text-muted-foreground">
-                                  {r.ratedHours > 0 ? (
-                                    formatCurrency(r.revenue / r.ratedHours, settings.currency)
-                                  ) : (
-                                    <span title="No invoice rate on file for this client">—</span>
-                                  )}
-                                </td>
-                                <td className="px-5 py-3 text-right tabular-nums">
-                                  {r.ratedHours > 0
-                                    ? formatCurrency(r.revenue, settings.currency)
-                                    : "—"}
-                                </td>
-                                <td className="px-5 py-3 text-right tabular-nums">
-                                  {formatCurrency(r.profit, settings.currency)}
-                                </td>
-                                <td className="px-5 py-3 text-right tabular-nums text-muted-foreground">
-                                  {r.revenue > 0
-                                    ? `${((r.profit / r.revenue) * 100).toFixed(1)}%`
-                                    : "—"}
-                                </td>
-                              </tr>
-                            ))}
-                        </Fragment>
-                      );
-                    })
-                  )}
-                </tbody>
-                {!profitTruncated && profitGroups.length > 0 && (
-                  <tfoot>
-                    <tr className="border-t-2 border-border bg-muted/50">
-                      <td className="px-5 py-3 font-semibold">Total</td>
-                      <td className="px-5 py-3" />
-                      <td className="px-5 py-3 text-right font-semibold tabular-nums">
-                        {formatHours(profitGrandTotals.actualHours)}
-                      </td>
-                      <td className="px-5 py-3 text-right font-semibold tabular-nums">
-                        {formatHours(profitGrandTotals.billedHours)}
-                      </td>
-                      <td className="px-5 py-3" />
-                      <td className="px-5 py-3 text-right font-semibold tabular-nums">
-                        {formatCurrency(profitGrandTotals.cost, settings.currency)}
-                      </td>
-                      <td className="px-5 py-3" />
-                      <td className="px-5 py-3 text-right font-semibold tabular-nums">
-                        {formatCurrency(profitGrandTotals.revenue, settings.currency)}
-                      </td>
-                      <td className="px-5 py-3 text-right font-semibold tabular-nums">
-                        {formatCurrency(profitGrandTotals.profit, settings.currency)}
-                      </td>
-                      <td className="px-5 py-3 text-right font-semibold tabular-nums">
-                        {profitGrandTotals.revenue > 0
-                          ? `${((profitGrandTotals.profit / profitGrandTotals.revenue) * 100).toFixed(1)}%`
-                          : "—"}
-                      </td>
-                    </tr>
-                  </tfoot>
-                )}
-              </table>
-            </CardContent>
-          </Card>
-
-          {/* M49: retainers sit in their own table because a monthly
-            placement has no hours — folding it into the hourly grid above
-            would leave that grid's Hours and blended-rate columns
-            meaningless. The combined total below is what ties them
-            together. */}
-          {!profitTruncated && (
-            <Card className="mt-6 shadow-card">
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-medium text-muted-foreground">
-                  Retainers — monthly placements, accrued across this range
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="overflow-x-auto p-0">
-                {!retainersApply ? (
-                  <p className="px-5 py-6 text-sm text-muted-foreground">
-                    Retainers aren&apos;t shown while a team filter is on — placed VAs aren&apos;t
-                    IronTrack members, so they don&apos;t belong to a team. Clear the team filter to
-                    include them.
-                  </p>
-                ) : retainerRows.length === 0 ? (
-                  <p className="px-5 py-6 text-sm text-muted-foreground">
-                    No placements were live during this range.
-                  </p>
-                ) : (
-                  <table className="w-full min-w-[820px] text-sm">
-                    <thead>
-                      <tr className="border-b border-border text-xs uppercase tracking-wide text-muted-foreground">
-                        <th className="px-5 py-3 text-left font-medium">Client</th>
-                        <th className="px-5 py-3 text-left font-medium">VA</th>
-                        <th className="px-5 py-3 text-right font-medium">Days</th>
-                        <th className="px-5 py-3 text-right font-medium">Cost</th>
-                        <th className="px-5 py-3 text-right font-medium">Revenue</th>
-                        <th className="px-5 py-3 text-right font-medium">Management Fee</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {retainerRows.map((r) => (
-                        <tr
-                          key={r.id}
-                          className="border-b border-border last:border-0 hover:bg-muted/40"
-                        >
-                          <td className="px-5 py-3 font-medium">{r.clientLabel}</td>
-                          <td className="px-5 py-3">{r.vaLabel}</td>
-                          <td className="px-5 py-3 text-right tabular-nums text-muted-foreground">
-                            {r.days}
-                          </td>
-                          <td className="px-5 py-3 text-right tabular-nums">
-                            {formatCurrency(r.cost, settings.currency)}
-                          </td>
-                          <td className="px-5 py-3 text-right tabular-nums">
-                            {formatCurrency(r.revenue, settings.currency)}
-                          </td>
-                          <td className="px-5 py-3 text-right font-semibold tabular-nums">
-                            {formatCurrency(r.profit, settings.currency)}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                    <tfoot>
-                      <tr className="border-t-2 border-border bg-muted/50">
-                        <td className="px-5 py-3 font-semibold" colSpan={3}>
-                          Retainer total
-                        </td>
-                        <td className="px-5 py-3 text-right font-semibold tabular-nums">
-                          {formatCurrency(retainerTotals.cost, settings.currency)}
-                        </td>
-                        <td className="px-5 py-3 text-right font-semibold tabular-nums">
-                          {formatCurrency(retainerTotals.revenue, settings.currency)}
-                        </td>
-                        <td className="px-5 py-3 text-right font-semibold tabular-nums">
-                          {formatCurrency(retainerTotals.profit, settings.currency)}
-                        </td>
-                      </tr>
-                    </tfoot>
-                  </table>
-                )}
-              </CardContent>
-            </Card>
-          )}
-
-          {/* M50: the workbook's Net Loss line. Weekly rather than one lump
-            because the question is "did casual work cover payroll this
-            week" — a range total averages a bad week away against a good
-            one, which is exactly what the accounts team is looking for. */}
-          {!profitTruncated && (
-            <Card className="mt-6 shadow-card">
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-medium text-muted-foreground">
-                  Weekly salaries — fixed payroll against gross profit
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="overflow-x-auto p-0">
-                {!salariesApply ? (
-                  <p className="px-5 py-6 text-sm text-muted-foreground">
-                    Salaries aren&apos;t shown while a client filter is on — payroll is a
-                    whole-company bill, not work done for one client. Clear the client filter to
-                    include it.
-                  </p>
-                ) : salaryWeeks.length === 0 ? (
-                  <p className="px-5 py-6 text-sm text-muted-foreground">
-                    Nobody had a weekly salary during this range. Set one in Manage → Schedule to
-                    see payroll netted off here.
-                  </p>
-                ) : (
-                  <table className="w-full min-w-[720px] text-sm">
-                    <thead>
-                      <tr className="border-b border-border text-xs uppercase tracking-wide text-muted-foreground">
-                        <th className="px-5 py-3 text-left font-medium">Week</th>
-                        <th className="px-5 py-3 text-right font-medium">Days</th>
-                        <th className="px-5 py-3 text-right font-medium">People</th>
-                        <th className="px-5 py-3 text-right font-medium">Gross profit</th>
-                        <th className="px-5 py-3 text-right font-medium">Salaries</th>
-                        <th className="px-5 py-3 text-right font-medium">Net</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {salaryWeeks.map((w) => (
-                        <tr
-                          key={w.weekStart}
-                          className="border-b border-border last:border-0 hover:bg-muted/40"
-                        >
-                          <td className="px-5 py-3 font-medium">{w.label}</td>
-                          {/* A short leading or trailing week is shown as short
-                            so it doesn't read as a payroll discrepancy. */}
-                          <td className="px-5 py-3 text-right tabular-nums text-muted-foreground">
-                            {w.days < 7 ? `${w.days}/7` : w.days}
-                          </td>
-                          <td className="px-5 py-3 text-right tabular-nums text-muted-foreground">
-                            {w.headcount}
-                          </td>
-                          <td className="px-5 py-3 text-right tabular-nums">
-                            {formatCurrency(w.hourlyProfit, settings.currency)}
-                          </td>
-                          <td className="px-5 py-3 text-right tabular-nums">
-                            {formatCurrency(w.salary, settings.currency)}
-                          </td>
-                          <td
-                            className={`px-5 py-3 text-right font-semibold tabular-nums ${
-                              w.net < 0 ? "text-destructive" : ""
-                            }`}
-                          >
-                            {formatCurrency(w.net, settings.currency)}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                    <tfoot>
-                      <tr className="border-t-2 border-border bg-muted/50">
-                        <td className="px-5 py-3 font-semibold" colSpan={3}>
-                          Range total
-                        </td>
-                        <td className="px-5 py-3 text-right font-semibold tabular-nums">
-                          {formatCurrency(salaryTotals.hourlyProfit, settings.currency)}
-                        </td>
-                        <td className="px-5 py-3 text-right font-semibold tabular-nums">
-                          {formatCurrency(salaryTotals.salary, settings.currency)}
-                        </td>
-                        <td
-                          className={`px-5 py-3 text-right font-semibold tabular-nums ${
-                            salaryTotals.net < 0 ? "text-destructive" : ""
-                          }`}
-                        >
-                          {formatCurrency(salaryTotals.net, settings.currency)}
-                        </td>
-                      </tr>
-                    </tfoot>
-                  </table>
-                )}
-              </CardContent>
-            </Card>
-          )}
-
-          {!profitTruncated && retainersApply && (
-            <Card className="mt-6 shadow-card">
-              <CardContent className="flex flex-wrap items-center justify-between gap-4 px-5 py-4">
-                <div>
-                  <p className="text-sm font-semibold">
-                    Total profit — hourly and retainer, after salaries
-                  </p>
-                  <p className="text-xs text-muted-foreground">
-                    {formatCurrency(profitGrandTotals.profit, settings.currency)} hourly +{" "}
-                    {formatCurrency(retainerTotals.profit, settings.currency)} retainer
-                    {salaryTotals.salary > 0
-                      ? ` − ${formatCurrency(salaryTotals.salary, settings.currency)} salaries`
-                      : ""}
-                  </p>
-                </div>
-                <div className="flex items-center gap-8 tabular-nums">
-                  <div className="text-right">
-                    <p className="text-xs text-muted-foreground">Cost</p>
-                    <p className="font-semibold">
-                      {formatCurrency(combinedTotals.cost, settings.currency)}
-                    </p>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-xs text-muted-foreground">Revenue</p>
-                    <p className="font-semibold">
-                      {formatCurrency(combinedTotals.revenue, settings.currency)}
-                    </p>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-xs text-muted-foreground">Gross profit</p>
-                    <p className="text-lg font-semibold">
-                      {formatCurrency(combinedTotals.profit, settings.currency)}
-                    </p>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-xs text-muted-foreground">Margin</p>
-                    <p className="font-semibold">
-                      {combinedTotals.revenue > 0
-                        ? `${((combinedTotals.profit / combinedTotals.revenue) * 100).toFixed(1)}%`
-                        : "—"}
-                    </p>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          )}
-        </>
+        <ProfitReportView
+          combinedTotals={combinedTotals}
+          costCellLabel={costCellLabel}
+          departmentRows={departmentRows}
+          departmentTotals={departmentTotals}
+          profitGrandTotals={profitGrandTotals}
+          profitGroupBy={profitGroupBy}
+          profitGroups={profitGroups}
+          profitTruncated={profitTruncated}
+          rangeLabel={rangeLabel}
+          retainerRows={retainerRows}
+          retainerTotals={retainerTotals}
+          retainersApply={retainersApply}
+          salariesApply={salariesApply}
+          salaryTotals={salaryTotals}
+          salaryWeeks={salaryWeeks}
+          settings={settings}
+        />
       )}
     </AppShell>
-  );
-}
-
-/** M46: a percentage-change indicator, scoped to the this_week preset only — see reports.tsx's own comment on why this doesn't generalize to every date range. */
-function pctChange(
-  current: number,
-  previous: number,
-): { pct: number; direction: "up" | "down" | "flat" } {
-  if (previous === 0)
-    return { pct: current === 0 ? 0 : 100, direction: current > 0 ? "up" : "flat" };
-  const pct = ((current - previous) / previous) * 100;
-  return { pct: Math.abs(pct), direction: pct > 0.05 ? "up" : pct < -0.05 ? "down" : "flat" };
-}
-
-function CasualKpiCard({
-  label,
-  value,
-  delta,
-}: {
-  label: string;
-  value: string;
-  delta: { pct: number; direction: "up" | "down" | "flat" } | null;
-}) {
-  return (
-    <Card className="shadow-card">
-      <CardHeader className="pb-2">
-        <CardTitle className="text-sm font-medium text-muted-foreground">{label}</CardTitle>
-      </CardHeader>
-      <CardContent>
-        <p className="text-3xl font-semibold tabular-nums">{value}</p>
-        {delta && (
-          <p
-            className={
-              "mt-1 text-sm " +
-              (delta.direction === "up"
-                ? "text-emerald-600 dark:text-emerald-400"
-                : delta.direction === "down"
-                  ? "text-destructive"
-                  : "text-muted-foreground")
-            }
-          >
-            {delta.direction === "up" ? "▲" : delta.direction === "down" ? "▼" : "—"}{" "}
-            {delta.pct.toFixed(1)}% vs last week
-          </p>
-        )}
-      </CardContent>
-    </Card>
   );
 }
