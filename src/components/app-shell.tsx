@@ -54,11 +54,14 @@ export function AppShell({
   title,
   subtitle,
   actions,
+  wide = false,
   children,
 }: {
   title: string;
   subtitle?: string;
   actions?: ReactNode;
+  /** Drop the usual max-w-6xl cap, for pages whose tables need the whole screen (Billing). */
+  wide?: boolean;
   children: ReactNode;
 }) {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
@@ -276,7 +279,9 @@ export function AppShell({
           className="min-w-0 flex-1 px-5 py-6 focus:outline-none sm:px-8 sm:py-8"
         >
           <DetailPanelProvider>
-            <div className="mx-auto w-full max-w-6xl">{children}</div>
+            <div className={cn("mx-auto w-full", wide ? "max-w-none" : "max-w-6xl")}>
+              {children}
+            </div>
           </DetailPanelProvider>
         </main>
         <nav

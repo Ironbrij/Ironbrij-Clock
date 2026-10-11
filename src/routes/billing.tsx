@@ -48,6 +48,7 @@ function BillingPage() {
 
   return (
     <AppShell
+      wide
       title="Billing"
       subtitle="Casual service, client rates and placements — what clients are charged."
     >

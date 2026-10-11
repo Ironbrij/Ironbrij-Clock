@@ -163,19 +163,21 @@ export function PlacementsTab() {
 
       <Card className="shadow-card">
         <CardContent className="overflow-x-auto p-0">
-          <table className="w-full min-w-[1080px] text-sm">
+          {/* Tighter cell padding than other tables (px-3, keeping px-5 at the outer
+              edges) so all ten columns fit without a sideways scroll. */}
+          <table className="w-full min-w-[980px] text-sm [&_td:first-child]:pl-5 [&_td:last-child]:pr-5 [&_th:first-child]:pl-5 [&_th:last-child]:pr-5">
             <thead>
               <tr className="border-b border-border text-xs uppercase tracking-wide text-muted-foreground">
-                <th className="px-5 py-3 text-left font-medium">VA</th>
-                <th className="px-5 py-3 text-left font-medium">Client</th>
-                <th className="px-5 py-3 text-left font-medium">Started</th>
-                <th className="px-5 py-3 text-right font-medium">VA rate /hr</th>
-                <th className="px-5 py-3 text-right font-medium">Hours /wk</th>
-                <th className="px-5 py-3 text-right font-medium">VA cost /mo</th>
-                <th className="px-5 py-3 text-right font-medium">Package /mo</th>
-                <th className="px-5 py-3 text-right font-medium">Management fee</th>
-                <th className="px-5 py-3 text-left font-medium">Status</th>
-                <th className="w-12 px-5 py-3" />
+                <th className="px-3 py-3 text-left font-medium">VA</th>
+                <th className="px-3 py-3 text-left font-medium">Client</th>
+                <th className="px-3 py-3 text-left font-medium">Started</th>
+                <th className="px-3 py-3 text-right font-medium">VA rate /hr</th>
+                <th className="px-3 py-3 text-right font-medium">Hours /wk</th>
+                <th className="px-3 py-3 text-right font-medium">VA cost /mo</th>
+                <th className="px-3 py-3 text-right font-medium">Package /mo</th>
+                <th className="px-3 py-3 text-right font-medium">Management fee</th>
+                <th className="px-3 py-3 text-left font-medium">Status</th>
+                <th className="w-12 px-3 py-3" />
               </tr>
             </thead>
             <tbody>
@@ -203,13 +205,13 @@ export function PlacementsTab() {
             {rows.length > 0 && (
               <tfoot>
                 <tr className="border-t-2 border-border bg-muted/50">
-                  <td className="px-5 py-3 font-semibold" colSpan={7}>
+                  <td className="px-3 py-3 font-semibold" colSpan={7}>
                     Total management fee /mo
                   </td>
-                  <td className="px-5 py-3 text-right font-semibold tabular-nums">
+                  <td className="px-3 py-3 text-right font-semibold tabular-nums">
                     {money(totalFee, settings.currency)}
                   </td>
-                  <td className="px-5 py-3" colSpan={2} />
+                  <td className="px-3 py-3" colSpan={2} />
                 </tr>
               </tfoot>
             )}
@@ -333,14 +335,14 @@ function PlacementRow({
 
   return (
     <tr className="border-b border-border last:border-0 hover:bg-muted/40">
-      <td className="px-5 py-3 font-medium">{vaLabel}</td>
-      <td className="px-5 py-3">
+      <td className="px-3 py-3 font-medium">{vaLabel}</td>
+      <td className="px-3 py-3">
         <ClientLink id={placement.clientId}>{clientLabel}</ClientLink>
       </td>
-      <td className="whitespace-nowrap px-5 py-3 text-muted-foreground">
+      <td className="whitespace-nowrap px-3 py-3 text-muted-foreground">
         {formatDate(placement.startedOn)}
       </td>
-      <td className="px-5 py-3 text-right">
+      <td className="px-3 py-3 text-right">
         <Input
           type="number"
           min="0"
@@ -353,10 +355,10 @@ function PlacementRow({
           onBlur={() =>
             void saveAmount("vaHourlyRate", rate, asInput(placement.vaHourlyRate), setRate)
           }
-          className="ml-auto h-8 w-24 text-right tabular-nums"
+          className="ml-auto h-8 w-20 text-right tabular-nums"
         />
       </td>
-      <td className="px-5 py-3 text-right">
+      <td className="px-3 py-3 text-right">
         <Input
           type="number"
           min="0.25"
@@ -375,13 +377,13 @@ function PlacementRow({
               setHours,
             )
           }
-          className="ml-auto h-8 w-20 text-right tabular-nums"
+          className="ml-auto h-8 w-16 text-right tabular-nums"
         />
       </td>
-      <td className="px-5 py-3 text-right tabular-nums text-muted-foreground">
+      <td className="px-3 py-3 text-right tabular-nums text-muted-foreground">
         {money(vaMonthlyCost(placement), currency)}
       </td>
-      <td className="px-5 py-3 text-right">
+      <td className="px-3 py-3 text-right">
         <Input
           type="number"
           min="0"
@@ -399,11 +401,11 @@ function PlacementRow({
               setPkg,
             )
           }
-          className="ml-auto h-8 w-28 text-right tabular-nums"
+          className="ml-auto h-8 w-24 text-right tabular-nums"
         />
       </td>
-      <td className="px-5 py-3 text-right font-semibold tabular-nums">{money(fee, currency)}</td>
-      <td className="px-5 py-3">
+      <td className="px-3 py-3 text-right font-semibold tabular-nums">{money(fee, currency)}</td>
+      <td className="px-3 py-3">
         <button
           type="button"
           onClick={() => void toggleEnded()}
@@ -427,7 +429,7 @@ function PlacementRow({
           )}
         </button>
       </td>
-      <td className="px-5 py-3">
+      <td className="px-3 py-3">
         <Button
           size="icon"
           variant="ghost"
