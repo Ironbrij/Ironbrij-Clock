@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ChevronLeft,
   ChevronRight,
@@ -38,6 +38,7 @@ import {
 } from "@/components/ui/select";
 import { DescriptionAutocomplete } from "@/components/description-autocomplete";
 import { EntryFormDialog } from "@/components/entry-form-dialog";
+import { useLongRunningTimerWarnings } from "@/components/running-timer";
 import { TimesheetGrid } from "@/components/timesheet-grid";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { formatDuration, formatHours } from "@/lib/mock-data";
@@ -287,31 +288,10 @@ function TimerBar() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [toggle, busy]);
 
-  // Warns once per threshold if a timer's been running an unusually long
-  // time — almost always means someone forgot to stop it, not that they've
-  // genuinely been on one task for 8+ hours straight. Based on wall-clock
-  // elapsed time (not a per-second counter), so it correctly catches up and
-  // fires immediately if the tab was closed or backgrounded past a
-  // threshold, rather than only while actively watching the clock tick.
-  const warnedThresholds = useRef<Set<number>>(new Set());
-  useEffect(() => {
-    if (!runningEntry) {
-      warnedThresholds.current.clear();
-      return;
-    }
-    const thresholdsHours = [4, 8, 12];
-    for (const hours of thresholdsHours) {
-      const thresholdSeconds = hours * 3600;
-      if (seconds >= thresholdSeconds && !warnedThresholds.current.has(thresholdSeconds)) {
-        warnedThresholds.current.add(thresholdSeconds);
-        toast.warning(`Still running after ${hours} hour${hours > 1 ? "s" : ""}`, {
-          description: "If you forgot to stop this timer, you can stop it now.",
-          duration: 15000,
-          action: { label: "Stop timer", onClick: () => void toggle() },
-        });
-      }
-    }
-  }, [seconds, runningEntry, toggle]);
+  // The 4/8/12-hour "did you forget?" warnings, shared with the header pill
+  // (running-timer.tsx) so they fire on every page. Stopping from here uses
+  // toggle, which keeps whatever is typed in the description box.
+  useLongRunningTimerWarnings(runningEntry?.id ?? null, seconds, () => void toggle());
 
   return (
     <Card className="sticky top-20 z-10 shadow-card">
