@@ -134,25 +134,34 @@ export function useMembersData(enabled: boolean, uid: string | null, session: Se
 
   const members = useMemo<WorkspaceMember[]>(() => {
     const links = teamMembersQ.data ?? [];
-    return (profilesQ.data ?? []).map((p) => {
-      const teamIds = links.filter((l) => l.user_id === p.id).map((l) => l.team_id);
-      const name = p.full_name || p.email || "Unnamed";
-      return {
-        id: p.id,
-        name,
-        initials: initialsFrom(name),
-        role: toRole(p.role as DbRole),
-        title: p.job_title ?? "",
-        teamId: teamIds[0] ?? "",
-        teamIds,
-        email: p.email ?? undefined,
-        pending: p.is_pending ?? false,
-        active: p.is_active ?? true,
-        timezone: p.timezone ?? "Australia/Sydney",
-        avatarUrl: p.avatar_url ?? null,
-      };
-    });
-  }, [profilesQ.data, teamMembersQ.data]);
+    const profiles = profilesQ.data ?? [];
+    // Pending accounts are visible only to admins (who approve them) and to
+    // themselves. RLS already enforces this (profiles_select_all,
+    // 20261011020000); this is the client-side half, so a pending person
+    // never flashes into a roster from a stale or optimistic cache.
+    const me = profiles.find((p) => p.id === uid);
+    const viewerIsAdmin = me?.role === "admin" && !me.is_pending && me.is_active;
+    return profiles
+      .filter((p) => !p.is_pending || p.id === uid || viewerIsAdmin)
+      .map((p) => {
+        const teamIds = links.filter((l) => l.user_id === p.id).map((l) => l.team_id);
+        const name = p.full_name || p.email || "Unnamed";
+        return {
+          id: p.id,
+          name,
+          initials: initialsFrom(name),
+          role: toRole(p.role as DbRole),
+          title: p.job_title ?? "",
+          teamId: teamIds[0] ?? "",
+          teamIds,
+          email: p.email ?? undefined,
+          pending: p.is_pending ?? false,
+          active: p.is_active ?? true,
+          timezone: p.timezone ?? "Australia/Sydney",
+          avatarUrl: p.avatar_url ?? null,
+        };
+      });
+  }, [profilesQ.data, teamMembersQ.data, uid]);
 
   // For rosters and "assign this person" pickers — memberById/reports
   // still use the full `members` list on purpose, so a removed person's

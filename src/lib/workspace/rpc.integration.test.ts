@@ -598,6 +598,27 @@ if (hasLocalSupabase) {
         },
         RPC_TIMEOUT,
       );
+
+      // 20261011020000_hide_pending_profiles.sql
+      it(
+        "are hidden from members and managers, but not from admins",
+        async () => {
+          const pending = await fixtureUser("pending-hidden", "member", { pending: true });
+          const visibleTo = async (viewer: { client: SupabaseClient<Database> }) => {
+            const { data } = await viewer.client
+              .from("profiles")
+              .select("id")
+              .eq("id", pending.userId);
+            return (data ?? []).length;
+          };
+          // A fresh member: memberUser was promoted to manager by the set_member_role tests.
+          const plainMember = await fixtureUser("plain-member", "member");
+          expect(await visibleTo(plainMember)).toBe(0);
+          expect(await visibleTo(managerUser)).toBe(0);
+          expect(await visibleTo(adminUser)).toBe(1);
+        },
+        RPC_TIMEOUT,
+      );
     });
   });
 }
