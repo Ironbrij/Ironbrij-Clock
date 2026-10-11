@@ -133,7 +133,7 @@ migrations (e.g. `20260812000000_enforce_entry_policies.sql`) for the establishe
 `description_required`, `manual_entry_allowed`, ...) composed inside policy `USING`/`WITH CHECK`
 clauses, each with a `REVOKE ALL ... GRANT EXECUTE TO authenticated`.
 
-**Accounts and roles.** A new account starts *pending* until an admin approves it
+**Accounts and roles.** A new account starts _pending_ until an admin approves it
 (`approve_member`). Pending is enforced in the database, not just by `AppShell`: `is_approved()`
 gates the directory/project/announcement read policies, and `has_role()`/`can_manage()` ignore
 pending (and inactive) accounts. A pending account can only read its own profile, its own entries
