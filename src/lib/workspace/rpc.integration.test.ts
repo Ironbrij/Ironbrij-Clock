@@ -77,7 +77,12 @@ if (hasLocalSupabase) {
     const createdUserIds: string[] = [];
     let teamId: string;
 
-    async function fixtureUser(label: string, role: "admin" | "manager" | "member") {
+    /** Approved unless `pending` — like every account actually in use, since AppShell blocks pending ones and has_role()/can_manage() ignore them. */
+    async function fixtureUser(
+      label: string,
+      role: "admin" | "manager" | "member",
+      { pending = false }: { pending?: boolean } = {},
+    ) {
       const email = `${label}-${suffix}@rpc-test.ironbrij.local`;
       const { data, error } = await admin.auth.admin.createUser({
         email,
@@ -89,7 +94,14 @@ if (hasLocalSupabase) {
       createdUserIds.push(userId);
       const { error: profileError } = await admin
         .from("profiles")
-        .upsert({ id: userId, email, full_name: label, role, is_active: true });
+        .upsert({
+          id: userId,
+          email,
+          full_name: label,
+          role,
+          is_active: true,
+          is_pending: pending,
+        });
       if (profileError)
         throw new Error(`profile upsert failed for ${email}: ${profileError.message}`);
       return signedInClient(userId, email, password);
@@ -453,7 +465,7 @@ if (hasLocalSupabase) {
       it(
         "blocks a member from changing their own role, approval, active status or email",
         async () => {
-          const member = await fixtureUser("self-escalate", "member");
+          const member = await fixtureUser("self-escalate", "member", { pending: true });
           const patches: ProfileUpdate[] = [
             { role: "admin" },
             { role: "manager" },
@@ -500,7 +512,7 @@ if (hasLocalSupabase) {
       it(
         "still lets an admin set another member's timezone and approve them",
         async () => {
-          const member = await fixtureUser("admin-edits", "member");
+          const member = await fixtureUser("admin-edits", "member", { pending: true });
           const { data, error } = await adminUser.client
             .from("profiles")
             .update({ timezone: "Australia/Brisbane" })
@@ -520,6 +532,71 @@ if (hasLocalSupabase) {
             .eq("id", member.userId)
             .single();
           expect(profile?.is_pending).toBe(false);
+        },
+        RPC_TIMEOUT,
+      );
+    });
+
+    // System review 2026-10-11 (20261011010000_require_approval_for_reads.sql):
+    // "pending" used to be enforced only by AppShell, so an account no admin
+    // had approved could still read the directory, and one invited as a
+    // manager could read payroll.
+    describe("pending accounts", () => {
+      it(
+        "can read their own profile but not the directory",
+        async () => {
+          const pending = await fixtureUser("pending-reader", "member", { pending: true });
+
+          const { data: profiles } = await pending.client.from("profiles").select("id");
+          expect(profiles?.map((p) => p.id)).toEqual([pending.userId]);
+
+          for (const table of ["teams", "team_members", "clients", "projects", "tags"] as const) {
+            const { data, error } = await pending.client.from(table).select("*").limit(1);
+            expect(error, table).toBeNull();
+            expect(data, table).toEqual([]);
+          }
+        },
+        RPC_TIMEOUT,
+      );
+
+      it(
+        "can read the directory once approved",
+        async () => {
+          const { data: teams } = await memberUser.client
+            .from("teams")
+            .select("id")
+            .eq("id", teamId);
+          expect(teams).toHaveLength(1);
+
+          const { data: profiles } = await memberUser.client
+            .from("profiles")
+            .select("id")
+            .eq("id", adminUser.userId);
+          expect(profiles).toHaveLength(1);
+        },
+        RPC_TIMEOUT,
+      );
+
+      it(
+        "don't count as a manager until approved",
+        async () => {
+          const pendingManager = await fixtureUser("pending-manager", "manager", { pending: true });
+          const { data: whilePending } = await pendingManager.client.rpc("has_role", {
+            _user_id: pendingManager.userId,
+            _role: "manager",
+          });
+          expect(whilePending).toBe(false);
+
+          const { error: approveError } = await adminUser.client.rpc("approve_member", {
+            _user_id: pendingManager.userId,
+          });
+          expect(approveError).toBeNull();
+
+          const { data: onceApproved } = await pendingManager.client.rpc("has_role", {
+            _user_id: pendingManager.userId,
+            _role: "manager",
+          });
+          expect(onceApproved).toBe(true);
         },
         RPC_TIMEOUT,
       );
