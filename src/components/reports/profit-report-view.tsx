@@ -375,7 +375,7 @@ export function ProfitReportView({
                 <tfoot>
                   <tr className="border-t-2 border-border bg-muted/50">
                     <td className="px-5 py-3 font-semibold" colSpan={3}>
-                      Retainer total
+                      Total
                     </td>
                     <td className="px-5 py-3 text-right font-semibold tabular-nums">
                       {formatCurrency(retainerTotals.cost, settings.currency)}

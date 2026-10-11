@@ -1631,7 +1631,7 @@ function Reports() {
                   r.profit.toFixed(2),
                 ]),
                 [
-                  "Retainer total",
+                  "Total",
                   "",
                   "",
                   retainerTotals.cost.toFixed(2),
