@@ -121,10 +121,13 @@ export const Route = createFileRoute("/manage")({
   component: ManagePage,
 });
 
+// Approvals first: it's the weekly task most managers open Manage for, and
+// its status panel also shows who hasn't submitted yet. The default (first)
+// tab is the one a bare /manage link opens.
 const sections: { id: string; label: string }[] = [
+  { id: "approvals", label: "Approvals" },
   { id: "schedule", label: "Schedule" },
   { id: "entries", label: "Entries" },
-  { id: "approvals", label: "Approvals" },
   { id: "activity", label: "Activity" },
   { id: "casual", label: "Casual Service" },
   { id: "rates", label: "Billing Rates" },
@@ -132,7 +135,7 @@ const sections: { id: string; label: string }[] = [
 ];
 
 function ManagePage() {
-  const { unseenActivityCount, markActivitySeen } = useWorkspace();
+  const { unseenActivityCount, markActivitySeen, pendingApprovals } = useWorkspace();
   const search = Route.useSearch();
   const [tab, setTab] = useState(
     search.tab && sections.some((s) => s.id === search.tab) ? search.tab : sections[0].id,
@@ -184,10 +187,17 @@ function ManagePage() {
           {sections.map((s) => (
             <TabsTrigger key={s.id} value={s.id} className="relative">
               {s.label}
+              {s.id === "approvals" && pendingApprovals.length > 0 && (
+                <span className="ml-1.5 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-destructive px-1.5 text-[11px] font-bold text-destructive-foreground">
+                  {pendingApprovals.length}
+                  <span className="sr-only"> waiting</span>
+                </span>
+              )}
+              {/* Same quiet dot as the Manage nav item: activity is news, not a to-do. */}
               {s.id === "activity" && unseenActivityCount > 0 && (
                 <>
                   <span
-                    className="absolute -right-1 -top-1 h-2 w-2 rounded-full bg-destructive"
+                    className="absolute -right-1 -top-1 h-2 w-2 rounded-full bg-primary"
                     aria-hidden="true"
                   />
                   <span className="sr-only"> ({unseenActivityCount} new)</span>
