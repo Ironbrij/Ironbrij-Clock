@@ -9,7 +9,7 @@ import {
   splitByDay,
   toDateKey,
 } from "@/lib/time-utils";
-import { throwIf } from "./utils";
+import { fetchAllRows, throwIf } from "./utils";
 import type {
   CasualServiceCategory,
   DetailedEntry,
@@ -98,21 +98,21 @@ export function useTimeEntriesData(
     queryFn: async () => {
       const from = new Date();
       from.setDate(from.getDate() - ENTRIES_HISTORY_DAYS);
-      const { data, error } = await supabase
-        .from("time_entries")
-        .select(ENTRY_COLUMNS)
-        .eq("user_id", uid!)
-        .gte("entry_date", toDateKey(from))
-        .order("start_time", { ascending: false })
-        // Final Product Review H25: without an explicit limit this relied on
-        // PostgREST's own default row cap (commonly 1000) to stop the query,
-        // silently truncating a heavy user's oldest history with no error —
-        // the same failure shape H10 already fixed once for a hardcoded
-        // 60-day window. 5000 rows covers ENTRIES_HISTORY_DAYS (400 days) at
-        // ~12 entries/day, well past realistic usage.
-        .limit(5000);
-      if (error) throw error;
-      return data;
+      // Final Product Review H25 bounded this at 5000 rows (ENTRIES_HISTORY_DAYS
+      // at ~12 entries/day), but a bare .limit() never got past the server's
+      // 1,000-row cap — paged now, see fetchAllRows.
+      return fetchAllRows(
+        (start, end) =>
+          supabase
+            .from("time_entries")
+            .select(ENTRY_COLUMNS)
+            .eq("user_id", uid!)
+            .gte("entry_date", toDateKey(from))
+            .order("start_time", { ascending: false })
+            .order("id")
+            .range(start, end),
+        5000,
+      );
     },
   });
 
@@ -438,21 +438,26 @@ export function useTimeEntriesData(
   // plain SELECT.
   const detailedEntriesForRange = useCallback(
     async (from: string, to: string): Promise<DetailedEntry[]> => {
-      const { data, error } = await supabase
-        .from("time_entries")
-        .select(
-          "id, user_id, project_id, task, description, start_time, entry_date, duration_minutes, duration_seconds, is_billable, service_category, va_paid_at, tag_ids",
-        )
-        .gte("entry_date", from)
-        .lte("entry_date", to)
-        .order("entry_date", { ascending: false })
-        .order("start_time", { ascending: false })
-        // Same reasoning as H25's cap on the personal entries fetch — an
-        // explicit bound so a wide range across many people fails loudly
-        // (a real bug to raise) instead of silently truncating.
-        .limit(DETAILED_ENTRIES_LIMIT);
-      throwIf(error);
-      return (data ?? []).map((e) => ({
+      // Same reasoning as H25's cap on the personal entries fetch — an
+      // explicit bound so a wide range across many people fails loudly
+      // (a real bug to raise) instead of silently truncating. Paged, because
+      // the server caps a single response at 1,000 rows (see fetchAllRows).
+      const data = await fetchAllRows(
+        (start, end) =>
+          supabase
+            .from("time_entries")
+            .select(
+              "id, user_id, project_id, task, description, start_time, entry_date, duration_minutes, duration_seconds, is_billable, service_category, va_paid_at, tag_ids",
+            )
+            .gte("entry_date", from)
+            .lte("entry_date", to)
+            .order("entry_date", { ascending: false })
+            .order("start_time", { ascending: false })
+            .order("id")
+            .range(start, end),
+        DETAILED_ENTRIES_LIMIT,
+      );
+      return data.map((e) => ({
         id: e.id,
         userId: e.user_id,
         projectId: e.project_id,

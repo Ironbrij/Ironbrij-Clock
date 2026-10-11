@@ -1676,8 +1676,10 @@ function Reports() {
   // M48: gross profit reads `detailedEntries`, which detailedEntriesForRange
   // caps. A truncated money report is worse than none, so hitting the cap
   // suppresses the numbers rather than quietly under-reporting them.
-  const profitTruncated =
-    view === "profit" && (detailedEntries?.length ?? 0) >= DETAILED_ENTRIES_LIMIT;
+  // Detailed and Casual Service read the same capped rows. They still render
+  // (newest first), but say so rather than pass off a partial total.
+  const entriesTruncated = (detailedEntries?.length ?? 0) >= DETAILED_ENTRIES_LIMIT;
+  const profitTruncated = view === "profit" && entriesTruncated;
   const total = showClientFacing
     ? // M51: the client view's headline has to be the invoiced figure, not
       // the tracked one, or it contradicts the only column beneath it.
@@ -2280,6 +2282,17 @@ function Reports() {
             )}
           </p>
         </div>
+      )}
+
+      {(view === "detailed" || view === "casual") && entriesTruncated && (
+        <p
+          role="alert"
+          className="mb-6 rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive"
+        >
+          This range has more than {DETAILED_ENTRIES_LIMIT.toLocaleString()} entries, so only the
+          most recent ones are shown and the totals and export are incomplete. Narrow the date range
+          to see everything.
+        </p>
       )}
 
       {/* M46: Group by + category filter only apply to the Casual Service
