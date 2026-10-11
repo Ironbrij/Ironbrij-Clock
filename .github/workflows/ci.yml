@@ -120,9 +120,13 @@ jobs:
       - name: Check Supabase types match the migrations
         id: types_check
         run: |
-          supabase gen types typescript --local             | npx prettier --stdin-filepath src/integrations/supabase/types.ts             > /tmp/types.generated.ts
-          node .github/scripts/check-supabase-types.mjs             src/integrations/supabase/types.ts /tmp/types.generated.ts /tmp/supabase-types
-          if ! diff -u /tmp/supabase-types/committed.normalised.ts                        /tmp/supabase-types/generated.normalised.ts; then
+          supabase gen types typescript --local \
+            | npx prettier --stdin-filepath src/integrations/supabase/types.ts \
+            > /tmp/types.generated.ts
+          node .github/scripts/check-supabase-types.mjs \
+            src/integrations/supabase/types.ts /tmp/types.generated.ts /tmp/supabase-types
+          if ! diff -u /tmp/supabase-types/committed.normalised.ts \
+                       /tmp/supabase-types/generated.normalised.ts; then
             echo "::error file=src/integrations/supabase/types.ts::types.ts doesn't match the migrations. Commit the supabase-types artifact from this run."
             exit 1
           fi
