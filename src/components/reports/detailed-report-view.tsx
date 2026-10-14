@@ -38,12 +38,13 @@ export function DetailedReportView({
     <>
       <Card className="shadow-card">
         <CardContent className="overflow-x-auto p-0">
-          <table className="w-full min-w-[860px] text-sm">
+          <table className="w-full min-w-[980px] text-sm">
             <thead>
               <tr className="border-b border-border text-xs uppercase tracking-wide text-muted-foreground">
                 <th className="px-5 py-3 text-left font-medium">Date</th>
                 <th className="px-5 py-3 text-left font-medium">Employee</th>
                 <th className="px-5 py-3 text-left font-medium">Project</th>
+                <th className="px-5 py-3 text-left font-medium">Client</th>
                 {tags.length > 0 && <th className="px-5 py-3 text-left font-medium">Tags</th>}
                 <th className="px-5 py-3 text-left font-medium">Task</th>
                 <th className="px-5 py-3 text-left font-medium">Description</th>
@@ -77,6 +78,9 @@ export function DetailedReportView({
                       <ProjectDot color={r.projectColor} />
                       {r.projectName}
                     </span>
+                  </td>
+                  <td className="px-5 py-3">
+                    {r.clientName ?? <span className="text-muted-foreground">No client</span>}
                   </td>
                   {tags.length > 0 && (
                     <td className="px-5 py-3">
@@ -113,7 +117,7 @@ export function DetailedReportView({
               {pagedDetailed.length === 0 && (
                 <tr>
                   <td
-                    colSpan={tags.length > 0 ? 8 : 7}
+                    colSpan={tags.length > 0 ? 9 : 8}
                     className="px-5 py-8 text-center text-sm text-muted-foreground"
                   >
                     No entries in this filter.

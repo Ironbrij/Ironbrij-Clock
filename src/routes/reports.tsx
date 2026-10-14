@@ -599,10 +599,11 @@ function Reports() {
       // team, so this is every team they're in, not a single value.
       employeeTeamIds: member?.teamIds ?? [],
       clientId: project?.clientId ?? null,
-      // M51: the entry's own tag_ids, matching what the tag filter now
-      // selects on — see joinAndFilterCasualEntries. Showing the project's
-      // current tags while filtering on the entry's historical ones would
-      // let a row display a tag it can't be filtered by, and vice versa.
+      clientName: project?.clientId ? project.client : null,
+      // The entry's own tag_ids, matching what the tag filter selects on —
+      // see joinAndFilterCasualEntries. Since 20261014000000 these always
+      // follow the entry's project rather than being a snapshot from when
+      // it was logged.
       projectTags: tags
         .filter((t) => e.tagIds.includes(t.id))
         .sort((a, b) => a.name.localeCompare(b.name)),
@@ -649,12 +650,10 @@ function Reports() {
           // Detailed tab's employeeTeamIds — not the entry's project's team.
           employeeTeamIds: member?.teamIds ?? [],
           clientId: project?.clientId ?? null,
-          // M51: tags now come off the entry's own tag_ids, which are
-          // copied from the project when the entry is logged. That is what
-          // the product owner confirmed the filter should mean: how the
-          // work was tagged *at the time*, so retagging a project doesn't
-          // silently rewrite last quarter's report. An entry logged before
-          // a tag was added to its project therefore won't match it.
+          // Tags come off the entry's own tag_ids. M51 made those "tags at
+          // the time"; since 20261014000000 a trigger keeps them in step with
+          // the entry's project, and retagging a project can carry the
+          // change onto past entries (retag_project_entries).
           entryTagIds: e.tagIds,
         };
       })
@@ -1697,6 +1696,7 @@ function Reports() {
             "Date",
             "Employee",
             "Project",
+            "Client",
             "Tags",
             "Task",
             "Description",
@@ -1707,6 +1707,7 @@ function Reports() {
             r.date,
             r.employeeName,
             r.projectName,
+            r.clientName ?? "",
             r.projectTags.map((t) => t.name).join(", "),
             r.task || "",
             r.description || "",

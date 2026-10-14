@@ -507,10 +507,16 @@ function ProjectsPage() {
         taskCategories={taskCategories}
         // Returns the promise (and lets a failure reject) so the dialog can
         // stay open with what was entered if the save fails.
-        onSubmit={(input) =>
+        onSubmit={(input, opts) =>
           editing
-            ? updateProject(editing.id, input).then(() => {
-                toast.success("Project updated", { description: `${input.name} saved.` });
+            ? updateProject(editing.id, input, opts).then(({ retaggedEntries }) => {
+                toast.success("Project updated", {
+                  description: retaggedEntries
+                    ? `${input.name} saved. Tags updated on ${retaggedEntries} existing ${
+                        retaggedEntries === 1 ? "entry" : "entries"
+                      }.`
+                    : `${input.name} saved.`,
+                });
               })
             : createProject(input).then(() => {
                 toast.success("Project created", {
@@ -666,7 +672,7 @@ function ProjectFormDialog({
   people: { id: string; name: string; title: string }[];
   tags: WorkspaceTag[];
   taskCategories: WorkspaceTaskCategory[];
-  onSubmit: (input: ProjectInput) => Promise<void>;
+  onSubmit: (input: ProjectInput, opts: { retagExistingEntries: boolean }) => Promise<void>;
   onArchive: () => void;
   onUnarchive: () => void;
   onDelete: () => void;
@@ -677,6 +683,10 @@ function ProjectFormDialog({
   const [color, setColor] = useState(dotColors[0]);
   const [billable, setBillable] = useState(true);
   const [tagIds, setTagIds] = useState<string[]>([]);
+  // Entry tags follow their project (20261014000000_entry_tags_follow_project.sql):
+  // when an edit changes the project's tags, entries already logged on it
+  // get them too unless this is unticked.
+  const [retagExisting, setRetagExisting] = useState(true);
   const [memberIds, setMemberIds] = useState<string[]>([]);
   const [taskCategoryIds, setTaskCategoryIds] = useState<string[]>([]);
   // M25 stores "offer every category" as an empty taskCategoryIds, which is
@@ -699,6 +709,7 @@ function ProjectFormDialog({
     setColor(project?.color ?? dotColors[0]);
     setBillable(project?.billable ?? true);
     setTagIds(project?.tagIds ?? []);
+    setRetagExisting(true);
     setMemberIds(project?.memberIds ?? []);
     setTaskCategoryIds(project?.taskCategoryIds ?? []);
     setScopedCategories((project?.taskCategoryIds ?? []).length > 0);
@@ -709,6 +720,10 @@ function ProjectFormDialog({
   const budgetHoursInvalid =
     budgetHoursTrimmed !== "" &&
     (Number.isNaN(Number(budgetHoursTrimmed)) || Number(budgetHoursTrimmed) < 0);
+
+  const tagsChanged =
+    !!project &&
+    (tagIds.length !== project.tagIds.length || tagIds.some((id) => !project.tagIds.includes(id)));
 
   const toggle = (setter: (fn: (prev: string[]) => string[]) => void) => (id: string) =>
     setter((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
@@ -810,6 +825,29 @@ function ProjectFormDialog({
                 selected={tagIds}
                 onToggle={toggle(setTagIds)}
               />
+              {tagsChanged && (
+                <>
+                  <div className="flex items-start gap-2">
+                    <Checkbox
+                      id="project-retag-existing"
+                      className="mt-0.5"
+                      checked={retagExisting}
+                      onCheckedChange={(checked) => setRetagExisting(checked === true)}
+                    />
+                    <Label
+                      htmlFor="project-retag-existing"
+                      className="cursor-pointer font-normal leading-snug"
+                    >
+                      Also apply to entries already logged on this project
+                    </Label>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    {retagExisting
+                      ? "Reports will show the new tags on past entries too."
+                      : "Unticked, only entries logged from now on get the new tags."}
+                  </p>
+                </>
+              )}
             </div>
             <div className="grid gap-2" role="group" aria-labelledby="project-members-label">
               <Label id="project-members-label">Assigned members</Label>
@@ -897,17 +935,20 @@ function ProjectFormDialog({
               onClick={async () => {
                 setSaving(true);
                 try {
-                  await onSubmit({
-                    name: name.trim(),
-                    client,
-                    teamId: teamId === ALL_TEAMS ? "" : teamId,
-                    color,
-                    billable,
-                    tagIds,
-                    memberIds,
-                    taskCategoryIds,
-                    budgetHours: budgetHoursTrimmed === "" ? null : Number(budgetHoursTrimmed),
-                  });
+                  await onSubmit(
+                    {
+                      name: name.trim(),
+                      client,
+                      teamId: teamId === ALL_TEAMS ? "" : teamId,
+                      color,
+                      billable,
+                      tagIds,
+                      memberIds,
+                      taskCategoryIds,
+                      budgetHours: budgetHoursTrimmed === "" ? null : Number(budgetHoursTrimmed),
+                    },
+                    { retagExistingEntries: tagsChanged && retagExisting },
+                  );
                   onOpenChange(false);
                 } catch (error) {
                   toast.error(project ? "Couldn't save" : "Couldn't create", {

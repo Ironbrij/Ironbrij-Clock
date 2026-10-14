@@ -130,25 +130,42 @@ export function useProjectsData(
 
   const writeProjectLinks = useCallback(
     async (projectId: string, tagIds: string[], memberIds: string[], taskCategoryIds: string[]) => {
-      await supabase.from("project_tags").delete().eq("project_id", projectId);
-      await supabase.from("project_members").delete().eq("project_id", projectId);
-      await supabase.from("project_task_categories").delete().eq("project_id", projectId);
+      // Errors used to be ignored here. They matter now that
+      // retag_project_entries copies project_tags onto past entries: a
+      // silently failed tag insert would strip the tags from all of them.
+      throwIf((await supabase.from("project_tags").delete().eq("project_id", projectId)).error);
+      throwIf((await supabase.from("project_members").delete().eq("project_id", projectId)).error);
+      throwIf(
+        (await supabase.from("project_task_categories").delete().eq("project_id", projectId)).error,
+      );
       if (tagIds.length)
-        await supabase
-          .from("project_tags")
-          .insert(tagIds.map((tag_id) => ({ project_id: projectId, tag_id })));
+        throwIf(
+          (
+            await supabase
+              .from("project_tags")
+              .insert(tagIds.map((tag_id) => ({ project_id: projectId, tag_id })))
+          ).error,
+        );
       if (memberIds.length)
-        await supabase
-          .from("project_members")
-          .insert(memberIds.map((user_id) => ({ project_id: projectId, user_id })));
+        throwIf(
+          (
+            await supabase
+              .from("project_members")
+              .insert(memberIds.map((user_id) => ({ project_id: projectId, user_id })))
+          ).error,
+        );
       // M25: empty means unrestricted, so an empty list here correctly
       // leaves no rows behind — nothing to insert.
       if (taskCategoryIds.length)
-        await supabase.from("project_task_categories").insert(
-          taskCategoryIds.map((task_category_id) => ({
-            project_id: projectId,
-            task_category_id,
-          })),
+        throwIf(
+          (
+            await supabase.from("project_task_categories").insert(
+              taskCategoryIds.map((task_category_id) => ({
+                project_id: projectId,
+                task_category_id,
+              })),
+            )
+          ).error,
         );
     },
     [],
@@ -181,7 +198,14 @@ export function useProjectsData(
   );
 
   const updateProject = useCallback(
-    async (projectId: string, input: ProjectInput) => {
+    async (
+      projectId: string,
+      input: ProjectInput,
+      opts?: {
+        /** Copy the project's (new) tags onto every entry already logged on it. */
+        retagExistingEntries?: boolean;
+      },
+    ): Promise<{ retaggedEntries: number | null }> => {
       const { error } = await supabase
         .from("projects")
         .update({
@@ -199,6 +223,15 @@ export function useProjectsData(
       qc.invalidateQueries({ queryKey: ["project_members"] });
       qc.invalidateQueries({ queryKey: ["project_tags"] });
       qc.invalidateQueries({ queryKey: ["project_task_categories"] });
+
+      if (!opts?.retagExistingEntries) return { retaggedEntries: null };
+      const { data, error: retagError } = await supabase.rpc("retag_project_entries", {
+        _project_id: projectId,
+      });
+      throwIf(retagError);
+      qc.invalidateQueries({ queryKey: ["time_entries"] });
+      qc.invalidateQueries({ queryKey: ["tag_usage"] });
+      return { retaggedEntries: data ?? 0 };
     },
     [qc, resolveClientId, writeProjectLinks],
   );

@@ -620,5 +620,246 @@ if (hasLocalSupabase) {
         RPC_TIMEOUT,
       );
     });
+
+    // 20261014000000_entry_tags_follow_project.sql: a manager moved an entry
+    // to another project on Manage > Entries and Reports kept showing the old
+    // project's tags, because tag_ids was only ever copied at insert time.
+    // The steps below share state and run in order.
+    describe("entry tags follow their project", () => {
+      let tagMember: Awaited<ReturnType<typeof fixtureUser>>;
+      const tagIds: Record<"a" | "b" | "c", string> = { a: "", b: "", c: "" };
+      const projectIds: Record<"a" | "b", string> = { a: "", b: "" };
+      let entryId: string;
+
+      const sorted = (ids: string[] | null | undefined) => [...(ids ?? [])].sort();
+      const entryTags = async (id: string) => {
+        const { data } = await admin.from("time_entries").select("tag_ids").eq("id", id).single();
+        return sorted(data?.tag_ids);
+      };
+      const editActivityCount = async () => {
+        const { count } = await admin
+          .from("activity_log")
+          .select("id", { count: "exact", head: true })
+          .eq("target_user_id", tagMember.userId)
+          .eq("action", "time_entry_edited");
+        return count ?? 0;
+      };
+      // Weeks in the past so nothing here collides with the submit/review
+      // tests' current-week timesheet.
+      const weeksAgo = (weeks: number) => {
+        const { entryStart, entryEnd, weekStartDate } = thisWeekWednesdayUtc();
+        const shift = weeks * 7 * 86_400_000;
+        const monday = new Date(new Date(`${weekStartDate}T00:00:00Z`).getTime() - shift);
+        return {
+          weekStartDate: monday.toISOString().slice(0, 10),
+          entryStart: new Date(entryStart.getTime() - shift),
+          entryEnd: new Date(entryEnd.getTime() - shift),
+        };
+      };
+
+      beforeAll(async () => {
+        tagMember = await fixtureUser("tag-member", "member");
+        const { error: teamError } = await admin
+          .from("team_members")
+          .insert({ user_id: tagMember.userId, team_id: teamId });
+        if (teamError) throw new Error(`team_members insert failed: ${teamError.message}`);
+
+        for (const key of ["a", "b", "c"] as const) {
+          const { data, error } = await admin
+            .from("tags")
+            .insert({ name: `Tag ${key} ${suffix}`, color: "#888888" })
+            .select("id")
+            .single();
+          if (error || !data) throw new Error(`tag insert failed: ${error?.message}`);
+          tagIds[key] = data.id;
+        }
+        for (const key of ["a", "b"] as const) {
+          const { data, error } = await admin
+            .from("projects")
+            .insert({ name: `Tag project ${key} ${suffix}` })
+            .select("id")
+            .single();
+          if (error || !data) throw new Error(`project insert failed: ${error?.message}`);
+          projectIds[key] = data.id;
+        }
+        const { error: linkError } = await admin.from("project_tags").insert([
+          { project_id: projectIds.a, tag_id: tagIds.a },
+          { project_id: projectIds.a, tag_id: tagIds.c },
+          { project_id: projectIds.b, tag_id: tagIds.b },
+        ]);
+        if (linkError) throw new Error(`project_tags insert failed: ${linkError.message}`);
+      }, RPC_TIMEOUT);
+
+      afterAll(async () => {
+        await admin.from("time_entries").delete().eq("user_id", tagMember.userId);
+        await admin.from("timesheets").delete().eq("user_id", tagMember.userId);
+        await admin.from("projects").delete().in("id", Object.values(projectIds));
+        await admin.from("tags").delete().in("id", Object.values(tagIds));
+      }, RPC_TIMEOUT);
+
+      it(
+        "copies the project's tags onto a new entry, whatever tag_ids the caller sent",
+        async () => {
+          const { entryStart, entryEnd } = weeksAgo(3);
+          const { data, error } = await admin
+            .from("time_entries")
+            .insert({
+              user_id: tagMember.userId,
+              project_id: projectIds.a,
+              description: "Tag sync test",
+              start_time: entryStart.toISOString(),
+              end_time: entryEnd.toISOString(),
+              tag_ids: [tagIds.b],
+            })
+            .select("id")
+            .single();
+          expect(error).toBeNull();
+          entryId = data!.id;
+          expect(await entryTags(entryId)).toEqual(sorted([tagIds.a, tagIds.c]));
+        },
+        RPC_TIMEOUT,
+      );
+
+      it(
+        "gives an entry the new project's tags when its owner moves it",
+        async () => {
+          const { data, error } = await tagMember.client
+            .from("time_entries")
+            .update({ project_id: projectIds.b })
+            .eq("id", entryId)
+            .select("id");
+          expect(error).toBeNull();
+          expect(data).toHaveLength(1);
+          expect(await entryTags(entryId)).toEqual([tagIds.b]);
+        },
+        RPC_TIMEOUT,
+      );
+
+      it(
+        "does the same when a manager moves a team member's entry",
+        async () => {
+          const { data, error } = await managerUser.client
+            .from("time_entries")
+            .update({ project_id: projectIds.a })
+            .eq("id", entryId)
+            .select("id");
+          expect(error).toBeNull();
+          expect(data).toHaveLength(1);
+          expect(await entryTags(entryId)).toEqual(sorted([tagIds.a, tagIds.c]));
+        },
+        RPC_TIMEOUT,
+      );
+
+      it(
+        "leaves tags alone on an edit that doesn't change the project",
+        async () => {
+          await admin.from("project_tags").insert({ project_id: projectIds.a, tag_id: tagIds.b });
+          // The entry dialog always resends project_id, so send it unchanged here too.
+          const { error } = await tagMember.client
+            .from("time_entries")
+            .update({ project_id: projectIds.a, description: "Edited description" })
+            .eq("id", entryId);
+          expect(error).toBeNull();
+          expect(await entryTags(entryId)).toEqual(sorted([tagIds.a, tagIds.c]));
+        },
+        RPC_TIMEOUT,
+      );
+
+      it(
+        "retag_project_entries updates past entries, including an approved week, with no side effects",
+        async () => {
+          const approvedWeek = weeksAgo(2);
+          const { data: inserted, error: insertError } = await admin
+            .from("time_entries")
+            .insert({
+              user_id: tagMember.userId,
+              project_id: projectIds.a,
+              description: "Approved-week entry",
+              start_time: approvedWeek.entryStart.toISOString(),
+              end_time: approvedWeek.entryEnd.toISOString(),
+            })
+            .select("id, entry_date")
+            .single();
+          expect(insertError).toBeNull();
+          const { data: sheet, error: sheetError } = await admin
+            .from("timesheets")
+            .insert({
+              user_id: tagMember.userId,
+              week_start: approvedWeek.weekStartDate,
+              status: "approved",
+            })
+            .select("id")
+            .single();
+          expect(sheetError).toBeNull();
+
+          // Project A is now {a, b}: both entries are stale ({a, c} and {a, b, c}).
+          await admin
+            .from("project_tags")
+            .delete()
+            .eq("project_id", projectIds.a)
+            .eq("tag_id", tagIds.c);
+          // A recomputed entry_date would land on a different day in Honolulu.
+          await admin
+            .from("profiles")
+            .update({ timezone: "Pacific/Honolulu" })
+            .eq("id", tagMember.userId);
+          const activityBefore = await editActivityCount();
+
+          const { data: count, error } = await managerUser.client.rpc("retag_project_entries", {
+            _project_id: projectIds.a,
+          });
+          expect(error).toBeNull();
+          expect(count).toBe(2);
+
+          const expected = sorted([tagIds.a, tagIds.b]);
+          expect(await entryTags(entryId)).toEqual(expected);
+          expect(await entryTags(inserted!.id)).toEqual(expected);
+
+          const { data: after } = await admin
+            .from("time_entries")
+            .select("entry_date")
+            .eq("id", inserted!.id)
+            .single();
+          expect(after?.entry_date).toBe(inserted!.entry_date);
+          const { data: sheetAfter } = await admin
+            .from("timesheets")
+            .select("entries_modified_at")
+            .eq("id", sheet!.id)
+            .single();
+          expect(sheetAfter?.entries_modified_at).toBeNull();
+          expect(await editActivityCount()).toBe(activityBefore);
+
+          // Nothing left to change on a second run.
+          const { data: secondCount } = await managerUser.client.rpc("retag_project_entries", {
+            _project_id: projectIds.a,
+          });
+          expect(secondCount).toBe(0);
+        },
+        RPC_TIMEOUT,
+      );
+
+      it(
+        "rejects retag_project_entries from a plain member",
+        async () => {
+          const { error } = await tagMember.client.rpc("retag_project_entries", {
+            _project_id: projectIds.a,
+          });
+          expect(error?.message).toMatch(/not authorized/i);
+        },
+        RPC_TIMEOUT,
+      );
+
+      it(
+        "delete_tag strips the tag without logging an edit per entry",
+        async () => {
+          const activityBefore = await editActivityCount();
+          const { error } = await managerUser.client.rpc("delete_tag", { _tag_id: tagIds.b });
+          expect(error).toBeNull();
+          expect(await entryTags(entryId)).toEqual([tagIds.a]);
+          expect(await editActivityCount()).toBe(activityBefore);
+        },
+        RPC_TIMEOUT,
+      );
+    });
   });
 }
