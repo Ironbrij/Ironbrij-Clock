@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Trash2, Users } from "lucide-react";
+import { CalendarDays, ChevronLeft, ChevronRight, Trash2, Users } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -32,9 +32,14 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Combobox } from "@/components/combobox";
-import { managementFee, vaMonthlyCost } from "@/lib/retainer";
-import { fromDateKey, toDateKey } from "@/lib/time-utils";
-import { useWorkspace, type WorkspacePlacement } from "@/lib/workspace-store";
+import {
+  managementFee,
+  placementWeekFigures,
+  vaMonthlyCost,
+  type PlacementWeekFigures,
+} from "@/lib/retainer";
+import { addDays, formatWeekRange, fromDateKey, startOfWeek, toDateKey } from "@/lib/time-utils";
+import { useWorkspace, type EmploymentType, type WorkspacePlacement } from "@/lib/workspace-store";
 import { ClientLink } from "@/components/detail-panel";
 
 const NEW_VA = "__new__";
@@ -84,7 +89,14 @@ export function PlacementsTab() {
   } = useWorkspace();
 
   const [statusFilter, setStatusFilter] = useState<"active" | "ended" | "all">("active");
+  // "Week covered" (2026-10-14): null shows the monthly view, where rows are
+  // editable; a Monday date key shows that week's figures, read-only.
+  const [weekStart, setWeekStart] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
+
+  const thisWeek = toDateKey(startOfWeek(new Date()));
+  const shiftWeek = (from: string, weeks: number) =>
+    toDateKey(addDays(fromDateKey(from), weeks * 7));
 
   const vaName = useMemo(() => {
     const map = new Map(placedVAs.map((v) => [v.id, v.fullName]));
@@ -96,30 +108,37 @@ export function PlacementsTab() {
     return (id: string) => map.get(id) ?? "Unknown client";
   }, [clients]);
 
-  const rows = useMemo(
+  const rows = useMemo<PlacementRowData[]>(
     () =>
       placements
-        .filter((p) =>
-          statusFilter === "all"
-            ? true
-            : statusFilter === "active"
-              ? p.endedOn === null
-              : p.endedOn !== null,
-        )
         .map((p) => ({
           ...p,
           vaLabel: vaName(p.placedVaId),
           clientLabel: clientName(p.clientId),
           fee: managementFee(p),
+          week: weekStart === null ? null : placementWeekFigures(p, weekStart),
         }))
+        // With a week picked, "live that week" is the filter — including
+        // placements that have since ended. Otherwise filter by status.
+        .filter((r) =>
+          r.week !== null
+            ? r.week.days > 0
+            : statusFilter === "all"
+              ? true
+              : statusFilter === "active"
+                ? r.endedOn === null
+                : r.endedOn !== null,
+        )
         .sort(
           (a, b) =>
             a.vaLabel.localeCompare(b.vaLabel) || a.clientLabel.localeCompare(b.clientLabel),
         ),
-    [placements, statusFilter, vaName, clientName],
+    [placements, statusFilter, weekStart, vaName, clientName],
   );
 
-  const totalFee = rows.reduce((s, r) => s + r.fee, 0);
+  const fullTime = rows.filter((r) => r.employmentType === "full_time");
+  const partTime = rows.filter((r) => r.employmentType === "part_time");
+  const combined = sumRows(rows);
 
   if (!canManage) {
     return (
@@ -135,58 +154,223 @@ export function PlacementsTab() {
     );
   }
 
+  const period = weekStart === null ? "/mo" : "/wk";
+
   return (
     <div className="mt-4 space-y-4">
       <div className="flex flex-wrap items-center gap-3">
-        <Select
-          value={statusFilter}
-          onValueChange={(v) => setStatusFilter(v as typeof statusFilter)}
-        >
-          <SelectTrigger className="w-40" aria-label="Filter by status">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="active">Active</SelectItem>
-            <SelectItem value="ended">Ended</SelectItem>
-            <SelectItem value="all">All</SelectItem>
-          </SelectContent>
-        </Select>
+        {weekStart === null && (
+          <Select
+            value={statusFilter}
+            onValueChange={(v) => setStatusFilter(v as typeof statusFilter)}
+          >
+            <SelectTrigger className="w-40" aria-label="Filter by status">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="active">Active</SelectItem>
+              <SelectItem value="ended">Ended</SelectItem>
+              <SelectItem value="all">All</SelectItem>
+            </SelectContent>
+          </Select>
+        )}
+        {weekStart === null ? (
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-2"
+            onClick={() => setWeekStart(thisWeek)}
+          >
+            <CalendarDays className="h-4 w-4" aria-hidden="true" /> Week covered
+          </Button>
+        ) : (
+          <div className="flex flex-wrap items-center gap-1" role="group" aria-label="Week covered">
+            <Button
+              variant="outline"
+              size="icon"
+              aria-label="Previous week"
+              onClick={() => setWeekStart(shiftWeek(weekStart, -1))}
+            >
+              <ChevronLeft className="h-4 w-4" aria-hidden="true" />
+            </Button>
+            <span className="min-w-36 px-1 text-center text-sm font-medium">
+              {formatWeekRange(fromDateKey(weekStart))}
+            </span>
+            <Button
+              variant="outline"
+              size="icon"
+              aria-label="Next week"
+              onClick={() => setWeekStart(shiftWeek(weekStart, 1))}
+            >
+              <ChevronRight className="h-4 w-4" aria-hidden="true" />
+            </Button>
+            {weekStart !== thisWeek && (
+              <Button variant="ghost" size="sm" onClick={() => setWeekStart(thisWeek)}>
+                This week
+              </Button>
+            )}
+            <Button variant="ghost" size="sm" onClick={() => setWeekStart(null)}>
+              All weeks
+            </Button>
+          </div>
+        )}
         <Button size="sm" onClick={() => setAdding(true)}>
           Add placement
         </Button>
         <p className="text-xs text-muted-foreground">
-          VA cost /mo is the hourly rate × weekly hours × 52 ÷ 12, and the management fee is the
-          package minus that — both calculated, not entered. Ending a placement keeps its history so
-          past reports stay correct.
+          {weekStart === null
+            ? "VA cost /mo is the hourly rate × weekly hours × 52 ÷ 12, and the management fee is the package minus that — both calculated, not entered. Ending a placement keeps its history so past reports stay correct."
+            : "Placements live at any point in this week, with that week's figures: VA cost is the hourly rate × weekly hours, the package is its monthly price × 12 ÷ 52, and a placement that started or ended mid-week counts only its days. Pick All weeks to edit."}
         </p>
       </div>
 
+      <PlacementSection
+        title="Full-time"
+        rows={fullTime}
+        weekMode={weekStart !== null}
+        currency={settings.currency}
+        onUpdate={updatePlacement}
+        onDelete={deletePlacement}
+      />
+      <PlacementSection
+        title="Part-time"
+        rows={partTime}
+        weekMode={weekStart !== null}
+        currency={settings.currency}
+        onUpdate={updatePlacement}
+        onDelete={deletePlacement}
+      />
+
+      {rows.length > 0 && (
+        <Card className="shadow-card">
+          <CardContent className="flex flex-wrap items-center justify-between gap-x-8 gap-y-2 px-5 py-4 text-sm">
+            <span className="font-semibold">Combined total</span>
+            <span className="flex flex-wrap gap-x-8 gap-y-1 tabular-nums">
+              <span>
+                <span className="text-muted-foreground">VA cost {period} </span>
+                {money(combined.cost, settings.currency)}
+              </span>
+              <span>
+                <span className="text-muted-foreground">Package {period} </span>
+                {money(combined.revenue, settings.currency)}
+              </span>
+              <span className="font-semibold">
+                <span className="font-normal text-muted-foreground">Management fee {period} </span>
+                {money(combined.fee, settings.currency)}
+              </span>
+            </span>
+          </CardContent>
+        </Card>
+      )}
+
+      <AddPlacementDialog open={adding} onOpenChange={setAdding} onSubmit={createPlacement} />
+    </div>
+  );
+}
+
+type PlacementRowData = WorkspacePlacement & {
+  vaLabel: string;
+  clientLabel: string;
+  /** Monthly management fee. */
+  fee: number;
+  /** That week's figures when a week is picked; null in the monthly view. */
+  week: PlacementWeekFigures | null;
+};
+
+type UpdatePlacement = (
+  id: string,
+  patch: {
+    endedOn?: string | null;
+    vaHourlyRate?: number | null;
+    contractedWeeklyHours?: number | null;
+    clientPackageAmount?: number | null;
+    employmentType?: EmploymentType;
+  },
+) => Promise<void>;
+
+/** Sums the shown figures — that week's, or monthly. Unpriced amounts are left out, not counted as 0. */
+function sumRows(rows: PlacementRowData[]) {
+  return rows.reduce(
+    (acc, r) => {
+      const cost = r.week ? r.week.cost : vaMonthlyCost(r);
+      const revenue = r.week ? r.week.revenue : r.clientPackageAmount;
+      return {
+        cost: acc.cost + (cost ?? 0),
+        revenue: acc.revenue + (revenue ?? 0),
+        fee: acc.fee + (r.week ? r.week.fee : r.fee),
+      };
+    },
+    { cost: 0, revenue: 0, fee: 0 },
+  );
+}
+
+function PlacementSection({
+  title,
+  rows,
+  weekMode,
+  currency,
+  onUpdate,
+  onDelete,
+}: {
+  title: string;
+  rows: PlacementRowData[];
+  weekMode: boolean;
+  currency: string;
+  onUpdate: UpdatePlacement;
+  onDelete: (id: string) => Promise<void>;
+}) {
+  const totals = sumRows(rows);
+  const period = weekMode ? "/wk" : "/mo";
+  const columns = weekMode ? 9 : 11;
+  // Columns before VA cost, which the subtotal label spans.
+  const labelSpan = weekMode ? 5 : 6;
+
+  return (
+    <section aria-label={`${title} placements`} className="space-y-2">
+      <h2 className="flex items-baseline gap-2 text-sm font-semibold">
+        {title}
+        <span className="text-xs font-normal text-muted-foreground">
+          {rows.length} {rows.length === 1 ? "placement" : "placements"}
+        </span>
+      </h2>
       <Card className="shadow-card">
         <CardContent className="overflow-x-auto p-0">
           {/* Tighter cell padding than other tables (px-3, keeping px-5 at the outer
-              edges) so all ten columns fit without a sideways scroll. */}
-          <table className="w-full min-w-[980px] text-sm [&_td:first-child]:pl-5 [&_td:last-child]:pr-5 [&_th:first-child]:pl-5 [&_th:last-child]:pr-5">
+              edges) so every column fits without a sideways scroll. */}
+          <table className="w-full min-w-[1060px] text-sm [&_td:first-child]:pl-5 [&_td:last-child]:pr-5 [&_th:first-child]:pl-5 [&_th:last-child]:pr-5">
             <thead>
               <tr className="border-b border-border text-xs uppercase tracking-wide text-muted-foreground">
                 <th className="px-3 py-3 text-left font-medium">VA</th>
                 <th className="px-3 py-3 text-left font-medium">Client</th>
                 <th className="px-3 py-3 text-left font-medium">Started</th>
-                <th className="px-3 py-3 text-right font-medium">VA rate /hr</th>
-                <th className="px-3 py-3 text-right font-medium">Hours /wk</th>
-                <th className="px-3 py-3 text-right font-medium">VA cost /mo</th>
-                <th className="px-3 py-3 text-right font-medium">Package /mo</th>
-                <th className="px-3 py-3 text-right font-medium">Management fee</th>
+                <th className="px-3 py-3 text-left font-medium">Type</th>
+                {weekMode ? (
+                  <th className="px-3 py-3 text-right font-medium">Days</th>
+                ) : (
+                  <>
+                    <th className="px-3 py-3 text-right font-medium">VA rate /hr</th>
+                    <th className="px-3 py-3 text-right font-medium">Hours /wk</th>
+                  </>
+                )}
+                <th className="px-3 py-3 text-right font-medium">VA cost {period}</th>
+                <th className="px-3 py-3 text-right font-medium">Package {period}</th>
+                <th className="px-3 py-3 text-right font-medium">Management fee {period}</th>
                 <th className="px-3 py-3 text-left font-medium">Status</th>
-                <th className="w-12 px-3 py-3" />
+                {!weekMode && <th className="w-12 px-3 py-3" />}
               </tr>
             </thead>
             <tbody>
               {rows.length === 0 ? (
                 <tr>
-                  <td colSpan={10} className="px-5 py-8 text-center text-sm text-muted-foreground">
-                    No placements in this filter.
+                  <td
+                    colSpan={columns}
+                    className="px-5 py-8 text-center text-sm text-muted-foreground"
+                  >
+                    No {title.toLowerCase()} placements {weekMode ? "that week" : "in this filter"}.
                   </td>
                 </tr>
+              ) : weekMode ? (
+                rows.map((r) => <PlacementWeekRow key={r.id} row={r} currency={currency} />)
               ) : (
                 rows.map((r) => (
                   <PlacementRow
@@ -195,9 +379,9 @@ export function PlacementsTab() {
                     vaLabel={r.vaLabel}
                     clientLabel={r.clientLabel}
                     fee={r.fee}
-                    currency={settings.currency}
-                    onUpdate={updatePlacement}
-                    onDelete={deletePlacement}
+                    currency={currency}
+                    onUpdate={onUpdate}
+                    onDelete={onDelete}
                   />
                 ))
               )}
@@ -205,22 +389,71 @@ export function PlacementsTab() {
             {rows.length > 0 && (
               <tfoot>
                 <tr className="border-t-2 border-border bg-muted/50">
-                  <td className="px-3 py-3 font-semibold" colSpan={7}>
-                    Total management fee /mo
+                  <td className="px-3 py-3 font-semibold" colSpan={labelSpan}>
+                    {title} subtotal
+                  </td>
+                  <td className="px-3 py-3 text-right tabular-nums">
+                    {money(totals.cost, currency)}
+                  </td>
+                  <td className="px-3 py-3 text-right tabular-nums">
+                    {money(totals.revenue, currency)}
                   </td>
                   <td className="px-3 py-3 text-right font-semibold tabular-nums">
-                    {money(totalFee, settings.currency)}
+                    {money(totals.fee, currency)}
                   </td>
-                  <td className="px-3 py-3" colSpan={2} />
+                  <td className="px-3 py-3" colSpan={weekMode ? 1 : 2} />
                 </tr>
               </tfoot>
             )}
           </table>
         </CardContent>
       </Card>
+    </section>
+  );
+}
 
-      <AddPlacementDialog open={adding} onOpenChange={setAdding} onSubmit={createPlacement} />
-    </div>
+const TYPE_LABELS: Record<EmploymentType, string> = {
+  full_time: "Full-time",
+  part_time: "Part-time",
+};
+
+function StatusBadge({ endedOn }: { endedOn: string | null }) {
+  return endedOn === null ? (
+    <Badge variant="outline" className="text-emerald-600 dark:text-emerald-400">
+      Active
+    </Badge>
+  ) : (
+    <Badge variant="outline" className="text-muted-foreground">
+      Ended {formatDate(endedOn)}
+    </Badge>
+  );
+}
+
+/** A placement's figures for the picked week. Read-only: editing happens in the monthly view. */
+function PlacementWeekRow({ row, currency }: { row: PlacementRowData; currency: string }) {
+  const week = row.week!;
+  return (
+    <tr className="border-b border-border last:border-0 hover:bg-muted/40">
+      <td className="px-3 py-3 font-medium">{row.vaLabel}</td>
+      <td className="px-3 py-3">
+        <ClientLink id={row.clientId}>{row.clientLabel}</ClientLink>
+      </td>
+      <td className="whitespace-nowrap px-3 py-3 text-muted-foreground">
+        {formatDate(row.startedOn)}
+      </td>
+      <td className="px-3 py-3 text-muted-foreground">{TYPE_LABELS[row.employmentType]}</td>
+      <td className="whitespace-nowrap px-3 py-3 text-right tabular-nums text-muted-foreground">
+        {week.days === 7 ? "Full week" : `${week.days} of 7 days`}
+      </td>
+      <td className="px-3 py-3 text-right tabular-nums">{money(week.cost, currency)}</td>
+      <td className="px-3 py-3 text-right tabular-nums">{money(week.revenue, currency)}</td>
+      <td className="px-3 py-3 text-right font-semibold tabular-nums">
+        {money(week.fee, currency)}
+      </td>
+      <td className="px-3 py-3">
+        <StatusBadge endedOn={row.endedOn} />
+      </td>
+    </tr>
   );
 }
 
@@ -238,15 +471,7 @@ function PlacementRow({
   clientLabel: string;
   fee: number;
   currency: string;
-  onUpdate: (
-    id: string,
-    patch: {
-      endedOn?: string | null;
-      vaHourlyRate?: number | null;
-      contractedWeeklyHours?: number | null;
-      clientPackageAmount?: number | null;
-    },
-  ) => Promise<void>;
+  onUpdate: UpdatePlacement;
   onDelete: (id: string) => Promise<void>;
 }) {
   const [rate, setRate] = useState(asInput(placement.vaHourlyRate));
@@ -289,6 +514,21 @@ function PlacementRow({
     } catch (error) {
       toast.error("Couldn't save", { description: (error as Error).message });
       reset(original);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const changeType = async (type: EmploymentType) => {
+    if (type === placement.employmentType) return;
+    setBusy(true);
+    try {
+      await onUpdate(placement.id, { employmentType: type });
+      toast.success(`Moved to ${TYPE_LABELS[type]}`, {
+        description: `${vaLabel} at ${clientLabel}`,
+      });
+    } catch (error) {
+      toast.error("Couldn't change the type", { description: (error as Error).message });
     } finally {
       setBusy(false);
     }
@@ -341,6 +581,24 @@ function PlacementRow({
       </td>
       <td className="whitespace-nowrap px-3 py-3 text-muted-foreground">
         {formatDate(placement.startedOn)}
+      </td>
+      <td className="px-3 py-3">
+        <Select
+          value={placement.employmentType}
+          disabled={busy}
+          onValueChange={(v) => void changeType(v as EmploymentType)}
+        >
+          <SelectTrigger
+            className="h-8 w-28"
+            aria-label={`Full-time or part-time for ${vaLabel} at ${clientLabel}`}
+          >
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="full_time">Full-time</SelectItem>
+            <SelectItem value="part_time">Part-time</SelectItem>
+          </SelectContent>
+        </Select>
       </td>
       <td className="px-3 py-3 text-right">
         <Input
@@ -418,15 +676,7 @@ function PlacementRow({
               : `Ended ${formatDate(placement.endedOn)} — reopen ${vaLabel} at ${clientLabel}`
           }
         >
-          {placement.endedOn === null ? (
-            <Badge variant="outline" className="text-emerald-600 dark:text-emerald-400">
-              Active
-            </Badge>
-          ) : (
-            <Badge variant="outline" className="text-muted-foreground">
-              Ended {formatDate(placement.endedOn)}
-            </Badge>
-          )}
+          <StatusBadge endedOn={placement.endedOn} />
         </button>
       </td>
       <td className="px-3 py-3">
@@ -488,6 +738,7 @@ function AddPlacementDialog({
     vaHourlyRate: number | null;
     contractedWeeklyHours: number | null;
     clientPackageAmount: number | null;
+    employmentType: EmploymentType;
   }) => Promise<void>;
 }) {
   const { clients, placedVAs, settings } = useWorkspace();
@@ -499,6 +750,7 @@ function AddPlacementDialog({
   const [rate, setRate] = useState("");
   const [hours, setHours] = useState("40");
   const [pkg, setPkg] = useState("");
+  const [employmentType, setEmploymentType] = useState<EmploymentType>("full_time");
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -510,6 +762,7 @@ function AddPlacementDialog({
     setRate("");
     setHours("40");
     setPkg("");
+    setEmploymentType("full_time");
   }, [open]);
 
   const parse = (v: string) => (v.trim() === "" ? null : Number(v.trim()));
@@ -540,6 +793,7 @@ function AddPlacementDialog({
         vaHourlyRate: parse(rate),
         contractedWeeklyHours: hoursValue,
         clientPackageAmount: parse(pkg),
+        employmentType,
       });
       toast.success("Placement added");
       onOpenChange(false);
@@ -601,6 +855,21 @@ function AddPlacementDialog({
           </div>
 
           <div className="grid gap-4 sm:grid-cols-2">
+            <div className="grid gap-2">
+              <Label htmlFor="placement-type">Type</Label>
+              <Select
+                value={employmentType}
+                onValueChange={(v) => setEmploymentType(v as EmploymentType)}
+              >
+                <SelectTrigger id="placement-type">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="full_time">Full-time</SelectItem>
+                  <SelectItem value="part_time">Part-time</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
             <div className="grid gap-2">
               <Label htmlFor="placement-start">Started</Label>
               <Input

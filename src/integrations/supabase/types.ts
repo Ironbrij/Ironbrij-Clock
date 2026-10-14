@@ -825,6 +825,7 @@ export type Database = {
           client_package_amount: number | null;
           contracted_weekly_hours: number | null;
           created_at: string;
+          employment_type: string;
           ended_on: string | null;
           id: string;
           placed_va_id: string;
@@ -839,6 +840,7 @@ export type Database = {
           client_package_amount?: number | null;
           contracted_weekly_hours?: number | null;
           created_at?: string;
+          employment_type?: string;
           ended_on?: string | null;
           id?: string;
           placed_va_id: string;
@@ -853,6 +855,7 @@ export type Database = {
           client_package_amount?: number | null;
           contracted_weekly_hours?: number | null;
           created_at?: string;
+          employment_type?: string;
           ended_on?: string | null;
           id?: string;
           placed_va_id?: string;

@@ -3,7 +3,12 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import type { Database } from "@/integrations/supabase/types";
 import { throwIf } from "./utils";
-import type { WorkspacePlacedVA, WorkspacePlacement, WorkspacePlacementInput } from "./types";
+import type {
+  EmploymentType,
+  WorkspacePlacedVA,
+  WorkspacePlacement,
+  WorkspacePlacementInput,
+} from "./types";
 
 type PlacementUpdate = Database["public"]["Tables"]["va_placements"]["Update"];
 
@@ -57,7 +62,7 @@ export function usePlacementsData(enabled: boolean, canManage: boolean, uid: str
       const { data, error } = await supabase
         .from("va_placements")
         .select(
-          "id, placed_va_id, client_id, started_on, ended_on, va_hourly_rate, contracted_weekly_hours, client_package_amount",
+          "id, placed_va_id, client_id, started_on, ended_on, va_hourly_rate, contracted_weekly_hours, client_package_amount, employment_type",
         )
         .order("started_on", { ascending: false });
       if (error) throw error;
@@ -83,6 +88,7 @@ export function usePlacementsData(enabled: boolean, canManage: boolean, uid: str
           p.contracted_weekly_hours === null ? null : Number(p.contracted_weekly_hours),
         clientPackageAmount:
           p.client_package_amount === null ? null : Number(p.client_package_amount),
+        employmentType: p.employment_type as EmploymentType,
       })),
     [placementsQ.data],
   );
@@ -122,6 +128,7 @@ export function usePlacementsData(enabled: boolean, canManage: boolean, uid: str
         va_hourly_rate: input.vaHourlyRate,
         contracted_weekly_hours: input.contractedWeeklyHours,
         client_package_amount: input.clientPackageAmount,
+        employment_type: input.employmentType,
         updated_by: uid,
       });
       throwIf(error, { "23505": DUPLICATE_PLACEMENT_MESSAGE });
@@ -139,6 +146,7 @@ export function usePlacementsData(enabled: boolean, canManage: boolean, uid: str
         vaHourlyRate?: number | null;
         contractedWeeklyHours?: number | null;
         clientPackageAmount?: number | null;
+        employmentType?: EmploymentType;
       },
     ) => {
       const row: PlacementUpdate = {
@@ -154,6 +162,7 @@ export function usePlacementsData(enabled: boolean, canManage: boolean, uid: str
       if (patch.clientPackageAmount !== undefined) {
         row.client_package_amount = patch.clientPackageAmount;
       }
+      if (patch.employmentType !== undefined) row.employment_type = patch.employmentType;
       const { error } = await supabase.from("va_placements").update(row).eq("id", id);
       throwIf(error, { "23505": DUPLICATE_PLACEMENT_MESSAGE });
       invalidate();

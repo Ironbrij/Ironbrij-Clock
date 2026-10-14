@@ -861,5 +861,72 @@ if (hasLocalSupabase) {
         RPC_TIMEOUT,
       );
     });
+
+    // 20261014010000_placement_employment_type.sql: Billing → Placements'
+    // full-time / part-time sections read this column.
+    describe("va_placements employment_type", () => {
+      let clientId: string;
+      let placedVaId: string;
+      let placementId: string;
+
+      beforeAll(async () => {
+        const { data: client, error: clientError } = await admin
+          .from("clients")
+          .insert({ name: `Placement client ${suffix}` })
+          .select("id")
+          .single();
+        if (clientError || !client)
+          throw new Error(`client insert failed: ${clientError?.message}`);
+        clientId = client.id;
+        const { data: va, error: vaError } = await admin
+          .from("placed_vas")
+          .insert({ full_name: `Placed VA ${suffix}` })
+          .select("id")
+          .single();
+        if (vaError || !va) throw new Error(`placed_vas insert failed: ${vaError?.message}`);
+        placedVaId = va.id;
+        const { data: placement, error: placementError } = await admin
+          .from("va_placements")
+          .insert({ placed_va_id: placedVaId, client_id: clientId, started_on: "2026-09-01" })
+          .select("id, employment_type")
+          .single();
+        if (placementError || !placement)
+          throw new Error(`va_placements insert failed: ${placementError?.message}`);
+        placementId = placement.id;
+        expect(placement.employment_type).toBe("full_time");
+      }, RPC_TIMEOUT);
+
+      afterAll(async () => {
+        await admin.from("va_placements").delete().eq("id", placementId);
+        await admin.from("placed_vas").delete().eq("id", placedVaId);
+        await admin.from("clients").delete().eq("id", clientId);
+      }, RPC_TIMEOUT);
+
+      it(
+        "lets a manager mark a placement part-time",
+        async () => {
+          const { data, error } = await managerUser.client
+            .from("va_placements")
+            .update({ employment_type: "part_time" })
+            .eq("id", placementId)
+            .select("employment_type");
+          expect(error).toBeNull();
+          expect(data).toEqual([{ employment_type: "part_time" }]);
+        },
+        RPC_TIMEOUT,
+      );
+
+      it(
+        "rejects anything other than full_time or part_time",
+        async () => {
+          const { error } = await managerUser.client
+            .from("va_placements")
+            .update({ employment_type: "casual" })
+            .eq("id", placementId);
+          expect(error?.code).toBe("23514");
+        },
+        RPC_TIMEOUT,
+      );
+    });
   });
 }
