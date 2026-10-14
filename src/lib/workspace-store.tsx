@@ -292,7 +292,11 @@ type WorkspaceContextValue = {
   deleteTeam: (teamId: string) => Promise<void>;
 
   createProject: (input: ProjectInput) => Promise<void>;
-  updateProject: (projectId: string, input: ProjectInput) => Promise<void>;
+  updateProject: (
+    projectId: string,
+    input: ProjectInput,
+    opts?: { retagExistingEntries?: boolean },
+  ) => Promise<{ retaggedEntries: number | null }>;
   archiveProject: (projectId: string) => Promise<void>;
   unarchiveProject: (projectId: string) => Promise<void>;
   /** Permanently deletes a project. Time entries logged against it are kept (SET NULL), not deleted — they'll show as having no project. */

@@ -34,6 +34,8 @@ export type DetailedReportRow = DetailedEntry & {
   projectColor: string;
   employeeTeamIds: string[];
   clientId: string | null;
+  /** The project's client right now; null for internal work or no project. */
+  clientName: string | null;
   projectTags: WorkspaceTag[];
   employeeName: string;
   employeeInitials: string;

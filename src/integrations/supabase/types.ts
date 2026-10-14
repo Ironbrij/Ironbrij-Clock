@@ -1074,6 +1074,7 @@ export type Database = {
           week_start: string;
         }[];
       };
+      retag_project_entries: { Args: { _project_id: string }; Returns: number };
       review_timesheet: {
         Args: {
           _note?: string;
