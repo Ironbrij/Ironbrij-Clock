@@ -111,3 +111,62 @@ export function retainerAccrualForRange(
     profit: monthlyCost === null || placement.clientPackageAmount === null ? 0 : revenue - cost,
   };
 }
+
+export type PlacementWeekFigures = {
+  /** Days the placement was live in the week, 0 to 7. 0 means it doesn't belong in that week at all. */
+  days: number;
+  /** What the VA is paid for the week. Null when the rate or hours aren't set. */
+  cost: number | null;
+  /** The client's package for the week. Null when the client isn't on a package. */
+  revenue: number | null;
+  /** Revenue minus cost, and 0 when either side is unpriced. */
+  fee: number;
+};
+
+/**
+ * One Monday-to-Sunday week of a placement, for Billing → Placements' "week
+ * covered" filter. VAs are paid weekly, so a full week's cost is exactly
+ * hourly rate × contracted hours, and the package is its monthly price × 12
+ * ÷ 52. A placement that starts or ends mid-week counts only the days it was
+ * live (× days ÷ 7).
+ *
+ * Deliberately not `retainerAccrualForRange`, whose 365-day accrual makes a
+ * full week about 0.3% lower ($797.81 rather than $800 for $20 × 40h).
+ * Reports → Gross Profit keeps that convention: the user chose on 2026-10-14
+ * not to shift figures already reported.
+ */
+export function placementWeekFigures(
+  placement: {
+    startedOn: string;
+    endedOn: string | null;
+    vaHourlyRate: number | null;
+    contractedWeeklyHours: number | null;
+    clientPackageAmount: number | null;
+  },
+  weekStart: string,
+): PlacementWeekFigures {
+  const weekEnd = new Date(utcOf(weekStart) + 6 * 86_400_000).toISOString().slice(0, 10);
+  const start = placement.startedOn > weekStart ? placement.startedOn : weekStart;
+  const end =
+    placement.endedOn !== null && placement.endedOn < weekEnd ? placement.endedOn : weekEnd;
+  const days = inclusiveDays(start, end);
+
+  if (days === 0) return { days: 0, cost: 0, revenue: 0, fee: 0 };
+
+  const share = days / 7;
+  const cost =
+    placement.vaHourlyRate === null || placement.contractedWeeklyHours === null
+      ? null
+      : placement.vaHourlyRate * placement.contractedWeeklyHours * share;
+  const revenue =
+    placement.clientPackageAmount === null
+      ? null
+      : (placement.clientPackageAmount / WEEKS_PER_MONTH) * share;
+
+  return {
+    days,
+    cost,
+    revenue,
+    fee: cost === null || revenue === null ? 0 : revenue - cost,
+  };
+}

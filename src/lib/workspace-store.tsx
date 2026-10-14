@@ -201,6 +201,7 @@ type WorkspaceContextValue = {
       vaHourlyRate?: number | null;
       contractedWeeklyHours?: number | null;
       clientPackageAmount?: number | null;
+      employmentType?: EmploymentType;
     },
   ) => Promise<void>;
   deletePlacement: (id: string) => Promise<void>;

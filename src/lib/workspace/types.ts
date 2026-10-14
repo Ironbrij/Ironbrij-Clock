@@ -143,6 +143,8 @@ export type WorkspacePlacement = {
   contractedWeeklyHours: number | null;
   /** What the client pays per month. */
   clientPackageAmount: number | null;
+  /** Set per placement (2026-10-14); splits Billing → Placements into Full-time and Part-time. */
+  employmentType: EmploymentType;
 };
 
 /** The editable half of a placement — what the add/edit form collects. */

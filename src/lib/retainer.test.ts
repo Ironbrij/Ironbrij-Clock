@@ -4,7 +4,12 @@
 // VA rate and contracted hours become the monthly cost. Same scoped pure-function reasoning
 // gross-profit.test.ts and casual-billing.test.ts already give.
 import { describe, expect, it } from "vitest";
-import { managementFee, retainerAccrualForRange, vaMonthlyCost } from "./retainer";
+import {
+  managementFee,
+  placementWeekFigures,
+  retainerAccrualForRange,
+  vaMonthlyCost,
+} from "./retainer";
 
 /** The hourly rate that makes a 40 h/week placement cost exactly `monthly` a month. */
 const hourlyFor = (monthly: number, weeklyHours = 40) => (monthly * 12) / (52 * weeklyHours);
@@ -150,6 +155,68 @@ describe("vaMonthlyCost", () => {
       const cost = vaMonthlyCost({ vaHourlyRate: stored, contractedWeeklyHours: 40 }) ?? 0;
       expect(Math.abs(cost - monthly)).toBeLessThan(0.005);
     }
+  });
+});
+
+describe("placementWeekFigures", () => {
+  // Monday 2026-09-07 to Sunday 2026-09-13.
+  const week = "2026-09-07";
+
+  it("is rate × contracted hours for a full week, and the package at 12 ÷ 52 of a month", () => {
+    const r = placementWeekFigures(
+      placement({ vaHourlyRate: 20, contractedWeeklyHours: 40, clientPackageAmount: 1650 }),
+      week,
+    );
+    expect(r.days).toBe(7);
+    // Exactly what the VA is paid for the week, not the 365-day accrual's $797.81.
+    expect(r.cost).toBeCloseTo(800, 6);
+    expect(r.revenue).toBeCloseTo((1650 * 12) / 52, 6);
+    expect(r.fee).toBeCloseTo((1650 * 12) / 52 - 800, 6);
+  });
+
+  it("pro-rates a placement that starts mid-week by the days it was live", () => {
+    // Starts Friday: Friday, Saturday, Sunday.
+    const r = placementWeekFigures(
+      placement({ startedOn: "2026-09-11", vaHourlyRate: 20, contractedWeeklyHours: 40 }),
+      week,
+    );
+    expect(r.days).toBe(3);
+    expect(r.cost).toBeCloseTo((800 * 3) / 7, 6);
+    expect(r.revenue).toBeCloseTo((((1650 * 12) / 52) * 3) / 7, 6);
+  });
+
+  it("pro-rates a placement that ends mid-week", () => {
+    // Ends Tuesday: Monday and Tuesday.
+    const r = placementWeekFigures(placement({ endedOn: "2026-09-08" }), week);
+    expect(r.days).toBe(2);
+  });
+
+  it("is not live at all in a week before it started or after it ended", () => {
+    expect(placementWeekFigures(placement({ startedOn: "2026-09-14" }), week).days).toBe(0);
+    expect(placementWeekFigures(placement({ endedOn: "2026-09-06" }), week).days).toBe(0);
+    expect(placementWeekFigures(placement({ endedOn: "2026-09-06" }), week)).toEqual({
+      days: 0,
+      cost: 0,
+      revenue: 0,
+      fee: 0,
+    });
+  });
+
+  it("leaves an unpriced side unknown (null) and the fee at zero, not negative", () => {
+    const noRate = placementWeekFigures(placement({ vaHourlyRate: null }), week);
+    expect(noRate.cost).toBeNull();
+    expect(noRate.revenue).toBeGreaterThan(0);
+    expect(noRate.fee).toBe(0);
+
+    const noPackage = placementWeekFigures(placement({ clientPackageAmount: null }), week);
+    expect(noPackage.cost).toBeGreaterThan(0);
+    expect(noPackage.revenue).toBeNull();
+    expect(noPackage.fee).toBe(0);
+  });
+
+  it("counts a full week across a daylight saving change as 7 days", () => {
+    // Australia/Sydney puts clocks forward on Sunday 2026-10-04.
+    expect(placementWeekFigures(placement(), "2026-09-28").days).toBe(7);
   });
 });
 
