@@ -207,6 +207,16 @@ BEGIN
     WHERE project_id = NEW.project_id
     ORDER BY tag_id
   );
+  -- Deleting a project nulls project_id through ON DELETE SET NULL, which
+  -- lands here as an UPDATE. That must not rewrite billing history (the
+  -- entry keeps the category it was billed under) or fail a paid entry's
+  -- CHECK and block the delete. Tags still clear, as before. A deliberate
+  -- move to "no project" (the project still exists) is recomputed below.
+  IF TG_OP = 'UPDATE' AND NEW.project_id IS NULL AND OLD.project_id IS NOT NULL
+     AND NOT EXISTS (SELECT 1 FROM public.projects WHERE id = OLD.project_id) THEN
+    NEW.service_category := OLD.service_category;
+    RETURN NEW;
+  END IF;
   NEW.service_category := public.project_service_category(NEW.project_id);
   RETURN NEW;
 END;

@@ -892,9 +892,11 @@ if (hasLocalSupabase) {
         return count ?? 0;
       };
       const weeksAgo = (weeks: number) => {
-        const { entryStart, entryEnd } = thisWeekWednesdayUtc();
+        const { entryStart, entryEnd, weekStartDate } = thisWeekWednesdayUtc();
         const shift = weeks * 7 * 86_400_000;
+        const monday = new Date(new Date(`${weekStartDate}T00:00:00Z`).getTime() - shift);
         return {
+          weekStartDate: monday.toISOString().slice(0, 10),
           entryStart: new Date(entryStart.getTime() - shift),
           entryEnd: new Date(entryEnd.getTime() - shift),
         };
@@ -961,6 +963,7 @@ if (hasLocalSupabase) {
 
       afterAll(async () => {
         await admin.from("time_entries").delete().eq("user_id", catMember.userId);
+        await admin.from("timesheets").delete().eq("user_id", catMember.userId);
         await admin.from("projects").delete().in("id", Object.values(projectIds));
         await admin.from("tags").delete().in("id", Object.values(tagIds));
       }, RPC_TIMEOUT);
@@ -1102,6 +1105,12 @@ if (hasLocalSupabase) {
             .select("entry_date")
             .eq("id", entryId)
             .single();
+          const { error: sheetError } = await admin.from("timesheets").insert({
+            user_id: catMember.userId,
+            week_start: weeksAgo(4).weekStartDate,
+            status: "approved",
+          });
+          expect(sheetError).toBeNull();
           await admin
             .from("profiles")
             .update({ timezone: "Pacific/Honolulu" })
@@ -1123,6 +1132,13 @@ if (hasLocalSupabase) {
             .single();
           expect(after?.entry_date).toBe(before?.entry_date);
           expect(await editActivityCount()).toBe(activityBefore);
+          const { data: sheet } = await admin
+            .from("timesheets")
+            .select("entries_modified_at")
+            .eq("user_id", catMember.userId)
+            .eq("week_start", weeksAgo(4).weekStartDate)
+            .single();
+          expect(sheet?.entries_modified_at).toBeNull();
 
           await admin
             .from("profiles")
@@ -1204,6 +1220,48 @@ if (hasLocalSupabase) {
           expect(error).toBeNull();
           expect(await categoryOf(entryId)).toBeNull();
           expect(await editActivityCount()).toBe(activityBefore);
+        },
+        RPC_TIMEOUT,
+      );
+
+      it(
+        "deleting a project keeps its entries' category, paid or not",
+        async () => {
+          const { data: project, error: projectError } = await admin
+            .from("projects")
+            .insert({ name: `Cat project doomed ${suffix}` })
+            .select("id")
+            .single();
+          expect(projectError).toBeNull();
+          const { error: linkError } = await admin
+            .from("project_tags")
+            .insert({ project_id: project!.id, tag_id: tagIds.pc });
+          expect(linkError).toBeNull();
+          const unpaidId = await insertEntry(project!.id, 6);
+          const paidId = await insertEntry(project!.id, 6);
+          const { error: paidError } = await admin
+            .from("time_entries")
+            .update({ va_paid_at: "2026-10-01" })
+            .eq("id", paidId);
+          expect(paidError).toBeNull();
+          expect(await categoryOf(paidId)).toBe("paid_casual");
+
+          const { error } = await managerUser.client
+            .from("projects")
+            .delete()
+            .eq("id", project!.id);
+          expect(error).toBeNull();
+
+          for (const id of [unpaidId, paidId]) {
+            const { data, error: readError } = await admin
+              .from("time_entries")
+              .select("project_id, service_category")
+              .eq("id", id)
+              .single();
+            expect(readError).toBeNull();
+            expect(data?.project_id).toBeNull();
+            expect(data?.service_category).toBe("paid_casual");
+          }
         },
         RPC_TIMEOUT,
       );
