@@ -224,6 +224,43 @@ export type WorkspaceRevenueItem = {
 /** The editable half of a revenue item — what the add/edit form collects. */
 export type WorkspaceRevenueItemInput = Omit<WorkspaceRevenueItem, "id">;
 
+/** 2026-10-16: the Subscriptions page's three tabs. */
+export type SubscriptionCategory = "ai_tools" | "editing_tools" | "other";
+export type SubscriptionCycle = "monthly" | "annual" | "other";
+export type SubscriptionStatus = "active" | "cancelled";
+
+export const SUBSCRIPTION_CATEGORY_LABELS: Record<SubscriptionCategory, string> = {
+  ai_tools: "AI Tools",
+  editing_tools: "Editing Tools",
+  other: "Other Software & Subscriptions",
+};
+
+export const SUBSCRIPTION_CYCLE_LABELS: Record<SubscriptionCycle, string> = {
+  monthly: "Monthly",
+  annual: "Annual",
+  other: "Other",
+};
+
+/** One software subscription. Managers and admins only (subscriptions' RLS). */
+export type WorkspaceSubscription = {
+  id: string;
+  name: string;
+  category: SubscriptionCategory;
+  /** The department (team) using it; null when company-wide or unassigned. */
+  teamId: string | null;
+  departmentNote: string | null;
+  /** Per billing cycle, in `currency`. Null when not known yet. */
+  amount: number | null;
+  /** ISO 4217 code. Each subscription keeps its own; totals are per currency. */
+  currency: string;
+  billingCycle: SubscriptionCycle;
+  renewsOn: string | null;
+  status: SubscriptionStatus;
+  notes: string | null;
+};
+
+export type WorkspaceSubscriptionInput = Omit<WorkspaceSubscription, "id">;
+
 export type WorkspaceTaskCategory = { id: string; name: string };
 
 export type WorkspaceSettings = {
