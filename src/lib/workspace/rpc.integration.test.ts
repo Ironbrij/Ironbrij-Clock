@@ -1314,8 +1314,13 @@ if (hasLocalSupabase) {
       let clientId: string;
       let placedVaId: string;
       let placementId: string;
+      // Its own plain member: the shared memberUser fixture is promoted to
+      // manager by the set_member_role tests above and never set back, so
+      // "a plain member can't see this" checks need someone who still is one.
+      let plainMember: Awaited<ReturnType<typeof fixtureUser>>;
 
       beforeAll(async () => {
+        plainMember = await fixtureUser("placements-member", "member");
         const { data: client, error: clientError } = await admin
           .from("clients")
           .insert({ name: `Placement client ${suffix}` })
@@ -1463,13 +1468,13 @@ if (hasLocalSupabase) {
       it(
         "hides placement hours from a plain member, and won't let them add any",
         async () => {
-          const { data } = await memberUser.client
+          const { data } = await plainMember.client
             .from("placement_week_hours")
             .select("id")
             .eq("placement_id", placementId);
           expect(data).toEqual([]);
 
-          const { error } = await memberUser.client
+          const { error } = await plainMember.client
             .from("placement_week_hours")
             .insert({ placement_id: placementId, week_start: "2026-10-19", hours: 5 });
           expect(error?.code).toBe("42501");
@@ -1532,13 +1537,13 @@ if (hasLocalSupabase) {
             .select("id")
             .single();
 
-          const { data } = await memberUser.client
+          const { data } = await plainMember.client
             .from("revenue_items")
             .select("id")
             .eq("id", fee!.id);
           expect(data).toEqual([]);
 
-          const { error } = await memberUser.client
+          const { error } = await plainMember.client
             .from("revenue_items")
             .insert({ received_on: "2026-10-07", amount: 50 });
           expect(error?.code).toBe("42501");
@@ -1607,13 +1612,13 @@ if (hasLocalSupabase) {
             .select("id")
             .single();
 
-          const { data } = await memberUser.client
+          const { data } = await plainMember.client
             .from("subscriptions")
             .select("id")
             .eq("id", sub!.id);
           expect(data).toEqual([]);
 
-          const { error } = await memberUser.client
+          const { error } = await plainMember.client
             .from("subscriptions")
             .insert({ name: "Sneaky", category: "other" });
           expect(error?.code).toBe("42501");
@@ -1626,7 +1631,7 @@ if (hasLocalSupabase) {
       it(
         "keeps placements away from a plain member",
         async () => {
-          const { data, error } = await memberUser.client
+          const { data, error } = await plainMember.client
             .from("va_placements")
             .update({ employment_type: "vip" })
             .eq("id", placementId)
