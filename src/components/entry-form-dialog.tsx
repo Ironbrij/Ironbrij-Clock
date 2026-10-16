@@ -45,7 +45,8 @@ import {
 } from "@/lib/time-utils";
 import { formatHours } from "@/lib/mock-data";
 import { useClientBudgets, useWorkspace, type WorkspaceEntry } from "@/lib/workspace-store";
-import { CASUAL_SERVICE_CATEGORY_LABELS, type CasualServiceCategory } from "@/lib/workspace/types";
+import { serviceCategoryForTags } from "@/lib/service-category";
+import { CASUAL_SERVICE_CATEGORY_LABELS } from "@/lib/workspace/types";
 
 const pad = (n: number) => n.toString().padStart(2, "0");
 
@@ -123,7 +124,8 @@ export function EntryFormDialog({
   onOpenChange: (open: boolean) => void;
   entry: WorkspaceEntry | null;
 }) {
-  const { projects, entries, createEntry, updateEntry, settings, taskCategories } = useWorkspace();
+  const { projects, entries, createEntry, updateEntry, settings, taskCategories, tags } =
+    useWorkspace();
   const clientBudgets = useClientBudgets();
   // A running entry has no end yet — this dialog only lets it be reached
   // for that case to correct the start (see updateEntry's `endTime: null`
@@ -151,12 +153,6 @@ export function EntryFormDialog({
   // same as the stored value an existing entry already has.
   const [billable, setBillable] = useState(true);
   const [billableTouched, setBillableTouched] = useState(false);
-  // M46: seeded from the stored value (or null, for a new entry).
-  // M48: now also auto-filled from the selected project's client, so it
-  // follows the same touched-tracking shape as billable above — it keeps
-  // following the client until the person picks a category themselves.
-  const [serviceCategory, setServiceCategory] = useState<CasualServiceCategory | null>(null);
-  const [serviceCategoryTouched, setServiceCategoryTouched] = useState(false);
   // What the form looked like when it opened — the baseline for "has the
   // person changed anything?" (see `dirty` below).
   const [initialValues, setInitialValues] = useState<EntryFormValues>(values);
@@ -173,8 +169,6 @@ export function EntryFormDialog({
       setEndsNextDay(false);
       setBillable(entry ? entry.billable : true);
       setBillableTouched(!!entry);
-      setServiceCategory(entry ? entry.serviceCategory : null);
-      setServiceCategoryTouched(!!entry);
     }
     // defaultTask intentionally excluded — it should only affect the
     // initial value when the dialog opens, not overwrite whatever the
@@ -193,51 +187,15 @@ export function EntryFormDialog({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [values.projectId, open, entry, billableTouched]);
 
-  // M48: the last casual service category used for each client, so picking
-  // a project can pre-fill the category the way Project and Task already
-  // pre-fill from recency.
-  //
-  // Deliberately keyed on clients that have *actually* been categorised
-  // before, and deliberately not a blanket "has a client → Paid Casual
-  // Service": a non-null category is exactly what puts an entry into the
-  // Casual Service report (casual-service-tab.tsx filters on it) and what
-  // M46's client-inactivity flags are computed from. Defaulting it for
-  // every client would sweep ordinary client work into the accounts team's
-  // casual report. A client with no casual history stays null — "Not
-  // casual service" — which is still the right default for most entries.
-  //
-  // Built from this person's own entries (the rolling window the workspace
-  // already loads), so it reflects how *they* categorise their work for a
-  // client, not someone else's convention.
-  const lastCategoryByClient = useMemo(() => {
-    const map = new Map<string, CasualServiceCategory>();
-    const byRecency = [...entries].sort((a, b) => b.startTime.localeCompare(a.startTime));
-    for (const e of byRecency) {
-      if (!e.serviceCategory) continue;
-      const clientId = projects.find((p) => p.id === e.projectId)?.clientId;
-      // First hit wins — the list is newest-first, so that's the most
-      // recent category for this client.
-      if (!clientId || map.has(clientId)) continue;
-      map.set(clientId, e.serviceCategory);
-    }
-    return map;
-  }, [entries, projects]);
-
-  // M48: same rule as billable just above — a new entry keeps following
-  // the selected project's client until the category itself is touched;
-  // editing an existing entry never recomputes, since its stored category
-  // is a real value someone chose, not a default.
-  useEffect(() => {
-    if (!open || entry || serviceCategoryTouched) return;
-    const clientId = projects.find((p) => p.id === values.projectId)?.clientId ?? null;
-    setServiceCategory(clientId ? (lastCategoryByClient.get(clientId) ?? null) : null);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [values.projectId, open, entry, serviceCategoryTouched, lastCategoryByClient]);
-
   // M25: empty taskCategoryIds means unrestricted (today's exact default)
   // — only a project deliberately scoped to specific categories narrows
   // the picker. Live against values.projectId, unlike defaultTask above.
   const selectedProject = active.find((p) => p.id === values.projectId);
+  // The category comes from the project's tag (20261016000000), never from
+  // this form — shown so the person can see how the work will be billed.
+  const projectCategory = selectedProject
+    ? serviceCategoryForTags(selectedProject.tagIds, tags)
+    : null;
   const scopedTaskCategories =
     selectedProject && selectedProject.taskCategoryIds.length > 0
       ? taskCategories.filter((t) => selectedProject.taskCategoryIds.includes(t.id))
@@ -249,16 +207,13 @@ export function EntryFormDialog({
 
   const endDate = endsNextDay ? toDateKey(addDays(fromDateKey(values.date), 1)) : values.date;
 
-  // Has the person changed anything since the dialog opened? Billable and
-  // service category auto-follow the project on a new entry, so for "add"
-  // they only count once deliberately touched; for "edit" they're compared
-  // with the stored entry.
+  // Has the person changed anything since the dialog opened? Billable auto-follows
+  // the project on a new entry, so for "add" it only counts once deliberately
+  // touched; for "edit" it is compared with the stored entry.
   const dirty =
     JSON.stringify(values) !== JSON.stringify(initialValues) ||
     endsNextDay ||
-    (entry
-      ? !isRunning && (billable !== entry.billable || serviceCategory !== entry.serviceCategory)
-      : billableTouched || serviceCategoryTouched);
+    (entry ? !isRunning && billable !== entry.billable : billableTouched);
 
   // Every way of dismissing the dialog (Esc, outside click, X, Cancel) goes
   // through here, so typed-in work is never thrown away without asking. A
@@ -319,12 +274,12 @@ export function EntryFormDialog({
     setBusy(true);
     try {
       if (entry) {
-        // billable/serviceCategory aren't part of the running-timer patch —
-        // both controls are hidden in that case (only the start time is
+        // billable isn't part of the running-timer patch —
+        // the control is hidden in that case (only the start time is
         // correctable), so there's nothing to apply.
         await updateEntry(
           entry.id,
-          isRunning ? { ...values, endTime: null } : { ...values, billable, serviceCategory },
+          isRunning ? { ...values, endTime: null } : { ...values, billable },
         );
         toast.success("Entry updated");
       } else {
@@ -332,7 +287,6 @@ export function EntryFormDialog({
           ...values,
           endDate: endsNextDay ? endDate : undefined,
           billable,
-          serviceCategory,
         });
         toast.success("Entry added", { description: "Logged to your timesheet." });
       }
@@ -529,47 +483,11 @@ export function EntryFormDialog({
               </Label>
             </div>
           )}
-          {/* M46: rare (only accounts-relevant casual work uses this), so it
-              stays out of the way for the overwhelming majority of entries
-              rather than adding an always-visible dropdown. */}
-          {!isRunning && (
-            <div className="grid gap-2">
-              <Label htmlFor="entry-service-category" className="text-xs text-muted-foreground">
-                Casual service category (optional)
-              </Label>
-              <Select
-                value={serviceCategory ?? "none"}
-                onValueChange={(v) => {
-                  setServiceCategoryTouched(true);
-                  setServiceCategory(v === "none" ? null : (v as CasualServiceCategory));
-                }}
-              >
-                <SelectTrigger id="entry-service-category">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">Not casual service</SelectItem>
-                  {(Object.keys(CASUAL_SERVICE_CATEGORY_LABELS) as CasualServiceCategory[]).map(
-                    (category) => (
-                      <SelectItem key={category} value={category}>
-                        {CASUAL_SERVICE_CATEGORY_LABELS[category]}
-                      </SelectItem>
-                    ),
-                  )}
-                </SelectContent>
-              </Select>
-              {/* M48: says *why* a category appeared on its own, so a
-                  pre-filled value reads as a suggestion to check rather
-                  than something the person must have set themselves. Only
-                  while it's still the auto-filled one — once touched, it's
-                  their own choice and needs no explanation. */}
-              {!entry && !serviceCategoryTouched && serviceCategory && selectedProject && (
-                <p className="text-xs text-muted-foreground">
-                  Carried over from the last casual service entry for {selectedProject.client}.
-                  Change it here if this one's different.
-                </p>
-              )}
-            </div>
+          {projectCategory && (
+            <p className="text-xs text-muted-foreground">
+              Casual service: {CASUAL_SERVICE_CATEGORY_LABELS[projectCategory]}, set by the
+              project's tag.
+            </p>
           )}
         </div>
         <DialogFooter>

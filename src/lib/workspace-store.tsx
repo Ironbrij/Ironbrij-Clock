@@ -347,8 +347,6 @@ type WorkspaceContextValue = {
     endDate?: string;
     /** M26: omit to fall back to the project's own billable default. */
     billable?: boolean;
-    /** M46: no project-level fallback — omit/null for "not casual service." */
-    serviceCategory?: CasualServiceCategory | null;
   }) => Promise<void>;
   updateEntry: (
     entryId: string,
@@ -358,8 +356,6 @@ type WorkspaceContextValue = {
       description?: string;
       /** M26: independent of the project's own default — omit for no change. */
       billable?: boolean;
-      /** M46: omit for no change; null clears it. Excludes vaPaidAt — admin-only, via markCasualEntriesPaid. */
-      serviceCategory?: CasualServiceCategory | null;
       date?: string;
       startTime?: string;
       /** `null` means "still running, leave it open" — see use-time-entries.ts's updateEntry. */
