@@ -39,7 +39,12 @@ import {
   type PlacementWeekFigures,
 } from "@/lib/retainer";
 import { addDays, formatWeekRange, fromDateKey, startOfWeek, toDateKey } from "@/lib/time-utils";
-import { useWorkspace, type EmploymentType, type WorkspacePlacement } from "@/lib/workspace-store";
+import { useWorkspace, type WorkspacePlacement } from "@/lib/workspace-store";
+import {
+  PLACEMENT_CATEGORY_LABELS,
+  PLACEMENT_CATEGORY_ORDER,
+  type PlacementCategory,
+} from "@/lib/workspace/types";
 import { ClientLink } from "@/components/detail-panel";
 
 const NEW_VA = "__new__";
@@ -136,8 +141,11 @@ export function PlacementsTab() {
     [placements, statusFilter, weekStart, vaName, clientName],
   );
 
-  const fullTime = rows.filter((r) => r.employmentType === "full_time");
-  const partTime = rows.filter((r) => r.employmentType === "part_time");
+  // One section per category, in the weekly sheet's order.
+  const sections = PLACEMENT_CATEGORY_ORDER.map((category) => ({
+    category,
+    rows: rows.filter((r) => r.category === category),
+  }));
   const combined = sumRows(rows);
 
   if (!canManage) {
@@ -224,22 +232,17 @@ export function PlacementsTab() {
         </p>
       </div>
 
-      <PlacementSection
-        title="Full-time"
-        rows={fullTime}
-        weekMode={weekStart !== null}
-        currency={settings.currency}
-        onUpdate={updatePlacement}
-        onDelete={deletePlacement}
-      />
-      <PlacementSection
-        title="Part-time"
-        rows={partTime}
-        weekMode={weekStart !== null}
-        currency={settings.currency}
-        onUpdate={updatePlacement}
-        onDelete={deletePlacement}
-      />
+      {sections.map((section) => (
+        <PlacementSection
+          key={section.category}
+          title={PLACEMENT_CATEGORY_LABELS[section.category]}
+          rows={section.rows}
+          weekMode={weekStart !== null}
+          currency={settings.currency}
+          onUpdate={updatePlacement}
+          onDelete={deletePlacement}
+        />
+      ))}
 
       {rows.length > 0 && (
         <Card className="shadow-card">
@@ -284,7 +287,7 @@ type UpdatePlacement = (
     vaHourlyRate?: number | null;
     contractedWeeklyHours?: number | null;
     clientPackageAmount?: number | null;
-    employmentType?: EmploymentType;
+    category?: PlacementCategory;
   },
 ) => Promise<void>;
 
@@ -343,7 +346,7 @@ function PlacementSection({
                 <th className="px-3 py-3 text-left font-medium">VA</th>
                 <th className="px-3 py-3 text-left font-medium">Client</th>
                 <th className="px-3 py-3 text-left font-medium">Started</th>
-                <th className="px-3 py-3 text-left font-medium">Type</th>
+                <th className="px-3 py-3 text-left font-medium">Category</th>
                 {weekMode ? (
                   <th className="px-3 py-3 text-right font-medium">Days</th>
                 ) : (
@@ -366,7 +369,7 @@ function PlacementSection({
                     colSpan={columns}
                     className="px-5 py-8 text-center text-sm text-muted-foreground"
                   >
-                    No {title.toLowerCase()} placements {weekMode ? "that week" : "in this filter"}.
+                    No {title} placements {weekMode ? "that week" : "in this filter"}.
                   </td>
                 </tr>
               ) : weekMode ? (
@@ -412,10 +415,18 @@ function PlacementSection({
   );
 }
 
-const TYPE_LABELS: Record<EmploymentType, string> = {
-  full_time: "Full-time",
-  part_time: "Part-time",
-};
+/** The five categories as select options, in the weekly sheet's order. */
+function PlacementCategoryOptions() {
+  return (
+    <>
+      {PLACEMENT_CATEGORY_ORDER.map((category) => (
+        <SelectItem key={category} value={category}>
+          {PLACEMENT_CATEGORY_LABELS[category]}
+        </SelectItem>
+      ))}
+    </>
+  );
+}
 
 function StatusBadge({ endedOn }: { endedOn: string | null }) {
   return endedOn === null ? (
@@ -441,7 +452,7 @@ function PlacementWeekRow({ row, currency }: { row: PlacementRowData; currency: 
       <td className="whitespace-nowrap px-3 py-3 text-muted-foreground">
         {formatDate(row.startedOn)}
       </td>
-      <td className="px-3 py-3 text-muted-foreground">{TYPE_LABELS[row.employmentType]}</td>
+      <td className="px-3 py-3 text-muted-foreground">{PLACEMENT_CATEGORY_LABELS[row.category]}</td>
       <td className="whitespace-nowrap px-3 py-3 text-right tabular-nums text-muted-foreground">
         {week.days === 7 ? "Full week" : `${week.days} of 7 days`}
       </td>
@@ -519,12 +530,12 @@ function PlacementRow({
     }
   };
 
-  const changeType = async (type: EmploymentType) => {
-    if (type === placement.employmentType) return;
+  const changeCategory = async (category: PlacementCategory) => {
+    if (category === placement.category) return;
     setBusy(true);
     try {
-      await onUpdate(placement.id, { employmentType: type });
-      toast.success(`Moved to ${TYPE_LABELS[type]}`, {
+      await onUpdate(placement.id, { category });
+      toast.success(`Moved to ${PLACEMENT_CATEGORY_LABELS[category]}`, {
         description: `${vaLabel} at ${clientLabel}`,
       });
     } catch (error) {
@@ -584,19 +595,18 @@ function PlacementRow({
       </td>
       <td className="px-3 py-3">
         <Select
-          value={placement.employmentType}
+          value={placement.category}
           disabled={busy}
-          onValueChange={(v) => void changeType(v as EmploymentType)}
+          onValueChange={(v) => void changeCategory(v as PlacementCategory)}
         >
           <SelectTrigger
-            className="h-8 w-28"
-            aria-label={`Full-time or part-time for ${vaLabel} at ${clientLabel}`}
+            className="h-8 w-44"
+            aria-label={`Category for ${vaLabel} at ${clientLabel}`}
           >
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="full_time">Full-time</SelectItem>
-            <SelectItem value="part_time">Part-time</SelectItem>
+            <PlacementCategoryOptions />
           </SelectContent>
         </Select>
       </td>
@@ -738,7 +748,7 @@ function AddPlacementDialog({
     vaHourlyRate: number | null;
     contractedWeeklyHours: number | null;
     clientPackageAmount: number | null;
-    employmentType: EmploymentType;
+    category: PlacementCategory;
   }) => Promise<void>;
 }) {
   const { clients, placedVAs, settings } = useWorkspace();
@@ -750,7 +760,7 @@ function AddPlacementDialog({
   const [rate, setRate] = useState("");
   const [hours, setHours] = useState("40");
   const [pkg, setPkg] = useState("");
-  const [employmentType, setEmploymentType] = useState<EmploymentType>("full_time");
+  const [category, setCategory] = useState<PlacementCategory>("full_time");
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -762,7 +772,7 @@ function AddPlacementDialog({
     setRate("");
     setHours("40");
     setPkg("");
-    setEmploymentType("full_time");
+    setCategory("full_time");
   }, [open]);
 
   const parse = (v: string) => (v.trim() === "" ? null : Number(v.trim()));
@@ -793,7 +803,7 @@ function AddPlacementDialog({
         vaHourlyRate: parse(rate),
         contractedWeeklyHours: hoursValue,
         clientPackageAmount: parse(pkg),
-        employmentType,
+        category,
       });
       toast.success("Placement added");
       onOpenChange(false);
@@ -821,9 +831,11 @@ function AddPlacementDialog({
             <Label htmlFor="placement-va">VA</Label>
             <Combobox
               id="placement-va"
+              // First, so adding someone new is the obvious move rather than a
+              // row at the bottom of a long list.
               options={[
-                ...placedVAs.map((v) => ({ value: v.id, label: v.fullName })),
                 { value: NEW_VA, label: "+ Add a new VA…" },
+                ...placedVAs.map((v) => ({ value: v.id, label: v.fullName })),
               ]}
               value={vaChoice}
               onChange={setVaChoice}
@@ -856,17 +868,13 @@ function AddPlacementDialog({
 
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="grid gap-2">
-              <Label htmlFor="placement-type">Type</Label>
-              <Select
-                value={employmentType}
-                onValueChange={(v) => setEmploymentType(v as EmploymentType)}
-              >
+              <Label htmlFor="placement-type">Category</Label>
+              <Select value={category} onValueChange={(v) => setCategory(v as PlacementCategory)}>
                 <SelectTrigger id="placement-type">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="full_time">Full-time</SelectItem>
-                  <SelectItem value="part_time">Part-time</SelectItem>
+                  <PlacementCategoryOptions />
                 </SelectContent>
               </Select>
             </div>

@@ -150,9 +150,45 @@ export type WorkspacePlacement = {
   contractedWeeklyHours: number | null;
   /** What the client pays per month. */
   clientPackageAmount: number | null;
-  /** Set per placement (2026-10-14); splits Billing → Placements into Full-time and Part-time. */
-  employmentType: EmploymentType;
+  /** Which department the placement is reported under (va_placements.employment_type). */
+  category: PlacementCategory;
 };
+
+/**
+ * 2026-10-16: the departments the accounts team's "Weekly Financial" sheet
+ * reports placed VAs under. Stored in va_placements.employment_type, the
+ * column 20261014010000 added for the first two. Separate from internal
+ * staff's EmploymentType on purpose: placed VAs aren't IronTrack members.
+ *
+ * External casual VAs log no time in IronTrack, so the Paid Casual increment
+ * (src/lib/casual-billing.ts, which only sees time entries) never applies to
+ * them. Only the internal team's casual time entries are uplifted.
+ */
+export type PlacementCategory = "full_time" | "part_time" | "casual_external" | "vip" | "lmt";
+
+/** The sheet's order, which Billing → Placements' sections follow. */
+export const PLACEMENT_CATEGORY_ORDER: PlacementCategory[] = [
+  "full_time",
+  "part_time",
+  "casual_external",
+  "vip",
+  "lmt",
+];
+
+export const PLACEMENT_CATEGORY_LABELS: Record<PlacementCategory, string> = {
+  full_time: "Full-Time",
+  part_time: "Part-Time",
+  casual_external: "Casual VA – External",
+  vip: "VIP VA",
+  lmt: "LMT",
+};
+
+/** Narrows a stored value, falling back to full-time (the column's default) for anything unrecognised. */
+export function toPlacementCategory(value: string): PlacementCategory {
+  return (PLACEMENT_CATEGORY_ORDER as string[]).includes(value)
+    ? (value as PlacementCategory)
+    : "full_time";
+}
 
 /** The editable half of a placement — what the add/edit form collects. */
 export type WorkspacePlacementInput = Omit<WorkspacePlacement, "id" | "placedVaId"> & {

@@ -18,6 +18,7 @@ import {
   type DetailedEntry,
   type EmploymentType,
   type PendingApproval,
+  type PlacementCategory,
   type PendingApprovalEntry,
   type ProjectInput,
   type Role,
@@ -86,6 +87,7 @@ export {
   type DetailedEntry,
   type EmploymentType,
   type PendingApproval,
+  type PlacementCategory,
   type PendingApprovalEntry,
   type ProjectInput,
   type Role,
@@ -211,7 +213,7 @@ type WorkspaceContextValue = {
       vaHourlyRate?: number | null;
       contractedWeeklyHours?: number | null;
       clientPackageAmount?: number | null;
-      employmentType?: EmploymentType;
+      category?: PlacementCategory;
     },
   ) => Promise<void>;
   deletePlacement: (id: string) => Promise<void>;

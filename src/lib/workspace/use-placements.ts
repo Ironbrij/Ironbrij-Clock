@@ -2,9 +2,10 @@ import { useCallback, useEffect, useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import type { Database } from "@/integrations/supabase/types";
+import { toPlacementCategory } from "./types";
 import { throwIf } from "./utils";
 import type {
-  EmploymentType,
+  PlacementCategory,
   WorkspacePlacedVA,
   WorkspacePlacement,
   WorkspacePlacementInput,
@@ -88,7 +89,7 @@ export function usePlacementsData(enabled: boolean, canManage: boolean, uid: str
           p.contracted_weekly_hours === null ? null : Number(p.contracted_weekly_hours),
         clientPackageAmount:
           p.client_package_amount === null ? null : Number(p.client_package_amount),
-        employmentType: p.employment_type as EmploymentType,
+        category: toPlacementCategory(p.employment_type),
       })),
     [placementsQ.data],
   );
@@ -128,7 +129,7 @@ export function usePlacementsData(enabled: boolean, canManage: boolean, uid: str
         va_hourly_rate: input.vaHourlyRate,
         contracted_weekly_hours: input.contractedWeeklyHours,
         client_package_amount: input.clientPackageAmount,
-        employment_type: input.employmentType,
+        employment_type: input.category,
         updated_by: uid,
       });
       throwIf(error, { "23505": DUPLICATE_PLACEMENT_MESSAGE });
@@ -146,7 +147,7 @@ export function usePlacementsData(enabled: boolean, canManage: boolean, uid: str
         vaHourlyRate?: number | null;
         contractedWeeklyHours?: number | null;
         clientPackageAmount?: number | null;
-        employmentType?: EmploymentType;
+        category?: PlacementCategory;
       },
     ) => {
       const row: PlacementUpdate = {
@@ -162,7 +163,7 @@ export function usePlacementsData(enabled: boolean, canManage: boolean, uid: str
       if (patch.clientPackageAmount !== undefined) {
         row.client_package_amount = patch.clientPackageAmount;
       }
-      if (patch.employmentType !== undefined) row.employment_type = patch.employmentType;
+      if (patch.category !== undefined) row.employment_type = patch.category;
       const { error } = await supabase.from("va_placements").update(row).eq("id", id);
       throwIf(error, { "23505": DUPLICATE_PLACEMENT_MESSAGE });
       invalidate();

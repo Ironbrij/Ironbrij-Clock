@@ -10,6 +10,7 @@ import {
   retainerAccrualForRange,
   vaMonthlyCost,
 } from "./retainer";
+import type { WorkspacePlacement } from "./workspace/types";
 
 /** The hourly rate that makes a 40 h/week placement cost exactly `monthly` a month. */
 const hourlyFor = (monthly: number, weeklyHours = 40) => (monthly * 12) / (52 * weeklyHours);
@@ -172,6 +173,22 @@ describe("placementWeekFigures", () => {
     expect(r.cost).toBeCloseTo(800, 6);
     expect(r.revenue).toBeCloseTo((1650 * 12) / 52, 6);
     expect(r.fee).toBeCloseTo((1650 * 12) / 52 - 800, 6);
+  });
+
+  // 2026-10-16 (P2): external casual VAs are placements, and placements never
+  // go through the Paid Casual uplift + round-up (casual-billing.ts), which
+  // only ever sees the internal team's time entries. 6.1 h would bill as
+  // 7.5 h under that rule; here it stays 6.1 h × rate.
+  it("prices an external casual VA on plain hours × rate, with no increment", () => {
+    const casual: WorkspacePlacement = {
+      id: "p1",
+      placedVaId: "va1",
+      clientId: "c1",
+      category: "casual_external",
+      ...placement({ vaHourlyRate: 10, contractedWeeklyHours: 6.1 }),
+    };
+    const r = placementWeekFigures(casual, week);
+    expect(r.cost).toBeCloseTo(61, 6);
   });
 
   it("pro-rates a placement that starts mid-week by the days it was live", () => {

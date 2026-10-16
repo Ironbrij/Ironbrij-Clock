@@ -47,6 +47,11 @@ const INCREMENT_EPSILON = 1e-9;
  *
  * So the single rule is now: an entry is uplifted and rounded up if, and
  * only if, it is Paid Casual Service.
+ *
+ * 2026-10-16: that makes it an internal-team-only rule, which is the policy.
+ * External casual VAs don't log time in IronTrack. They exist only as
+ * placements in the `casual_external` category (src/lib/retainer.ts), which
+ * are priced on plain hours × rate and never pass through here.
  */
 export function billableHoursForCasualEntry(
   entry: { seconds: number },

@@ -1362,14 +1362,47 @@ if (hasLocalSupabase) {
         RPC_TIMEOUT,
       );
 
+      // 20261016020000_placement_categories.sql widened the same column to the
+      // weekly sheet's five departments.
       it(
-        "rejects anything other than full_time or part_time",
+        "lets a manager put a placement in each of the five categories",
+        async () => {
+          for (const category of ["casual_external", "vip", "lmt", "part_time", "full_time"]) {
+            const { data, error } = await managerUser.client
+              .from("va_placements")
+              .update({ employment_type: category })
+              .eq("id", placementId)
+              .select("employment_type");
+            expect(error).toBeNull();
+            expect(data).toEqual([{ employment_type: category }]);
+          }
+        },
+        RPC_TIMEOUT,
+      );
+
+      it(
+        "rejects a category outside the five",
         async () => {
           const { error } = await managerUser.client
             .from("va_placements")
             .update({ employment_type: "casual" })
             .eq("id", placementId);
           expect(error?.code).toBe("23514");
+        },
+        RPC_TIMEOUT,
+      );
+
+      it(
+        "keeps placements away from a plain member",
+        async () => {
+          const { data, error } = await memberUser.client
+            .from("va_placements")
+            .update({ employment_type: "vip" })
+            .eq("id", placementId)
+            .select("id");
+          // RLS hides the row rather than raising: zero rows, no error.
+          expect(error).toBeNull();
+          expect(data).toEqual([]);
         },
         RPC_TIMEOUT,
       );
