@@ -128,8 +128,18 @@ type WorkspaceContextValue = {
   teams: Team[];
   projects: WorkspaceProject[];
   tags: WorkspaceTag[];
-  createTag: (name: string, color: string) => Promise<void>;
-  updateTag: (id: string, name: string, color: string) => Promise<void>;
+  createTag: (
+    name: string,
+    color: string,
+    serviceCategory?: CasualServiceCategory | null,
+  ) => Promise<void>;
+  /** Omit serviceCategory to leave the tag's category as it is. */
+  updateTag: (
+    id: string,
+    name: string,
+    color: string,
+    serviceCategory?: CasualServiceCategory | null,
+  ) => Promise<void>;
   deleteTag: (id: string) => Promise<void>;
   taskCategories: WorkspaceTaskCategory[];
   createTaskCategory: (name: string) => Promise<void>;
@@ -448,7 +458,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     deleteClient,
   } = useClientsData(enabled);
 
-  const { tagsQ, tagUsageQ, tags, createTag, updateTag, deleteTag } = useTagsData(enabled);
+  const { tagsQ, tagUsageQ, tags, createTag, updateTag, deleteTag } = useTagsData(enabled, isAdmin);
 
   const {
     taskCategoriesQ,
