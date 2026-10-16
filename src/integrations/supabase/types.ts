@@ -354,6 +354,48 @@ export type Database = {
         };
         Relationships: [];
       };
+      placement_week_hours: {
+        Row: {
+          hours: number;
+          id: string;
+          placement_id: string;
+          updated_at: string;
+          updated_by: string | null;
+          week_start: string;
+        };
+        Insert: {
+          hours: number;
+          id?: string;
+          placement_id: string;
+          updated_at?: string;
+          updated_by?: string | null;
+          week_start: string;
+        };
+        Update: {
+          hours?: number;
+          id?: string;
+          placement_id?: string;
+          updated_at?: string;
+          updated_by?: string | null;
+          week_start?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "placement_week_hours_placement_id_fkey";
+            columns: ["placement_id"];
+            isOneToOne: false;
+            referencedRelation: "va_placements";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "placement_week_hours_updated_by_fkey";
+            columns: ["updated_by"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       profiles: {
         Row: {
           avatar_url: string | null;
@@ -539,6 +581,67 @@ export type Database = {
             columns: ["team_id"];
             isOneToOne: false;
             referencedRelation: "teams";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      revenue_items: {
+        Row: {
+          amount: number;
+          client_id: string | null;
+          created_at: string;
+          created_by: string | null;
+          id: string;
+          kind: string;
+          note: string | null;
+          received_on: string;
+          updated_at: string;
+          updated_by: string | null;
+        };
+        Insert: {
+          amount: number;
+          client_id?: string | null;
+          created_at?: string;
+          created_by?: string | null;
+          id?: string;
+          kind?: string;
+          note?: string | null;
+          received_on: string;
+          updated_at?: string;
+          updated_by?: string | null;
+        };
+        Update: {
+          amount?: number;
+          client_id?: string | null;
+          created_at?: string;
+          created_by?: string | null;
+          id?: string;
+          kind?: string;
+          note?: string | null;
+          received_on?: string;
+          updated_at?: string;
+          updated_by?: string | null;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "revenue_items_client_id_fkey";
+            columns: ["client_id"];
+            isOneToOne: false;
+            referencedRelation: "clients";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "revenue_items_created_by_fkey";
+            columns: ["created_by"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "revenue_items_updated_by_fkey";
+            columns: ["updated_by"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
             referencedColumns: ["id"];
           },
         ];
@@ -824,6 +927,7 @@ export type Database = {
       };
       va_placements: {
         Row: {
+          client_hourly_rate: number | null;
           client_id: string;
           client_package_amount: number | null;
           contracted_weekly_hours: number | null;
@@ -839,6 +943,7 @@ export type Database = {
           va_monthly_rate: number | null;
         };
         Insert: {
+          client_hourly_rate?: number | null;
           client_id: string;
           client_package_amount?: number | null;
           contracted_weekly_hours?: number | null;
@@ -854,6 +959,7 @@ export type Database = {
           va_monthly_rate?: number | null;
         };
         Update: {
+          client_hourly_rate?: number | null;
           client_id?: string;
           client_package_amount?: number | null;
           contracted_weekly_hours?: number | null;

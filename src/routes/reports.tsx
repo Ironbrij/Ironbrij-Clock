@@ -22,7 +22,8 @@ import {
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { billableHoursForCasualEntry } from "@/lib/casual-billing";
 import { grossProfitForEntry, resolveInvoiceRate } from "@/lib/gross-profit";
-import { retainerAccrualForRange } from "@/lib/retainer";
+import { placementFiguresForRange } from "@/lib/retainer";
+import { placementWeekKey } from "@/lib/workspace/use-placements";
 import { salaryAccrualForWeek, weeksInRange } from "@/lib/weekly-salary";
 import { formatHours } from "@/lib/mock-data";
 import { addDays, formatWeekRange, fromDateKey, startOfWeek, toDateKey } from "@/lib/time-utils";
@@ -80,6 +81,7 @@ import type {
   CasualGroup,
   ClientFacingRow,
   DepartmentRow,
+  FeeReportRow,
   ProfitGroup,
   ProfitRow,
 } from "@/components/reports/report-rows";
@@ -227,6 +229,10 @@ function Reports() {
   // derive from `detailedEntries` rather than a separate fetch, since the
   // per-line increment rounding has to be applied before summing.
   const [profitGroupBy, setProfitGroupBy] = useState<ProfitGroupBy>("va");
+  // 2026-10-16: the hours accounts entered per placement per week, for the
+  // placement block below. A missing week means "use the contracted hours".
+  const [placementHours, setPlacementHours] = useState<Map<string, number>>(new Map());
+  const [loadingPlacementHours, setLoadingPlacementHours] = useState(true);
 
   // M51: shared by the three tabs derived from `detailedEntries`. The
   // Project and Employee tabs come from SQL aggregates with no service
@@ -245,6 +251,8 @@ function Reports() {
     billingRates,
     placements,
     placedVAs,
+    placementWeekHoursForRange,
+    revenueItems,
     projectHoursForRange,
     projectBillableHoursForRange,
     employeeHoursForRange,
@@ -408,6 +416,26 @@ function Reports() {
       cancelled = true;
     };
   }, [from, to, canManage, detailedEntriesForRange]);
+
+  useEffect(() => {
+    if (!canManage) {
+      setLoadingPlacementHours(false);
+      return;
+    }
+    let cancelled = false;
+    setLoadingPlacementHours(true);
+    placementWeekHoursForRange(from, to)
+      .then((hours) => {
+        if (!cancelled) setPlacementHours(hours);
+      })
+      .catch((error: Error) => toast.error("Couldn't load report", { description: error.message }))
+      .finally(() => {
+        if (!cancelled) setLoadingPlacementHours(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [from, to, canManage, placementWeekHoursForRange]);
 
   // M46: client-health data (all-time, company-wide) — the casual-service
   // rollup itself is derived below from `detailedEntries` (already fetched
@@ -1067,10 +1095,14 @@ function Reports() {
     { actualHours: 0, billedHours: 0, cost: 0, revenue: 0, profit: 0 },
   );
 
-  // M49: the retainer half of profitability. Monthly placements have no
-  // hours, so they can't join the hourly table above — a monthly fee
-  // spread across the range is a different kind of number. They get their
-  // own section, and the two profits are summed into a combined total.
+  // M49: the placement half of profitability. Since 2026-10-16 placements are
+  // priced the way the weekly sheet prices them — hours x VA rate paid, hours
+  // x invoice rate invoiced, on each week's entered hours (else contracted) —
+  // summed over the range's weeks by placementFiguresForRange. That replaced
+  // M49's 365-day accrual of a monthly package, so this block, Billing →
+  // Placements and the weekly report all agree. They keep their own section
+  // because the hourly table above is built from time entries, and the two
+  // profits are summed into a combined total.
   //
   // No double-counting: placed VAs aren't IronTrack users and log no time
   // entries, so retainer cost and hourly wage cost never overlap.
@@ -1083,7 +1115,12 @@ function Reports() {
   const retainerRows = (retainersApply ? placements : [])
     .map((p) => ({
       ...p,
-      ...retainerAccrualForRange(p, from, to),
+      ...placementFiguresForRange(
+        p,
+        from,
+        to,
+        (weekStart) => placementHours.get(placementWeekKey(p.id, weekStart)) ?? null,
+      ),
       vaLabel: placedVAs.find((v) => v.id === p.placedVaId)?.fullName ?? "Unknown VA",
       clientLabel: clients.find((c) => c.id === p.clientId)?.name ?? "Unknown client",
     }))
@@ -1105,6 +1142,32 @@ function Reports() {
     }),
     { cost: 0, revenue: 0, profit: 0 },
   );
+
+  // 2026-10-16: recruitment & set-up fees (Billing → Fees & revenue) — revenue
+  // with no hours behind it, which the weekly sheet adds to Gross Profit
+  // ("Recruitment and Set Up Fee"). Counted on the date they were given.
+  // Withheld under a team filter for the same reason placements are (a fee
+  // belongs to no team), and under the Internal audience because it's client
+  // revenue. A client filter keeps that client's fees ("No client" keeps the
+  // ones with none).
+  const feesApply = teamFilter === "all" && audience === "all";
+
+  const feeRows: FeeReportRow[] = (feesApply ? revenueItems : [])
+    .filter((f) => f.receivedOn >= from && f.receivedOn <= to)
+    .filter((f) => {
+      if (clientFilter === "all") return true;
+      if (clientFilter === "none") return f.clientId === null;
+      return f.clientId === clientFilter;
+    })
+    .map((f) => ({
+      ...f,
+      clientLabel: f.clientId
+        ? (clients.find((c) => c.id === f.clientId)?.name ?? "Unknown client")
+        : NO_CLIENT,
+    }))
+    .sort((a, b) => a.receivedOn.localeCompare(b.receivedOn));
+
+  const feeTotal = feeRows.reduce((sum, f) => sum + f.amount, 0);
 
   // M50: the workbook's Net Loss line — casual gross profit against the fixed
   // weekly salary bill, week by week, because "did casual work cover payroll"
@@ -1344,8 +1407,8 @@ function Reports() {
 
   const combinedTotals = {
     cost: profitGrandTotals.cost + retainerTotals.cost + salaryTotals.salary,
-    revenue: profitGrandTotals.revenue + retainerTotals.revenue,
-    profit: profitGrandTotals.profit + retainerTotals.profit - salaryTotals.salary,
+    revenue: profitGrandTotals.revenue + retainerTotals.revenue + feeTotal,
+    profit: profitGrandTotals.profit + retainerTotals.profit + feeTotal - salaryTotals.salary,
   };
 
   const totalDetailedPages = Math.max(1, Math.ceil(filteredDetailed.length / DETAILED_PAGE_SIZE));
@@ -1363,7 +1426,9 @@ function Reports() {
         ? loadingEmployee
         : view === "casual"
           ? loadingDetailed || loadingCasual
-          : loadingDetailed;
+          : view === "profit"
+            ? loadingDetailed || loadingPlacementHours
+            : loadingDetailed;
   // M48: gross profit reads `detailedEntries`, which detailedEntriesForRange
   // caps. A truncated money report is worse than none, so hitting the cap
   // suppresses the numbers rather than quietly under-reporting them.
@@ -1612,7 +1677,7 @@ function Reports() {
           ...(retainersApply && retainerRows.length > 0
             ? [
                 [],
-                ["Retainers (monthly placements accrued across the range)"],
+                ["Placements (weekly hours × hourly rates, across the range)"],
                 [
                   "Client",
                   "VA",
@@ -1637,6 +1702,20 @@ function Reports() {
                   retainerTotals.revenue.toFixed(2),
                   retainerTotals.profit.toFixed(2),
                 ],
+              ]
+            : []),
+          ...(feesApply && feeRows.length > 0
+            ? [
+                [],
+                ["Recruitment & set-up fees"],
+                ["Date", "Client", "Note", `Amount (${settings.currency})`],
+                ...feeRows.map((f) => [
+                  f.receivedOn,
+                  f.clientLabel,
+                  f.note ?? "",
+                  f.amount.toFixed(2),
+                ]),
+                ["Total", "", "", feeTotal.toFixed(2)],
               ]
             : []),
           ...(salariesApply && salaryWeeks.length > 0
@@ -1673,7 +1752,7 @@ function Reports() {
             ? [
                 [],
                 [
-                  "Total profit (hourly + retainer − salaries)",
+                  "Total profit (hourly + placements + fees − salaries)",
                   "",
                   "",
                   combinedTotals.cost.toFixed(2),
@@ -2136,6 +2215,9 @@ function Reports() {
           retainerRows={retainerRows}
           retainerTotals={retainerTotals}
           retainersApply={retainersApply}
+          feeRows={feeRows}
+          feeTotal={feeTotal}
+          feesApply={feesApply}
           salariesApply={salariesApply}
           salaryTotals={salaryTotals}
           salaryWeeks={salaryWeeks}

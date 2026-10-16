@@ -1362,14 +1362,203 @@ if (hasLocalSupabase) {
         RPC_TIMEOUT,
       );
 
+      // 20261016020000_placement_categories.sql widened the same column to the
+      // weekly sheet's five departments.
       it(
-        "rejects anything other than full_time or part_time",
+        "lets a manager put a placement in each of the five categories",
+        async () => {
+          for (const category of ["casual_external", "vip", "lmt", "part_time", "full_time"]) {
+            const { data, error } = await managerUser.client
+              .from("va_placements")
+              .update({ employment_type: category })
+              .eq("id", placementId)
+              .select("employment_type");
+            expect(error).toBeNull();
+            expect(data).toEqual([{ employment_type: category }]);
+          }
+        },
+        RPC_TIMEOUT,
+      );
+
+      it(
+        "rejects a category outside the five",
         async () => {
           const { error } = await managerUser.client
             .from("va_placements")
             .update({ employment_type: "casual" })
             .eq("id", placementId);
           expect(error?.code).toBe("23514");
+        },
+        RPC_TIMEOUT,
+      );
+
+      // 20261016030000_hourly_placements.sql: a client invoice rate per
+      // placement, and actual hours per placement per week.
+      it(
+        "lets a manager set a placement's invoice rate, but never a negative one",
+        async () => {
+          const { data, error } = await managerUser.client
+            .from("va_placements")
+            .update({ client_hourly_rate: 14.86 })
+            .eq("id", placementId)
+            .select("client_hourly_rate");
+          expect(error).toBeNull();
+          expect(data).toEqual([{ client_hourly_rate: 14.86 }]);
+
+          const { error: negativeError } = await managerUser.client
+            .from("va_placements")
+            .update({ client_hourly_rate: -1 })
+            .eq("id", placementId);
+          expect(negativeError?.code).toBe("23514");
+        },
+        RPC_TIMEOUT,
+      );
+
+      it(
+        "lets a manager enter, change and read a placement's hours for a week",
+        async () => {
+          const { error } = await managerUser.client
+            .from("placement_week_hours")
+            .upsert(
+              { placement_id: placementId, week_start: "2026-10-05", hours: 43.5 },
+              { onConflict: "placement_id,week_start" },
+            )
+            .select("id");
+          expect(error).toBeNull();
+          // The same week again is an update, not a second row.
+          const { error: againError } = await managerUser.client
+            .from("placement_week_hours")
+            .upsert(
+              { placement_id: placementId, week_start: "2026-10-05", hours: 40 },
+              { onConflict: "placement_id,week_start" },
+            )
+            .select("id");
+          expect(againError).toBeNull();
+
+          const { data } = await managerUser.client
+            .from("placement_week_hours")
+            .select("week_start, hours")
+            .eq("placement_id", placementId);
+          expect(data).toEqual([{ week_start: "2026-10-05", hours: 40 }]);
+        },
+        RPC_TIMEOUT,
+      );
+
+      it(
+        "only takes Monday weeks and 0 to 168 hours",
+        async () => {
+          const { error: tuesday } = await managerUser.client
+            .from("placement_week_hours")
+            .insert({ placement_id: placementId, week_start: "2026-10-06", hours: 10 });
+          expect(tuesday?.code).toBe("23514");
+
+          const { error: tooMany } = await managerUser.client
+            .from("placement_week_hours")
+            .insert({ placement_id: placementId, week_start: "2026-10-12", hours: 169 });
+          expect(tooMany?.code).toBe("23514");
+        },
+        RPC_TIMEOUT,
+      );
+
+      it(
+        "hides placement hours from a plain member, and won't let them add any",
+        async () => {
+          const { data } = await memberUser.client
+            .from("placement_week_hours")
+            .select("id")
+            .eq("placement_id", placementId);
+          expect(data).toEqual([]);
+
+          const { error } = await memberUser.client
+            .from("placement_week_hours")
+            .insert({ placement_id: placementId, week_start: "2026-10-19", hours: 5 });
+          expect(error?.code).toBe("42501");
+        },
+        RPC_TIMEOUT,
+      );
+
+      // 20261016040000_revenue_items.sql: recruitment & set-up fees.
+      it(
+        "lets a manager add, change and remove a recruitment fee",
+        async () => {
+          const { data: created, error } = await managerUser.client
+            .from("revenue_items")
+            .insert({ received_on: "2026-10-07", client_id: clientId, amount: 227.15 })
+            .select("id, kind, amount")
+            .single();
+          expect(error).toBeNull();
+          expect(created?.kind).toBe("recruitment_setup");
+          expect(created?.amount).toBe(227.15);
+
+          const { data: updated } = await managerUser.client
+            .from("revenue_items")
+            .update({ amount: 400 })
+            .eq("id", created!.id)
+            .select("amount");
+          expect(updated).toEqual([{ amount: 400 }]);
+
+          const { data: removed } = await managerUser.client
+            .from("revenue_items")
+            .delete()
+            .eq("id", created!.id)
+            .select("id");
+          expect(removed).toHaveLength(1);
+        },
+        RPC_TIMEOUT,
+      );
+
+      it(
+        "rejects a zero amount and any kind other than recruitment_setup",
+        async () => {
+          const { error: zero } = await managerUser.client
+            .from("revenue_items")
+            .insert({ received_on: "2026-10-07", amount: 0 });
+          expect(zero?.code).toBe("23514");
+
+          const { error: otherKind } = await managerUser.client
+            .from("revenue_items")
+            .insert({ received_on: "2026-10-07", amount: 10, kind: "business_coaching" });
+          expect(otherKind?.code).toBe("23514");
+        },
+        RPC_TIMEOUT,
+      );
+
+      it(
+        "hides fees from a plain member, and won't let them add any",
+        async () => {
+          const { data: fee } = await admin
+            .from("revenue_items")
+            .insert({ received_on: "2026-10-07", amount: 50 })
+            .select("id")
+            .single();
+
+          const { data } = await memberUser.client
+            .from("revenue_items")
+            .select("id")
+            .eq("id", fee!.id);
+          expect(data).toEqual([]);
+
+          const { error } = await memberUser.client
+            .from("revenue_items")
+            .insert({ received_on: "2026-10-07", amount: 50 });
+          expect(error?.code).toBe("42501");
+
+          await admin.from("revenue_items").delete().eq("id", fee!.id);
+        },
+        RPC_TIMEOUT,
+      );
+
+      it(
+        "keeps placements away from a plain member",
+        async () => {
+          const { data, error } = await memberUser.client
+            .from("va_placements")
+            .update({ employment_type: "vip" })
+            .eq("id", placementId)
+            .select("id");
+          // RLS hides the row rather than raising: zero rows, no error.
+          expect(error).toBeNull();
+          expect(data).toEqual([]);
         },
         RPC_TIMEOUT,
       );

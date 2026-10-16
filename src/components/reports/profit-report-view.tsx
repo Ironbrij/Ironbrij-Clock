@@ -5,7 +5,13 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatHours } from "@/lib/mock-data";
 import type { WorkspaceSettings } from "@/lib/workspace/types";
 import { formatCurrency, type ProfitGroupBy, profitGroupByLabels } from "./report-config";
-import type { DepartmentRow, ProfitGroup, RetainerReportRow, SalaryWeekRow } from "./report-rows";
+import type {
+  DepartmentRow,
+  FeeReportRow,
+  ProfitGroup,
+  RetainerReportRow,
+  SalaryWeekRow,
+} from "./report-rows";
 
 type ProfitReportViewProps = {
   combinedTotals: { cost: number; revenue: number; profit: number };
@@ -26,6 +32,9 @@ type ProfitReportViewProps = {
   retainerRows: RetainerReportRow[];
   retainerTotals: { cost: number; revenue: number; profit: number };
   retainersApply: boolean;
+  feeRows: FeeReportRow[];
+  feeTotal: number;
+  feesApply: boolean;
   salariesApply: boolean;
   salaryTotals: { salary: number; hourlyProfit: number; net: number };
   salaryWeeks: SalaryWeekRow[];
@@ -45,6 +54,9 @@ export function ProfitReportView({
   retainerRows,
   retainerTotals,
   retainersApply,
+  feeRows,
+  feeTotal,
+  feesApply,
   salariesApply,
   salaryTotals,
   salaryWeeks,
@@ -314,22 +326,22 @@ export function ProfitReportView({
         </CardContent>
       </Card>
 
-      {/* M49: retainers sit in their own table because a monthly
-            placement has no hours — folding it into the hourly grid above
-            would leave that grid's Hours and blended-rate columns
-            meaningless. The combined total below is what ties them
-            together. */}
+      {/* M49: placements sit in their own table because the hourly grid
+            above is built from IronTrack time entries, and placed VAs log
+            none. Since 2026-10-16 they're priced on each week's entered hours
+            × their hourly rates (src/lib/retainer.ts). The combined total
+            below is what ties the two together. */}
       {!profitTruncated && (
         <Card className="mt-6 shadow-card">
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">
-              Retainers — monthly placements, accrued across this range
+              Placements — weekly hours × hourly rates, across this range
             </CardTitle>
           </CardHeader>
           <CardContent className="overflow-x-auto p-0">
             {!retainersApply ? (
               <p className="px-5 py-6 text-sm text-muted-foreground">
-                Retainers aren&apos;t shown while a team filter is on — placed VAs aren&apos;t
+                Placements aren&apos;t shown while a team filter is on — placed VAs aren&apos;t
                 IronTrack members, so they don&apos;t belong to a team. Clear the team filter to
                 include them.
               </p>
@@ -485,16 +497,64 @@ export function ProfitReportView({
         </Card>
       )}
 
+      {/* 2026-10-16: fees with no hours behind them (Billing → Fees &
+            revenue). Their own table, like placements, because none of the
+            hourly columns apply to them. */}
+      {!profitTruncated && feesApply && feeRows.length > 0 && (
+        <Card className="mt-6 shadow-card">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium text-muted-foreground">
+              Recruitment &amp; set-up fees
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="overflow-x-auto p-0">
+            <table className="w-full min-w-[620px] text-sm">
+              <thead>
+                <tr className="border-b border-border text-xs uppercase tracking-wide text-muted-foreground">
+                  <th className="px-5 py-3 text-left font-medium">Date</th>
+                  <th className="px-5 py-3 text-left font-medium">Client</th>
+                  <th className="px-5 py-3 text-left font-medium">Note</th>
+                  <th className="px-5 py-3 text-right font-medium">Amount</th>
+                </tr>
+              </thead>
+              <tbody>
+                {feeRows.map((f) => (
+                  <tr key={f.id} className="border-b border-border last:border-0 hover:bg-muted/40">
+                    <td className="whitespace-nowrap px-5 py-3">{f.receivedOn}</td>
+                    <td className="px-5 py-3 font-medium">{f.clientLabel}</td>
+                    <td className="px-5 py-3 text-muted-foreground">{f.note ?? ""}</td>
+                    <td className="px-5 py-3 text-right tabular-nums">
+                      {formatCurrency(f.amount, settings.currency)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr className="border-t-2 border-border bg-muted/50">
+                  <td className="px-5 py-3 font-semibold" colSpan={3}>
+                    Total
+                  </td>
+                  <td className="px-5 py-3 text-right font-semibold tabular-nums">
+                    {formatCurrency(feeTotal, settings.currency)}
+                  </td>
+                </tr>
+              </tfoot>
+            </table>
+          </CardContent>
+        </Card>
+      )}
+
       {!profitTruncated && retainersApply && (
         <Card className="mt-6 shadow-card">
           <CardContent className="flex flex-wrap items-center justify-between gap-4 px-5 py-4">
             <div>
               <p className="text-sm font-semibold">
-                Total profit — hourly and retainer, after salaries
+                Total profit — hourly, placements and fees, after salaries
               </p>
               <p className="text-xs text-muted-foreground">
                 {formatCurrency(profitGrandTotals.profit, settings.currency)} hourly +{" "}
-                {formatCurrency(retainerTotals.profit, settings.currency)} retainer
+                {formatCurrency(retainerTotals.profit, settings.currency)} placements
+                {feeTotal > 0 ? ` + ${formatCurrency(feeTotal, settings.currency)} fees` : ""}
                 {salaryTotals.salary > 0
                   ? ` − ${formatCurrency(salaryTotals.salary, settings.currency)} salaries`
                   : ""}

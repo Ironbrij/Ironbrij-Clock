@@ -133,10 +133,11 @@ export type WorkspaceBillingRateInput = Omit<WorkspaceBillingRate, "id">;
 export type WorkspacePlacedVA = { id: string; fullName: string };
 
 /**
- * M49: one VA↔client retainer placement. `endedOn` null means still live —
- * that's the status, and it also bounds the daily accrual in
- * src/lib/retainer.ts. Amounts are null for the sheet's "N/A" rows. The
- * management fee is derived (package − monthly VA cost, or 0), never stored.
+ * M49: one VA↔client placement. `endedOn` null means still live — that's the
+ * status, and it also bounds which weeks the placement is priced in. Rates
+ * are null for the sheet's "N/A" rows. Since 2026-10-16 both sides are
+ * hourly (src/lib/retainer.ts), on each week's entered hours; the management
+ * fee is derived, never stored.
  */
 export type WorkspacePlacement = {
   id: string;
@@ -144,15 +145,51 @@ export type WorkspacePlacement = {
   clientId: string;
   startedOn: string;
   endedOn: string | null;
-  /** What the VA is paid per hour. Null for the sheet's "N/A" rows. */
+  /** What the VA is paid per hour (per unit for LMT). Null for the sheet's "N/A" rows. */
   vaHourlyRate: number | null;
-  /** Hours a week the VA is contracted for — with the hourly rate, this gives the monthly cost (src/lib/retainer.ts). */
+  /** Hours a week the VA is contracted for — the fallback for any week accounts hasn't entered hours for. */
   contractedWeeklyHours: number | null;
-  /** What the client pays per month. */
-  clientPackageAmount: number | null;
-  /** Set per placement (2026-10-14); splits Billing → Placements into Full-time and Part-time. */
-  employmentType: EmploymentType;
+  /** What the client is invoiced per hour (per unit for LMT). Null when the client side isn't priced. */
+  clientHourlyRate: number | null;
+  /** Which department the placement is reported under (va_placements.employment_type). */
+  category: PlacementCategory;
 };
+
+/**
+ * 2026-10-16: the departments the accounts team's "Weekly Financial" sheet
+ * reports placed VAs under. Stored in va_placements.employment_type, the
+ * column 20261014010000 added for the first two. Separate from internal
+ * staff's EmploymentType on purpose: placed VAs aren't IronTrack members.
+ *
+ * External casual VAs log no time in IronTrack, so the Paid Casual increment
+ * (src/lib/casual-billing.ts, which only sees time entries) never applies to
+ * them. Only the internal team's casual time entries are uplifted.
+ */
+export type PlacementCategory = "full_time" | "part_time" | "casual_external" | "vip" | "lmt";
+
+/** The sheet's order, which Billing → Placements' sections follow. */
+export const PLACEMENT_CATEGORY_ORDER: PlacementCategory[] = [
+  "full_time",
+  "part_time",
+  "casual_external",
+  "vip",
+  "lmt",
+];
+
+export const PLACEMENT_CATEGORY_LABELS: Record<PlacementCategory, string> = {
+  full_time: "Full-Time",
+  part_time: "Part-Time",
+  casual_external: "Casual VA – External",
+  vip: "VIP VA",
+  lmt: "LMT",
+};
+
+/** Narrows a stored value, falling back to full-time (the column's default) for anything unrecognised. */
+export function toPlacementCategory(value: string): PlacementCategory {
+  return (PLACEMENT_CATEGORY_ORDER as string[]).includes(value)
+    ? (value as PlacementCategory)
+    : "full_time";
+}
 
 /** The editable half of a placement — what the add/edit form collects. */
 export type WorkspacePlacementInput = Omit<WorkspacePlacement, "id" | "placedVaId"> & {
@@ -160,6 +197,32 @@ export type WorkspacePlacementInput = Omit<WorkspacePlacement, "id" | "placedVaI
   placedVaId?: string;
   placedVaName?: string;
 };
+
+/**
+ * 2026-10-16: revenue that doesn't come from hours — one-off fees entered by
+ * hand in Billing → Fees & revenue and added to Reports → Gross Profit. Only
+ * recruitment & set-up fees for now; another kind is a value here plus a
+ * wider CHECK on revenue_items.kind.
+ */
+export type RevenueKind = "recruitment_setup";
+
+export const REVENUE_KIND_LABELS: Record<RevenueKind, string> = {
+  recruitment_setup: "Recruitment & set-up fee",
+};
+
+export type WorkspaceRevenueItem = {
+  id: string;
+  /** Date key the fee counts towards — the week and period it's reported in. */
+  receivedOn: string;
+  /** Null for a fee that belongs to no client. */
+  clientId: string | null;
+  kind: RevenueKind;
+  amount: number;
+  note: string | null;
+};
+
+/** The editable half of a revenue item — what the add/edit form collects. */
+export type WorkspaceRevenueItemInput = Omit<WorkspaceRevenueItem, "id">;
 
 export type WorkspaceTaskCategory = { id: string; name: string };
 

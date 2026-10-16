@@ -586,10 +586,8 @@ function ClientDetail({ id, close }: { id: string; close: () => void }) {
                           ? ` × ${p.contractedWeeklyHours} h/wk`
                           : ""}
                         {cost !== null ? ` = ${money(cost)}/mo` : ""}
-                        {" · "}package{" "}
-                        {p.clientPackageAmount !== null
-                          ? `${money(p.clientPackageAmount)}/mo`
-                          : "N/A"}
+                        {" · "}invoiced{" "}
+                        {p.clientHourlyRate !== null ? `${money(p.clientHourlyRate)}/hr` : "N/A"}
                         {" · "}fee {money(managementFee(p))}/mo
                       </div>
                     </li>

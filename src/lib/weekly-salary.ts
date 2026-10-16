@@ -92,7 +92,7 @@ export type SalaryAccrual = {
  * to zero.
  *
  * salaryTo of null means still employed, so the week's own end bounds it —
- * same shape as retainerAccrualForRange's endedOn.
+ * same shape as a placement's endedOn (placementWeekFigures in retainer.ts).
  */
 export function salaryAccrualForWeek(
   employment: { weeklySalary: number | null; salaryFrom: string | null; salaryTo: string | null },
