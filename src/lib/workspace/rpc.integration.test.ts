@@ -862,6 +862,353 @@ if (hasLocalSupabase) {
       );
     });
 
+    // 20261016000000_category_follows_project_tag.sql: an entry's casual
+    // service category comes only from its project's category tag.
+    describe("service category follows the project's tag", () => {
+      let catMember: Awaited<ReturnType<typeof fixtureUser>>;
+      const tagIds: Record<"pc" | "vip" | "plain" | "spare", string> = {
+        pc: "",
+        vip: "",
+        plain: "",
+        spare: "",
+      };
+      const projectIds: Record<"pc" | "vip" | "plain", string> = { pc: "", vip: "", plain: "" };
+      let timerId: string;
+
+      const categoryOf = async (id: string) => {
+        const { data } = await admin
+          .from("time_entries")
+          .select("service_category")
+          .eq("id", id)
+          .single();
+        return data?.service_category ?? null;
+      };
+      const editActivityCount = async () => {
+        const { count } = await admin
+          .from("activity_log")
+          .select("id", { count: "exact", head: true })
+          .eq("target_user_id", catMember.userId)
+          .eq("action", "time_entry_edited");
+        return count ?? 0;
+      };
+      const weeksAgo = (weeks: number) => {
+        const { entryStart, entryEnd } = thisWeekWednesdayUtc();
+        const shift = weeks * 7 * 86_400_000;
+        return {
+          entryStart: new Date(entryStart.getTime() - shift),
+          entryEnd: new Date(entryEnd.getTime() - shift),
+        };
+      };
+      const insertEntry = async (projectId: string, weeks: number) => {
+        const { entryStart, entryEnd } = weeksAgo(weeks);
+        const { data, error } = await admin
+          .from("time_entries")
+          .insert({
+            user_id: catMember.userId,
+            project_id: projectId,
+            description: "Category test",
+            start_time: entryStart.toISOString(),
+            end_time: entryEnd.toISOString(),
+          })
+          .select("id")
+          .single();
+        if (error || !data) throw new Error(`entry insert failed: ${error?.message}`);
+        return data.id;
+      };
+
+      beforeAll(async () => {
+        catMember = await fixtureUser("cat-member", "member");
+        const { error: teamError } = await admin
+          .from("team_members")
+          .insert({ user_id: catMember.userId, team_id: teamId });
+        if (teamError) throw new Error(`team_members insert failed: ${teamError.message}`);
+
+        const tagRows = [
+          { key: "pc", category: "paid_casual" },
+          { key: "vip", category: "vip_client" },
+          { key: "plain", category: null },
+          { key: "spare", category: null },
+        ] as const;
+        for (const { key, category } of tagRows) {
+          const { data, error } = await admin
+            .from("tags")
+            .insert({
+              name: `Cat tag ${key} ${suffix}`,
+              color: "#888888",
+              service_category: category,
+            })
+            .select("id")
+            .single();
+          if (error || !data) throw new Error(`tag insert failed: ${error?.message}`);
+          tagIds[key] = data.id;
+        }
+        for (const key of ["pc", "vip", "plain"] as const) {
+          const { data, error } = await admin
+            .from("projects")
+            .insert({ name: `Cat project ${key} ${suffix}` })
+            .select("id")
+            .single();
+          if (error || !data) throw new Error(`project insert failed: ${error?.message}`);
+          projectIds[key] = data.id;
+        }
+        const { error: linkError } = await admin.from("project_tags").insert([
+          { project_id: projectIds.pc, tag_id: tagIds.pc },
+          { project_id: projectIds.vip, tag_id: tagIds.vip },
+          { project_id: projectIds.plain, tag_id: tagIds.plain },
+        ]);
+        if (linkError) throw new Error(`project_tags insert failed: ${linkError.message}`);
+      }, RPC_TIMEOUT);
+
+      afterAll(async () => {
+        await admin.from("time_entries").delete().eq("user_id", catMember.userId);
+        await admin.from("projects").delete().in("id", Object.values(projectIds));
+        await admin.from("tags").delete().in("id", Object.values(tagIds));
+      }, RPC_TIMEOUT);
+
+      it(
+        "gives a timer started on a Paid Casual project that category, whatever the caller sent",
+        async () => {
+          const { data, error } = await catMember.client
+            .from("time_entries")
+            .insert({
+              user_id: catMember.userId,
+              project_id: projectIds.pc,
+              description: "Timer",
+              start_time: new Date(Date.now() - 60_000).toISOString(),
+              service_category: "vip_client",
+            })
+            .select("id")
+            .single();
+          expect(error).toBeNull();
+          timerId = data!.id;
+          expect(await categoryOf(timerId)).toBe("paid_casual");
+          // Stop it so it doesn't block anything else this user does.
+          await admin
+            .from("time_entries")
+            .update({ end_time: new Date().toISOString() })
+            .eq("id", timerId);
+        },
+        RPC_TIMEOUT,
+      );
+
+      it(
+        "replaces a category the owner writes directly with the project's",
+        async () => {
+          const { error } = await catMember.client
+            .from("time_entries")
+            .update({ service_category: "vip_client" })
+            .eq("id", timerId);
+          expect(error).toBeNull();
+          expect(await categoryOf(timerId)).toBe("paid_casual");
+        },
+        RPC_TIMEOUT,
+      );
+
+      it(
+        "follows the entry when it moves project, including to one with no category",
+        async () => {
+          await catMember.client
+            .from("time_entries")
+            .update({ project_id: projectIds.vip })
+            .eq("id", timerId);
+          expect(await categoryOf(timerId)).toBe("vip_client");
+          await catMember.client
+            .from("time_entries")
+            .update({ project_id: projectIds.plain })
+            .eq("id", timerId);
+          expect(await categoryOf(timerId)).toBeNull();
+        },
+        RPC_TIMEOUT,
+      );
+
+      it(
+        "rejects a second category tag on a project",
+        async () => {
+          const { error } = await managerUser.client
+            .from("project_tags")
+            .insert({ project_id: projectIds.pc, tag_id: tagIds.vip });
+          expect(error?.message).toMatch(/only have one casual service tag/i);
+        },
+        RPC_TIMEOUT,
+      );
+
+      it(
+        "stops a manager changing a tag's category",
+        async () => {
+          const { error } = await managerUser.client
+            .from("tags")
+            .update({ service_category: "promotional" })
+            .eq("id", tagIds.plain);
+          expect(error?.code).toBe("42501");
+        },
+        RPC_TIMEOUT,
+      );
+
+      it(
+        "a manager can rename a category tag, sending its category back unchanged",
+        async () => {
+          const { data, error } = await managerUser.client
+            .from("tags")
+            .update({ name: `Cat tag pc renamed ${suffix}`, service_category: "paid_casual" })
+            .eq("id", tagIds.pc)
+            .select("id");
+          expect(error).toBeNull();
+          expect(data).toHaveLength(1);
+        },
+        RPC_TIMEOUT,
+      );
+
+      it(
+        "linking a tag no project uses changes no entries",
+        async () => {
+          const before = await categoryOf(timerId);
+          const { error } = await adminUser.client
+            .from("tags")
+            .update({ service_category: "promotional" })
+            .eq("id", tagIds.spare);
+          expect(error).toBeNull();
+          expect(await categoryOf(timerId)).toBe(before);
+          await admin.from("tags").update({ service_category: null }).eq("id", tagIds.spare);
+        },
+        RPC_TIMEOUT,
+      );
+
+      it(
+        "rejects linking a tag that would give a project two category tags",
+        async () => {
+          await admin
+            .from("project_tags")
+            .insert({ project_id: projectIds.pc, tag_id: tagIds.plain });
+          const { error } = await adminUser.client
+            .from("tags")
+            .update({ service_category: "promotional" })
+            .eq("id", tagIds.plain);
+          expect(error?.message).toMatch(/only have one casual service tag/i);
+          await admin
+            .from("project_tags")
+            .delete()
+            .eq("project_id", projectIds.pc)
+            .eq("tag_id", tagIds.plain);
+        },
+        RPC_TIMEOUT,
+      );
+
+      it(
+        "an admin linking a tag re-syncs past entries with no side effects",
+        async () => {
+          const entryId = await insertEntry(projectIds.plain, 4);
+          const { data: before } = await admin
+            .from("time_entries")
+            .select("entry_date")
+            .eq("id", entryId)
+            .single();
+          await admin
+            .from("profiles")
+            .update({ timezone: "Pacific/Honolulu" })
+            .eq("id", catMember.userId);
+          const activityBefore = await editActivityCount();
+
+          const { error } = await adminUser.client
+            .from("tags")
+            .update({ service_category: "promotional" })
+            .eq("id", tagIds.plain);
+          expect(error).toBeNull();
+          expect(await categoryOf(entryId)).toBe("promotional");
+          expect(await categoryOf(timerId)).toBe("promotional");
+
+          const { data: after } = await admin
+            .from("time_entries")
+            .select("entry_date")
+            .eq("id", entryId)
+            .single();
+          expect(after?.entry_date).toBe(before?.entry_date);
+          expect(await editActivityCount()).toBe(activityBefore);
+
+          await admin
+            .from("profiles")
+            .update({ timezone: "Australia/Sydney" })
+            .eq("id", catMember.userId);
+          await admin.from("tags").update({ service_category: null }).eq("id", tagIds.plain);
+          expect(await categoryOf(entryId)).toBeNull();
+        },
+        RPC_TIMEOUT,
+      );
+
+      it(
+        "retag moves a project to a different category, counting each entry once",
+        async () => {
+          const entryId = await insertEntry(projectIds.vip, 5);
+          // The project form's save: delete every link, insert the new set.
+          const { error: delError } = await managerUser.client
+            .from("project_tags")
+            .delete()
+            .eq("project_id", projectIds.vip);
+          expect(delError).toBeNull();
+          const { error: insError } = await managerUser.client
+            .from("project_tags")
+            .insert({ project_id: projectIds.vip, tag_id: tagIds.pc });
+          expect(insError).toBeNull();
+
+          const { data: count, error } = await managerUser.client.rpc("retag_project_entries", {
+            _project_id: projectIds.vip,
+          });
+          expect(error).toBeNull();
+          // Tags and category both changed on this one entry: counted once.
+          expect(count).toBe(1);
+          expect(await categoryOf(entryId)).toBe("paid_casual");
+        },
+        RPC_TIMEOUT,
+      );
+
+      it(
+        "keeps a paid entry's category, and won't move it to an uncategorised project",
+        async () => {
+          // Three weeks back: the same age the tag-sync tests already show an
+          // owner can still edit.
+          const paidId = await insertEntry(projectIds.pc, 3);
+          await admin.from("time_entries").update({ va_paid_at: "2026-10-01" }).eq("id", paidId);
+          const unpaidId = await insertEntry(projectIds.pc, 3);
+
+          const { error: moveError } = await catMember.client
+            .from("time_entries")
+            .update({ project_id: projectIds.plain })
+            .eq("id", paidId);
+          expect(moveError?.code).toBe("23514");
+
+          // Unlinking the tag: the unpaid entry clears, the paid one is kept.
+          await admin.from("tags").update({ service_category: null }).eq("id", tagIds.pc);
+          expect(await categoryOf(unpaidId)).toBeNull();
+          expect(await categoryOf(paidId)).toBe("paid_casual");
+          await admin.from("tags").update({ service_category: "paid_casual" }).eq("id", tagIds.pc);
+          expect(await categoryOf(unpaidId)).toBe("paid_casual");
+        },
+        RPC_TIMEOUT,
+      );
+
+      it(
+        "delete_tag clears the category from that tag's entries without logging edits",
+        async () => {
+          // Nothing carries the vip tag any more (the retag test swapped it
+          // off its project), so put it on the plain project and give that
+          // project's entries its category before deleting it.
+          const entryId = await insertEntry(projectIds.plain, 3);
+          await admin.from("project_tags").delete().eq("project_id", projectIds.plain);
+          await admin
+            .from("project_tags")
+            .insert({ project_id: projectIds.plain, tag_id: tagIds.vip });
+          await admin.rpc("resync_entry_service_categories", { _project_ids: [projectIds.plain] });
+          expect(await categoryOf(entryId)).toBe("vip_client");
+          const activityBefore = await editActivityCount();
+
+          const { error } = await managerUser.client.rpc("delete_tag", { _tag_id: tagIds.vip });
+          expect(error).toBeNull();
+          expect(await categoryOf(entryId)).toBeNull();
+          expect(await editActivityCount()).toBe(activityBefore);
+        },
+        RPC_TIMEOUT,
+      );
+    });
+
     // 20261014010000_placement_employment_type.sql: Billing → Placements'
     // full-time / part-time sections read this column.
     describe("va_placements employment_type", () => {

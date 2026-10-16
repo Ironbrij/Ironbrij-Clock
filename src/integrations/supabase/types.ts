@@ -567,18 +567,21 @@ export type Database = {
           created_at: string;
           id: string;
           name: string;
+          service_category: Database["public"]["Enums"]["casual_service_category"] | null;
         };
         Insert: {
           color?: string;
           created_at?: string;
           id?: string;
           name: string;
+          service_category?: Database["public"]["Enums"]["casual_service_category"] | null;
         };
         Update: {
           color?: string;
           created_at?: string;
           id?: string;
           name?: string;
+          service_category?: Database["public"]["Enums"]["casual_service_category"] | null;
         };
         Relationships: [];
       };
@@ -1057,6 +1060,10 @@ export type Database = {
           project_id: string;
         }[];
       };
+      project_service_category: {
+        Args: { _project_id: string };
+        Returns: Database["public"]["Enums"]["casual_service_category"];
+      };
       record_casual_report_email: {
         Args: {
           _billed_hours: number;
@@ -1076,6 +1083,10 @@ export type Database = {
           manager_name: string;
           week_start: string;
         }[];
+      };
+      resync_entry_service_categories: {
+        Args: { _project_ids?: string[] };
+        Returns: string[];
       };
       retag_project_entries: { Args: { _project_id: string }; Returns: number };
       review_timesheet: {
