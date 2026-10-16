@@ -1698,6 +1698,7 @@ function Reports() {
             "Project",
             "Client",
             "Tags",
+            "Category",
             "Task",
             "Description",
             basis === "billed" ? "Hours (with increment)" : "Hours (actual)",
@@ -1709,6 +1710,7 @@ function Reports() {
             r.projectName,
             r.clientName ?? "",
             r.projectTags.map((t) => t.name).join(", "),
+            r.serviceCategory ? CASUAL_SERVICE_CATEGORY_LABELS[r.serviceCategory] : "",
             r.task || "",
             r.description || "",
             (basis === "billed"

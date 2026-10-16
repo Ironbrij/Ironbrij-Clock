@@ -14,7 +14,7 @@ import {
 import { tintedChipStyle } from "@/lib/chip-style";
 import { formatMinutes } from "@/lib/mock-data";
 import { fromDateKey } from "@/lib/time-utils";
-import type { WorkspaceTag } from "@/lib/workspace/types";
+import { CASUAL_SERVICE_CATEGORY_LABELS, type WorkspaceTag } from "@/lib/workspace/types";
 import type { DetailedReportRow } from "./report-rows";
 
 type DetailedReportViewProps = {
@@ -46,6 +46,7 @@ export function DetailedReportView({
                 <th className="px-5 py-3 text-left font-medium">Project</th>
                 <th className="px-5 py-3 text-left font-medium">Client</th>
                 {tags.length > 0 && <th className="px-5 py-3 text-left font-medium">Tags</th>}
+                <th className="px-5 py-3 text-left font-medium">Category</th>
                 <th className="px-5 py-3 text-left font-medium">Task</th>
                 <th className="px-5 py-3 text-left font-medium">Description</th>
                 <th className="px-5 py-3 text-right font-medium">Hours</th>
@@ -101,6 +102,9 @@ export function DetailedReportView({
                       )}
                     </td>
                   )}
+                  <td className="whitespace-nowrap px-5 py-3 text-muted-foreground">
+                    {r.serviceCategory ? CASUAL_SERVICE_CATEGORY_LABELS[r.serviceCategory] : "—"}
+                  </td>
                   <td className="px-5 py-3 text-muted-foreground">{r.task || "—"}</td>
                   <td
                     className="max-w-[280px] truncate px-5 py-3 text-muted-foreground"
@@ -117,7 +121,7 @@ export function DetailedReportView({
               {pagedDetailed.length === 0 && (
                 <tr>
                   <td
-                    colSpan={tags.length > 0 ? 9 : 8}
+                    colSpan={tags.length > 0 ? 10 : 9}
                     className="px-5 py-8 text-center text-sm text-muted-foreground"
                   >
                     No entries in this filter.
