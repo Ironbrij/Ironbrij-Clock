@@ -40,8 +40,9 @@ GRANT EXECUTE ON FUNCTION public.project_service_category(uuid) TO authenticated
 --    array_agg (NULL when nothing matches, which would mean everything).
 --
 --    An entry already marked VA-paid is never left without a category:
---    time_entries_va_paid_requires_category forbids it, and a paid record
---    shouldn't be silently rewritten. It keeps its category instead.
+--    time_entries_va_paid_requires_category forbids it, so a paid entry is
+--    never set to NULL; it keeps its category instead. (A tag remap can
+--    still move a paid entry between two non-null categories.)
 --
 --    Returns the ids it changed, so retag_project_entries can count an
 --    entry whose tags and category both changed only once.

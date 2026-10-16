@@ -483,11 +483,23 @@ export function EntryFormDialog({
               </Label>
             </div>
           )}
-          {projectCategory && (
+          {entry && (entry.serviceCategory ?? null) !== projectCategory ? (
             <p className="text-xs text-muted-foreground">
-              Casual service: {CASUAL_SERVICE_CATEGORY_LABELS[projectCategory]}, set by the
-              project's tag.
+              {entry.serviceCategory
+                ? `Casual service: ${CASUAL_SERVICE_CATEGORY_LABELS[entry.serviceCategory]} on this entry. Its project's tag now says ${
+                    projectCategory ? CASUAL_SERVICE_CATEGORY_LABELS[projectCategory] : "none"
+                  }.`
+                : `This entry has no casual service category. Its project's tag now says ${
+                    projectCategory ? CASUAL_SERVICE_CATEGORY_LABELS[projectCategory] : "none"
+                  }.`}
             </p>
+          ) : (
+            projectCategory && (
+              <p className="text-xs text-muted-foreground">
+                Casual service: {CASUAL_SERVICE_CATEGORY_LABELS[projectCategory]}, set by the
+                project's tag.
+              </p>
+            )
           )}
         </div>
         <DialogFooter>

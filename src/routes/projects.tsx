@@ -516,7 +516,7 @@ function ProjectsPage() {
             ? updateProject(editing.id, input, opts).then(({ retaggedEntries }) => {
                 toast.success("Project updated", {
                   description: retaggedEntries
-                    ? `${input.name} saved. Tags updated on ${retaggedEntries} existing ${
+                    ? `${input.name} saved. Updated tags or casual service category on ${retaggedEntries} existing ${
                         retaggedEntries === 1 ? "entry" : "entries"
                       }.`
                     : `${input.name} saved.`,
@@ -860,7 +860,7 @@ function ProjectFormDialog({
                   </div>
                   <p className="text-xs text-muted-foreground">
                     {retagExisting
-                      ? "Past entries get the new tags too, and their casual service category if that changed."
+                      ? "Past entries get the new tags too. If this changes the project's casual service category, their billed hours change as well."
                       : "Unticked, only entries logged from now on get the new tags and category."}
                   </p>
                 </>
@@ -1844,13 +1844,15 @@ function TagsTab({
           <AlertDialogHeader>
             <AlertDialogTitle>Delete {deleteTarget?.name}?</AlertDialogTitle>
             <AlertDialogDescription>
-              {deleteTarget && deleteTarget.entryCount > 0
-                ? `Currently on ${deleteTarget.entryCount} time ${
-                    deleteTarget.entryCount === 1 ? "entry" : "entries"
-                  }. It'll be removed from any projects using it, and won't appear as a choice going
+              {deleteTarget?.serviceCategory
+                ? "This tag sets the casual service category for its projects. Deleting it clears that category on their entries, past ones included (entries already marked paid keep theirs), which changes billed hours and revenue in Reports."
+                : deleteTarget && deleteTarget.entryCount > 0
+                  ? `Currently on ${deleteTarget.entryCount} time ${
+                      deleteTarget.entryCount === 1 ? "entry" : "entries"
+                    }. It'll be removed from any projects using it, and won't appear as a choice going
                     forward. Past time entries keep their own history regardless — nothing about
                     them changes.`
-                : "It'll be removed from any projects using it, and won't appear as a choice going forward."}
+                  : "It'll be removed from any projects using it, and won't appear as a choice going forward."}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

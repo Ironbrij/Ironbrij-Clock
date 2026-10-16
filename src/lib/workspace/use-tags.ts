@@ -65,9 +65,12 @@ export function useTagsData(enabled: boolean, isAdmin: boolean) {
   const createTag = useCallback(
     async (name: string, color: string, serviceCategory: CasualServiceCategory | null = null) => {
       if (serviceCategory !== null && !isAdmin) throw new Error(ADMIN_ONLY_CATEGORY_MESSAGE);
-      const { error } = await supabase
-        .from("tags")
-        .insert({ name: name.trim(), color, service_category: serviceCategory });
+      const { error } = await supabase.from("tags").insert({
+        name: name.trim(),
+        color,
+        // Left out when null so a deploy ahead of the migration still works.
+        ...(serviceCategory !== null ? { service_category: serviceCategory } : {}),
+      });
       throwIf(error, { "23505": "A tag with that name already exists." });
       qc.invalidateQueries({ queryKey: ["tags"] });
     },
@@ -92,7 +95,7 @@ export function useTagsData(enabled: boolean, isAdmin: boolean) {
         .update({
           name: name.trim(),
           color,
-          ...(serviceCategory !== undefined ? { service_category: serviceCategory } : {}),
+          ...(categoryChanged ? { service_category: serviceCategory } : {}),
         })
         .eq("id", id);
       throwIf(error, { "23505": "A tag with that name already exists." });

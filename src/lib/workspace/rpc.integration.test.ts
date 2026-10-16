@@ -1036,6 +1036,47 @@ if (hasLocalSupabase) {
       );
 
       it(
+        "rejects two category tags inserted in one statement",
+        async () => {
+          const { data: proj, error: createErr } = await admin
+            .from("projects")
+            .insert({ name: `Cat project two-in-one ${suffix}` })
+            .select("id")
+            .single();
+          expect(createErr).toBeNull();
+          const projectId = proj!.id;
+          const { error } = await managerUser.client.from("project_tags").insert([
+            { project_id: projectId, tag_id: tagIds.pc },
+            { project_id: projectId, tag_id: tagIds.vip },
+          ]);
+          expect(error?.message).toMatch(/only have one casual service tag/i);
+          const { data: rows, error: readErr } = await admin
+            .from("project_tags")
+            .select("tag_id")
+            .eq("project_id", projectId);
+          expect(readErr).toBeNull();
+          expect(rows ?? []).toHaveLength(0);
+          const { error: delErr } = await admin.from("projects").delete().eq("id", projectId);
+          expect(delErr).toBeNull();
+        },
+        RPC_TIMEOUT,
+      );
+
+      it(
+        "stops a manager creating a tag that already has a category",
+        async () => {
+          const name = `Cat tag mgr ${suffix}`;
+          const { error } = await managerUser.client
+            .from("tags")
+            .insert({ name, color: "#888888", service_category: "promotional" });
+          // If it unexpectedly succeeded the row would leak, so always clean up.
+          await admin.from("tags").delete().eq("name", name);
+          expect(error?.code).toBe("42501");
+        },
+        RPC_TIMEOUT,
+      );
+
+      it(
         "stops a manager changing a tag's category",
         async () => {
           const { error } = await managerUser.client
