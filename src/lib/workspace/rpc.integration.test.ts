@@ -1392,6 +1392,91 @@ if (hasLocalSupabase) {
         RPC_TIMEOUT,
       );
 
+      // 20261016030000_hourly_placements.sql: a client invoice rate per
+      // placement, and actual hours per placement per week.
+      it(
+        "lets a manager set a placement's invoice rate, but never a negative one",
+        async () => {
+          const { data, error } = await managerUser.client
+            .from("va_placements")
+            .update({ client_hourly_rate: 14.86 })
+            .eq("id", placementId)
+            .select("client_hourly_rate");
+          expect(error).toBeNull();
+          expect(data).toEqual([{ client_hourly_rate: 14.86 }]);
+
+          const { error: negativeError } = await managerUser.client
+            .from("va_placements")
+            .update({ client_hourly_rate: -1 })
+            .eq("id", placementId);
+          expect(negativeError?.code).toBe("23514");
+        },
+        RPC_TIMEOUT,
+      );
+
+      it(
+        "lets a manager enter, change and read a placement's hours for a week",
+        async () => {
+          const { error } = await managerUser.client
+            .from("placement_week_hours")
+            .upsert(
+              { placement_id: placementId, week_start: "2026-10-05", hours: 43.5 },
+              { onConflict: "placement_id,week_start" },
+            )
+            .select("id");
+          expect(error).toBeNull();
+          // The same week again is an update, not a second row.
+          const { error: againError } = await managerUser.client
+            .from("placement_week_hours")
+            .upsert(
+              { placement_id: placementId, week_start: "2026-10-05", hours: 40 },
+              { onConflict: "placement_id,week_start" },
+            )
+            .select("id");
+          expect(againError).toBeNull();
+
+          const { data } = await managerUser.client
+            .from("placement_week_hours")
+            .select("week_start, hours")
+            .eq("placement_id", placementId);
+          expect(data).toEqual([{ week_start: "2026-10-05", hours: 40 }]);
+        },
+        RPC_TIMEOUT,
+      );
+
+      it(
+        "only takes Monday weeks and 0 to 168 hours",
+        async () => {
+          const { error: tuesday } = await managerUser.client
+            .from("placement_week_hours")
+            .insert({ placement_id: placementId, week_start: "2026-10-06", hours: 10 });
+          expect(tuesday?.code).toBe("23514");
+
+          const { error: tooMany } = await managerUser.client
+            .from("placement_week_hours")
+            .insert({ placement_id: placementId, week_start: "2026-10-12", hours: 169 });
+          expect(tooMany?.code).toBe("23514");
+        },
+        RPC_TIMEOUT,
+      );
+
+      it(
+        "hides placement hours from a plain member, and won't let them add any",
+        async () => {
+          const { data } = await memberUser.client
+            .from("placement_week_hours")
+            .select("id")
+            .eq("placement_id", placementId);
+          expect(data).toEqual([]);
+
+          const { error } = await memberUser.client
+            .from("placement_week_hours")
+            .insert({ placement_id: placementId, week_start: "2026-10-19", hours: 5 });
+          expect(error?.code).toBe("42501");
+        },
+        RPC_TIMEOUT,
+      );
+
       it(
         "keeps placements away from a plain member",
         async () => {

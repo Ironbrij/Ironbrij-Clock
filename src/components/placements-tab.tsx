@@ -33,6 +33,7 @@ import {
 } from "@/components/ui/select";
 import { Combobox } from "@/components/combobox";
 import {
+  clientMonthlyRevenue,
   managementFee,
   placementWeekFigures,
   vaMonthlyCost,
@@ -46,6 +47,7 @@ import {
   type PlacementCategory,
 } from "@/lib/workspace/types";
 import { ClientLink } from "@/components/detail-panel";
+import { placementWeekKey } from "@/lib/workspace/use-placements";
 
 const NEW_VA = "__new__";
 
@@ -72,6 +74,9 @@ const money = (amount: number | null, currency: string) => {
  */
 const asInput = (n: number | null) => (n === null ? "" : String(Math.round(n * 100) / 100));
 
+/** Hours as an input's text, to the cent-of-an-hour precision the column stores. */
+const asHours = (n: number | null) => (n === null ? "" : String(Math.round(n * 100) / 100));
+
 /**
  * M49: the admin editor for VA retainer placements — the "VA Package"
  * sheet. Lives in Manage for the same reason the Billing Rates and Casual
@@ -79,7 +84,11 @@ const asInput = (n: number | null) => (n === null ? "" : String(Math.round(n * 1
  * row-level actions live.
  *
  * Ending a placement sets its end date rather than deleting the row, so
- * the retainer accrual in past reports stays correct.
+ * past weeks stay priced in every report.
+ *
+ * Since 2026-10-16 placements are hourly on both sides, on each week's
+ * actual hours, which accounts enters in the "Week covered" view
+ * (src/lib/retainer.ts).
  */
 export function PlacementsTab() {
   const {
@@ -91,12 +100,19 @@ export function PlacementsTab() {
     createPlacement,
     updatePlacement,
     deletePlacement,
+    placementWeekHoursForRange,
+    setPlacementWeekHours,
   } = useWorkspace();
 
   const [statusFilter, setStatusFilter] = useState<"active" | "ended" | "all">("active");
-  // "Week covered" (2026-10-14): null shows the monthly view, where rows are
-  // editable; a Monday date key shows that week's figures, read-only.
+  // "Week covered" (2026-10-14): null shows the monthly view, where rates are
+  // edited; a Monday date key shows that week's figures, where accounts
+  // enters each placement's actual hours (2026-10-16).
   const [weekStart, setWeekStart] = useState<string | null>(null);
+  // That week's entered hours, keyed by placementWeekKey. Bumping the
+  // version reloads them after a save.
+  const [weekHours, setWeekHours] = useState<Map<string, number>>(new Map());
+  const [weekHoursVersion, setWeekHoursVersion] = useState(0);
   const [adding, setAdding] = useState(false);
 
   const thisWeek = toDateKey(startOfWeek(new Date()));
@@ -113,6 +129,30 @@ export function PlacementsTab() {
     return (id: string) => map.get(id) ?? "Unknown client";
   }, [clients]);
 
+  useEffect(() => {
+    if (weekStart === null || !canManage) {
+      setWeekHours(new Map());
+      return;
+    }
+    let cancelled = false;
+    placementWeekHoursForRange(weekStart, toDateKey(addDays(fromDateKey(weekStart), 6)))
+      .then((hours) => {
+        if (!cancelled) setWeekHours(hours);
+      })
+      .catch((error: Error) =>
+        toast.error("Couldn't load that week's hours", { description: error.message }),
+      );
+    return () => {
+      cancelled = true;
+    };
+  }, [weekStart, canManage, placementWeekHoursForRange, weekHoursVersion]);
+
+  const saveWeekHours = async (placementId: string, hours: number | null) => {
+    if (weekStart === null) return;
+    await setPlacementWeekHours(placementId, weekStart, hours);
+    setWeekHoursVersion((v) => v + 1);
+  };
+
   const rows = useMemo<PlacementRowData[]>(
     () =>
       placements
@@ -121,7 +161,14 @@ export function PlacementsTab() {
           vaLabel: vaName(p.placedVaId),
           clientLabel: clientName(p.clientId),
           fee: managementFee(p),
-          week: weekStart === null ? null : placementWeekFigures(p, weekStart),
+          week:
+            weekStart === null
+              ? null
+              : placementWeekFigures(
+                  p,
+                  weekStart,
+                  weekHours.get(placementWeekKey(p.id, weekStart)) ?? null,
+                ),
         }))
         // With a week picked, "live that week" is the filter — including
         // placements that have since ended. Otherwise filter by status.
@@ -138,7 +185,7 @@ export function PlacementsTab() {
           (a, b) =>
             a.vaLabel.localeCompare(b.vaLabel) || a.clientLabel.localeCompare(b.clientLabel),
         ),
-    [placements, statusFilter, weekStart, vaName, clientName],
+    [placements, statusFilter, weekStart, weekHours, vaName, clientName],
   );
 
   // One section per category, in the weekly sheet's order.
@@ -227,8 +274,8 @@ export function PlacementsTab() {
         </Button>
         <p className="text-xs text-muted-foreground">
           {weekStart === null
-            ? "VA cost /mo is the hourly rate × weekly hours × 52 ÷ 12, and the management fee is the package minus that — both calculated, not entered. Ending a placement keeps its history so past reports stay correct."
-            : "Placements live at any point in this week, with that week's figures: VA cost is the hourly rate × weekly hours, the package is its monthly price × 12 ÷ 52, and a placement that started or ended mid-week counts only its days. Pick All weeks to edit."}
+            ? "Rates are per hour (per unit for LMT). The /mo figures are at contracted hours × 52 ÷ 12, and the management fee is invoiced minus VA cost — calculated, not entered. Each week's actual hours go in Week covered. Ending a placement keeps its history so past reports stay correct."
+            : "Enter each VA's actual hours for this week (units for LMT). An empty cell uses the contracted hours, shown faintly, and a placement that started or ended mid-week gets only its days' share of them. VA cost and invoiced are those hours × each rate. Pick All weeks to change rates."}
         </p>
       </div>
 
@@ -241,6 +288,7 @@ export function PlacementsTab() {
           currency={settings.currency}
           onUpdate={updatePlacement}
           onDelete={deletePlacement}
+          onSaveHours={saveWeekHours}
         />
       ))}
 
@@ -254,7 +302,7 @@ export function PlacementsTab() {
                 {money(combined.cost, settings.currency)}
               </span>
               <span>
-                <span className="text-muted-foreground">Package {period} </span>
+                <span className="text-muted-foreground">Invoiced {period} </span>
                 {money(combined.revenue, settings.currency)}
               </span>
               <span className="font-semibold">
@@ -286,17 +334,19 @@ type UpdatePlacement = (
     endedOn?: string | null;
     vaHourlyRate?: number | null;
     contractedWeeklyHours?: number | null;
-    clientPackageAmount?: number | null;
+    clientHourlyRate?: number | null;
     category?: PlacementCategory;
   },
 ) => Promise<void>;
+
+type SaveWeekHours = (placementId: string, hours: number | null) => Promise<void>;
 
 /** Sums the shown figures — that week's, or monthly. Unpriced amounts are left out, not counted as 0. */
 function sumRows(rows: PlacementRowData[]) {
   return rows.reduce(
     (acc, r) => {
       const cost = r.week ? r.week.cost : vaMonthlyCost(r);
-      const revenue = r.week ? r.week.revenue : r.clientPackageAmount;
+      const revenue = r.week ? r.week.revenue : clientMonthlyRevenue(r);
       return {
         cost: acc.cost + (cost ?? 0),
         revenue: acc.revenue + (revenue ?? 0),
@@ -314,6 +364,7 @@ function PlacementSection({
   currency,
   onUpdate,
   onDelete,
+  onSaveHours,
 }: {
   title: string;
   rows: PlacementRowData[];
@@ -321,12 +372,13 @@ function PlacementSection({
   currency: string;
   onUpdate: UpdatePlacement;
   onDelete: (id: string) => Promise<void>;
+  onSaveHours: SaveWeekHours;
 }) {
   const totals = sumRows(rows);
   const period = weekMode ? "/wk" : "/mo";
-  const columns = weekMode ? 9 : 11;
+  const columns = weekMode ? 10 : 12;
   // Columns before VA cost, which the subtotal label spans.
-  const labelSpan = weekMode ? 5 : 6;
+  const labelSpan = weekMode ? 6 : 7;
 
   return (
     <section aria-label={`${title} placements`} className="space-y-2">
@@ -348,15 +400,19 @@ function PlacementSection({
                 <th className="px-3 py-3 text-left font-medium">Started</th>
                 <th className="px-3 py-3 text-left font-medium">Category</th>
                 {weekMode ? (
-                  <th className="px-3 py-3 text-right font-medium">Days</th>
+                  <>
+                    <th className="px-3 py-3 text-right font-medium">Days</th>
+                    <th className="px-3 py-3 text-right font-medium">Hours</th>
+                  </>
                 ) : (
                   <>
                     <th className="px-3 py-3 text-right font-medium">VA rate /hr</th>
                     <th className="px-3 py-3 text-right font-medium">Hours /wk</th>
+                    <th className="px-3 py-3 text-right font-medium">Invoice rate /hr</th>
                   </>
                 )}
                 <th className="px-3 py-3 text-right font-medium">VA cost {period}</th>
-                <th className="px-3 py-3 text-right font-medium">Package {period}</th>
+                <th className="px-3 py-3 text-right font-medium">Invoiced {period}</th>
                 <th className="px-3 py-3 text-right font-medium">Management fee {period}</th>
                 <th className="px-3 py-3 text-left font-medium">Status</th>
                 {!weekMode && <th className="w-12 px-3 py-3" />}
@@ -373,7 +429,14 @@ function PlacementSection({
                   </td>
                 </tr>
               ) : weekMode ? (
-                rows.map((r) => <PlacementWeekRow key={r.id} row={r} currency={currency} />)
+                rows.map((r) => (
+                  <PlacementWeekRow
+                    key={r.id}
+                    row={r}
+                    currency={currency}
+                    onSaveHours={onSaveHours}
+                  />
+                ))
               ) : (
                 rows.map((r) => (
                   <PlacementRow
@@ -440,9 +503,50 @@ function StatusBadge({ endedOn }: { endedOn: string | null }) {
   );
 }
 
-/** A placement's figures for the picked week. Read-only: editing happens in the monthly view. */
-function PlacementWeekRow({ row, currency }: { row: PlacementRowData; currency: string }) {
+/**
+ * A placement's figures for the picked week, with its actual hours editable.
+ * An empty Hours cell means "use the contracted hours", which show as the
+ * placeholder; clearing a cell deletes that week's entry again.
+ */
+function PlacementWeekRow({
+  row,
+  currency,
+  onSaveHours,
+}: {
+  row: PlacementRowData;
+  currency: string;
+  onSaveHours: SaveWeekHours;
+}) {
   const week = row.week!;
+  const entered = week.hoursEntered ? asHours(week.hours) : "";
+  const [hours, setHours] = useState(entered);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    setHours(entered);
+  }, [entered]);
+
+  const save = async () => {
+    const trimmed = hours.trim();
+    if (trimmed === entered) return;
+    const parsed = trimmed === "" ? null : Number(trimmed);
+    // Same bounds as placement_week_hours' CHECK constraint.
+    if (parsed !== null && (Number.isNaN(parsed) || parsed < 0 || parsed > 168)) {
+      toast.error("Hours must be between 0 and 168");
+      setHours(entered);
+      return;
+    }
+    setBusy(true);
+    try {
+      await onSaveHours(row.id, parsed);
+    } catch (error) {
+      toast.error("Couldn't save hours", { description: (error as Error).message });
+      setHours(entered);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <tr className="border-b border-border last:border-0 hover:bg-muted/40">
       <td className="px-3 py-3 font-medium">{row.vaLabel}</td>
@@ -455,6 +559,26 @@ function PlacementWeekRow({ row, currency }: { row: PlacementRowData; currency: 
       <td className="px-3 py-3 text-muted-foreground">{PLACEMENT_CATEGORY_LABELS[row.category]}</td>
       <td className="whitespace-nowrap px-3 py-3 text-right tabular-nums text-muted-foreground">
         {week.days === 7 ? "Full week" : `${week.days} of 7 days`}
+      </td>
+      <td className="px-3 py-3 text-right">
+        <Input
+          type="number"
+          min="0"
+          max="168"
+          step="0.25"
+          placeholder={week.hoursEntered || week.hours === null ? "—" : asHours(week.hours)}
+          title={
+            week.hoursEntered
+              ? "Hours entered for this week"
+              : "Contracted hours. Type this week's actual hours to replace them."
+          }
+          aria-label={`Hours this week for ${row.vaLabel} at ${row.clientLabel}`}
+          value={hours}
+          disabled={busy}
+          onChange={(e) => setHours(e.target.value)}
+          onBlur={() => void save()}
+          className="ml-auto h-8 w-20 text-right tabular-nums"
+        />
       </td>
       <td className="px-3 py-3 text-right tabular-nums">{money(week.cost, currency)}</td>
       <td className="px-3 py-3 text-right tabular-nums">{money(week.revenue, currency)}</td>
@@ -487,20 +611,20 @@ function PlacementRow({
 }) {
   const [rate, setRate] = useState(asInput(placement.vaHourlyRate));
   const [hours, setHours] = useState(asInput(placement.contractedWeeklyHours));
-  const [pkg, setPkg] = useState(placement.clientPackageAmount?.toString() ?? "");
+  const [invoice, setInvoice] = useState(asInput(placement.clientHourlyRate));
   const [busy, setBusy] = useState(false);
   const [confirmingRemove, setConfirmingRemove] = useState(false);
 
   useEffect(() => {
     setRate(asInput(placement.vaHourlyRate));
     setHours(asInput(placement.contractedWeeklyHours));
-    setPkg(placement.clientPackageAmount?.toString() ?? "");
-  }, [placement.vaHourlyRate, placement.contractedWeeklyHours, placement.clientPackageAmount]);
+    setInvoice(asInput(placement.clientHourlyRate));
+  }, [placement.vaHourlyRate, placement.contractedWeeklyHours, placement.clientHourlyRate]);
 
   // Same shape as the hourly-rate field in Manage → Schedule: no-op when
   // unchanged, reject anything unparseable, revert local state on failure.
   const saveAmount = async (
-    field: "vaHourlyRate" | "contractedWeeklyHours" | "clientPackageAmount",
+    field: "vaHourlyRate" | "contractedWeeklyHours" | "clientHourlyRate",
     value: string,
     original: string,
     reset: (v: string) => void,
@@ -648,29 +772,32 @@ function PlacementRow({
           className="ml-auto h-8 w-16 text-right tabular-nums"
         />
       </td>
-      <td className="px-3 py-3 text-right tabular-nums text-muted-foreground">
-        {money(vaMonthlyCost(placement), currency)}
-      </td>
       <td className="px-3 py-3 text-right">
         <Input
           type="number"
           min="0"
           step="0.01"
           placeholder="N/A"
-          aria-label={`Monthly package for ${vaLabel} at ${clientLabel}`}
-          value={pkg}
+          aria-label={`Client invoice rate per hour for ${vaLabel} at ${clientLabel}`}
+          value={invoice}
           disabled={busy}
-          onChange={(e) => setPkg(e.target.value)}
+          onChange={(e) => setInvoice(e.target.value)}
           onBlur={() =>
             void saveAmount(
-              "clientPackageAmount",
-              pkg,
-              placement.clientPackageAmount?.toString() ?? "",
-              setPkg,
+              "clientHourlyRate",
+              invoice,
+              asInput(placement.clientHourlyRate),
+              setInvoice,
             )
           }
-          className="ml-auto h-8 w-24 text-right tabular-nums"
+          className="ml-auto h-8 w-20 text-right tabular-nums"
         />
+      </td>
+      <td className="px-3 py-3 text-right tabular-nums text-muted-foreground">
+        {money(vaMonthlyCost(placement), currency)}
+      </td>
+      <td className="px-3 py-3 text-right tabular-nums text-muted-foreground">
+        {money(clientMonthlyRevenue(placement), currency)}
       </td>
       <td className="px-3 py-3 text-right font-semibold tabular-nums">{money(fee, currency)}</td>
       <td className="px-3 py-3">
@@ -706,9 +833,9 @@ function PlacementRow({
                 Remove {vaLabel} at {clientLabel}?
               </AlertDialogTitle>
               <AlertDialogDescription>
-                This deletes the placement and its history, so past retainer reports will no longer
-                include it. If the placement has just finished, end it instead — click its Active
-                badge — which keeps past reports correct. This can't be undone.
+                This deletes the placement and its history, so past reports will no longer include
+                it. If the placement has just finished, end it instead — click its Active badge —
+                which keeps past reports correct. This can't be undone.
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
@@ -747,7 +874,7 @@ function AddPlacementDialog({
     endedOn: string | null;
     vaHourlyRate: number | null;
     contractedWeeklyHours: number | null;
-    clientPackageAmount: number | null;
+    clientHourlyRate: number | null;
     category: PlacementCategory;
   }) => Promise<void>;
 }) {
@@ -759,7 +886,7 @@ function AddPlacementDialog({
   const [startedOn, setStartedOn] = useState(toDateKey(new Date()));
   const [rate, setRate] = useState("");
   const [hours, setHours] = useState("40");
-  const [pkg, setPkg] = useState("");
+  const [invoice, setInvoice] = useState("");
   const [category, setCategory] = useState<PlacementCategory>("full_time");
   const [saving, setSaving] = useState(false);
 
@@ -771,13 +898,13 @@ function AddPlacementDialog({
     setStartedOn(toDateKey(new Date()));
     setRate("");
     setHours("40");
-    setPkg("");
+    setInvoice("");
     setCategory("full_time");
   }, [open]);
 
   const parse = (v: string) => (v.trim() === "" ? null : Number(v.trim()));
   const rateInvalid = rate.trim() !== "" && Number.isNaN(Number(rate.trim()));
-  const pkgInvalid = pkg.trim() !== "" && Number.isNaN(Number(pkg.trim()));
+  const invoiceInvalid = invoice.trim() !== "" && Number.isNaN(Number(invoice.trim()));
   const hoursValue = parse(hours);
   const hoursInvalid =
     hoursValue !== null && (Number.isNaN(hoursValue) || hoursValue <= 0 || hoursValue > 168);
@@ -785,10 +912,22 @@ function AddPlacementDialog({
     rateInvalid || hoursInvalid
       ? null
       : vaMonthlyCost({ vaHourlyRate: parse(rate), contractedWeeklyHours: hoursValue });
-  const previewPackage = pkgInvalid ? null : parse(pkg);
+  const previewRevenue =
+    invoiceInvalid || hoursInvalid
+      ? null
+      : clientMonthlyRevenue({
+          clientHourlyRate: parse(invoice),
+          contractedWeeklyHours: hoursValue,
+        });
   const vaReady = vaChoice === NEW_VA ? newVaName.trim() !== "" : vaChoice !== "";
   const canSubmit =
-    !saving && vaReady && !!clientId && !!startedOn && !rateInvalid && !hoursInvalid && !pkgInvalid;
+    !saving &&
+    vaReady &&
+    !!clientId &&
+    !!startedOn &&
+    !rateInvalid &&
+    !hoursInvalid &&
+    !invoiceInvalid;
 
   const submit = async () => {
     if (!canSubmit) return;
@@ -802,7 +941,7 @@ function AddPlacementDialog({
         endedOn: null,
         vaHourlyRate: parse(rate),
         contractedWeeklyHours: hoursValue,
-        clientPackageAmount: parse(pkg),
+        clientHourlyRate: parse(invoice),
         category,
       });
       toast.success("Placement added");
@@ -820,9 +959,10 @@ function AddPlacementDialog({
         <DialogHeader>
           <DialogTitle>Add a placement</DialogTitle>
           <DialogDescription>
-            A VA placed with a client: the VA is paid by the hour for their contracted weekly hours,
-            and the client pays a monthly package. Leave an amount blank if that side isn&apos;t
-            priced — the management fee then reads zero rather than a negative.
+            A VA placed with a client, billed by the hour on both sides: what the VA is paid and
+            what the client is invoiced. Each week&apos;s actual hours are entered under Week
+            covered; until then the contracted hours are used. Leave a rate blank if that side
+            isn&apos;t priced — the management fee then reads zero rather than a negative.
           </DialogDescription>
         </DialogHeader>
 
@@ -915,22 +1055,22 @@ function AddPlacementDialog({
               )}
             </div>
             <div className="grid gap-2">
-              <Label htmlFor="placement-pkg">Package /mo ({settings.currency})</Label>
+              <Label htmlFor="placement-invoice">Invoice rate /hr ({settings.currency})</Label>
               <Input
-                id="placement-pkg"
+                id="placement-invoice"
                 type="number"
                 min="0"
                 step="0.01"
-                value={pkg}
-                onChange={(e) => setPkg(e.target.value)}
+                value={invoice}
+                onChange={(e) => setInvoice(e.target.value)}
               />
             </div>
           </div>
           {previewCost !== null && (
             <p className="text-xs text-muted-foreground">
               VA cost ≈ {money(previewCost, settings.currency)} /mo
-              {previewPackage !== null &&
-                ` · management fee ≈ ${money(previewPackage - previewCost, settings.currency)} /mo`}
+              {previewRevenue !== null &&
+                ` · invoiced ≈ ${money(previewRevenue, settings.currency)} /mo · management fee ≈ ${money(previewRevenue - previewCost, settings.currency)} /mo`}
             </p>
           )}
         </div>

@@ -314,22 +314,22 @@ export function ProfitReportView({
         </CardContent>
       </Card>
 
-      {/* M49: retainers sit in their own table because a monthly
-            placement has no hours — folding it into the hourly grid above
-            would leave that grid's Hours and blended-rate columns
-            meaningless. The combined total below is what ties them
-            together. */}
+      {/* M49: placements sit in their own table because the hourly grid
+            above is built from IronTrack time entries, and placed VAs log
+            none. Since 2026-10-16 they're priced on each week's entered hours
+            × their hourly rates (src/lib/retainer.ts). The combined total
+            below is what ties the two together. */}
       {!profitTruncated && (
         <Card className="mt-6 shadow-card">
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">
-              Retainers — monthly placements, accrued across this range
+              Placements — weekly hours × hourly rates, across this range
             </CardTitle>
           </CardHeader>
           <CardContent className="overflow-x-auto p-0">
             {!retainersApply ? (
               <p className="px-5 py-6 text-sm text-muted-foreground">
-                Retainers aren&apos;t shown while a team filter is on — placed VAs aren&apos;t
+                Placements aren&apos;t shown while a team filter is on — placed VAs aren&apos;t
                 IronTrack members, so they don&apos;t belong to a team. Clear the team filter to
                 include them.
               </p>
@@ -490,11 +490,11 @@ export function ProfitReportView({
           <CardContent className="flex flex-wrap items-center justify-between gap-4 px-5 py-4">
             <div>
               <p className="text-sm font-semibold">
-                Total profit — hourly and retainer, after salaries
+                Total profit — hourly and placements, after salaries
               </p>
               <p className="text-xs text-muted-foreground">
                 {formatCurrency(profitGrandTotals.profit, settings.currency)} hourly +{" "}
-                {formatCurrency(retainerTotals.profit, settings.currency)} retainer
+                {formatCurrency(retainerTotals.profit, settings.currency)} placements
                 {salaryTotals.salary > 0
                   ? ` − ${formatCurrency(salaryTotals.salary, settings.currency)} salaries`
                   : ""}

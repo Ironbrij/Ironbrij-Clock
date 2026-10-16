@@ -200,7 +200,7 @@ type WorkspaceContextValue = {
   createBillingRate: (input: WorkspaceBillingRateInput) => Promise<void>;
   updateBillingRate: (id: string, hourlyRate: number) => Promise<void>;
   deleteBillingRate: (id: string) => Promise<void>;
-  /** M49: VA↔client retainer placements, for Manage → Placements and the retainer half of Reports → Gross Profit — empty for anyone who isn't a manager/admin. Accrue one with `retainerAccrualForRange` (src/lib/retainer.ts). */
+  /** M49: VA↔client retainer placements, for Manage → Placements and the retainer half of Reports → Gross Profit — empty for anyone who isn't a manager/admin. Price one with `placementWeekFigures` / `placementFiguresForRange` (src/lib/retainer.ts). */
   placements: WorkspacePlacement[];
   /** The people named on those placements. Not IronTrack members — they log no time here. */
   placedVAs: WorkspacePlacedVA[];
@@ -212,11 +212,19 @@ type WorkspaceContextValue = {
       endedOn?: string | null;
       vaHourlyRate?: number | null;
       contractedWeeklyHours?: number | null;
-      clientPackageAmount?: number | null;
+      clientHourlyRate?: number | null;
       category?: PlacementCategory;
     },
   ) => Promise<void>;
   deletePlacement: (id: string) => Promise<void>;
+  /** 2026-10-16: entered hours per placement per week for the weeks a range touches, keyed by `placementWeekKey` (use-placements.ts). A missing key means "use the contracted hours". */
+  placementWeekHoursForRange: (from: string, to: string) => Promise<Map<string, number>>;
+  /** Records one placement week's actual hours; null clears it back to the contracted hours. */
+  setPlacementWeekHours: (
+    placementId: string,
+    weekStart: string,
+    hours: number | null,
+  ) => Promise<void>;
   timesheetForWeek: (weekStart: Date) => WorkspaceTimesheet | undefined;
   submitTimesheet: (weekStart: Date) => Promise<void>;
   reviewTimesheet: (
@@ -440,8 +448,15 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const { billingRates, createBillingRate, updateBillingRate, deleteBillingRate } =
     useBillingRatesData(enabled, canManage, uid);
 
-  const { placements, placedVAs, createPlacement, updatePlacement, deletePlacement } =
-    usePlacementsData(enabled, canManage, uid);
+  const {
+    placements,
+    placedVAs,
+    createPlacement,
+    updatePlacement,
+    deletePlacement,
+    placementWeekHoursForRange,
+    setPlacementWeekHours,
+  } = usePlacementsData(enabled, canManage, uid);
 
   const { teamsQ, teams, createTeam, updateTeam, deleteTeam } = useTeamsData(enabled);
 
@@ -609,6 +624,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       createPlacement,
       updatePlacement,
       deletePlacement,
+      placementWeekHoursForRange,
+      setPlacementWeekHours,
       timesheetForWeek,
       membersByTeam,
       teamMemberCount,
@@ -732,6 +749,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     createPlacement,
     updatePlacement,
     deletePlacement,
+    placementWeekHoursForRange,
+    setPlacementWeekHours,
     timesheetForWeek,
     submitTimesheet,
     reviewTimesheet,
