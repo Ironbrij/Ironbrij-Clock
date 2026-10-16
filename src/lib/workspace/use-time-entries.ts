@@ -346,7 +346,12 @@ export function useTimeEntriesData(
         .update(dbPatch)
         .eq("id", entryId)
         .select("id");
-      throwIf(error, { "42501": POLICY_VIOLATION_MESSAGE, "23514": PAID_ENTRY_MOVE_MESSAGE });
+      // Only the paid-entry constraint gets the paid message — other CHECKs
+      // on time_entries (far-future start, negative duration) share 23514.
+      if (error?.code === "23514" && /time_entries_va_paid_requires_category/.test(error.message)) {
+        throw new Error(PAID_ENTRY_MOVE_MESSAGE);
+      }
+      throwIf(error, { "42501": POLICY_VIOLATION_MESSAGE });
       if (!data || data.length === 0) throw new Error(LOCKED_WEEK_MESSAGE);
       invalidateEntries();
     },
