@@ -74,7 +74,14 @@ export type WorkspaceProject = {
   budgetHours: number | null;
 };
 
-export type WorkspaceTag = { id: string; name: string; color: string; entryCount: number };
+export type WorkspaceTag = {
+  id: string;
+  name: string;
+  color: string;
+  entryCount: number;
+  /** Set on a tag that stands for a casual service category; the project carrying it gives every entry that category. Null for ordinary tags. */
+  serviceCategory: CasualServiceCategory | null;
+};
 export type WorkspaceClient = {
   id: string;
   name: string;

@@ -128,8 +128,18 @@ type WorkspaceContextValue = {
   teams: Team[];
   projects: WorkspaceProject[];
   tags: WorkspaceTag[];
-  createTag: (name: string, color: string) => Promise<void>;
-  updateTag: (id: string, name: string, color: string) => Promise<void>;
+  createTag: (
+    name: string,
+    color: string,
+    serviceCategory?: CasualServiceCategory | null,
+  ) => Promise<void>;
+  /** Omit serviceCategory to leave the tag's category as it is. */
+  updateTag: (
+    id: string,
+    name: string,
+    color: string,
+    serviceCategory?: CasualServiceCategory | null,
+  ) => Promise<void>;
   deleteTag: (id: string) => Promise<void>;
   taskCategories: WorkspaceTaskCategory[];
   createTaskCategory: (name: string) => Promise<void>;
@@ -337,8 +347,6 @@ type WorkspaceContextValue = {
     endDate?: string;
     /** M26: omit to fall back to the project's own billable default. */
     billable?: boolean;
-    /** M46: no project-level fallback — omit/null for "not casual service." */
-    serviceCategory?: CasualServiceCategory | null;
   }) => Promise<void>;
   updateEntry: (
     entryId: string,
@@ -348,8 +356,6 @@ type WorkspaceContextValue = {
       description?: string;
       /** M26: independent of the project's own default — omit for no change. */
       billable?: boolean;
-      /** M46: omit for no change; null clears it. Excludes vaPaidAt — admin-only, via markCasualEntriesPaid. */
-      serviceCategory?: CasualServiceCategory | null;
       date?: string;
       startTime?: string;
       /** `null` means "still running, leave it open" — see use-time-entries.ts's updateEntry. */
@@ -448,7 +454,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     deleteClient,
   } = useClientsData(enabled);
 
-  const { tagsQ, tagUsageQ, tags, createTag, updateTag, deleteTag } = useTagsData(enabled);
+  const { tagsQ, tagUsageQ, tags, createTag, updateTag, deleteTag } = useTagsData(enabled, isAdmin);
 
   const {
     taskCategoriesQ,

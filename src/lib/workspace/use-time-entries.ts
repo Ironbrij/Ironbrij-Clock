@@ -67,6 +67,10 @@ function mapEntryRow(e: TimeEntryRow): WorkspaceEntry {
   };
 }
 
+/** A paid entry can't lose its category (time_entries_va_paid_requires_category), so it can't move to a project without one. */
+const PAID_ENTRY_MOVE_MESSAGE =
+  "This entry is already marked as paid casual service, so it can't move to a project that isn't casual service. Ask an admin to clear the paid date first.";
+
 const LOCKED_WEEK_MESSAGE =
   "This week is locked because it's been submitted or approved — ask your manager to send it back if you need to make changes.";
 
@@ -241,8 +245,6 @@ export function useTimeEntriesData(
         description?: string;
         /** M26: independent of the project's own default — omit for no change. */
         billable?: boolean;
-        /** M46: null clears it (not casual service). Omit for no change. Deliberately excludes vaPaidAt — that's admin-only, via markCasualEntriesPaid, never through this self-editable path. */
-        serviceCategory?: CasualServiceCategory | null;
         date?: string;
         startTime?: string;
         /**
@@ -267,7 +269,6 @@ export function useTimeEntriesData(
       if (patch.task !== undefined) dbPatch.task = patch.task;
       if (patch.description !== undefined) dbPatch.description = patch.description;
       if (patch.billable !== undefined) dbPatch.is_billable = patch.billable;
-      if (patch.serviceCategory !== undefined) dbPatch.service_category = patch.serviceCategory;
 
       if (patch.endTime === null) {
         // Still running — the dialog always supplies both when editing this
@@ -345,6 +346,11 @@ export function useTimeEntriesData(
         .update(dbPatch)
         .eq("id", entryId)
         .select("id");
+      // Only the paid-entry constraint gets the paid message — other CHECKs
+      // on time_entries (far-future start, negative duration) share 23514.
+      if (error?.code === "23514" && /time_entries_va_paid_requires_category/.test(error.message)) {
+        throw new Error(PAID_ENTRY_MOVE_MESSAGE);
+      }
       throwIf(error, { "42501": POLICY_VIOLATION_MESSAGE });
       if (!data || data.length === 0) throw new Error(LOCKED_WEEK_MESSAGE);
       invalidateEntries();
@@ -364,8 +370,6 @@ export function useTimeEntriesData(
       endDate?: string;
       /** M26: omit to fall back to the project's own billable default, same as before this existed. */
       billable?: boolean;
-      /** M46: no project-level fallback — category is per-entry only. Omit/null for "not casual service" (the default for virtually every entry). */
-      serviceCategory?: CasualServiceCategory | null;
     }) => {
       if (!uid) return;
       if (!settings.allowManualEntry) {
@@ -391,7 +395,6 @@ export function useTimeEntriesData(
       // so it's atomic — either the whole shift is saved, or none of it is.
       const segments = splitByDay(start, end);
       const billable = input.billable ?? project?.billable ?? true;
-      const serviceCategory = input.serviceCategory ?? null;
       const rows = segments.map((seg) => ({
         user_id: uid,
         project_id: input.projectId,
@@ -404,7 +407,6 @@ export function useTimeEntriesData(
         // that used to live here is now GREATEST(1, seconds) in the trigger,
         // where it costs a second rather than a minute.
         is_billable: billable,
-        service_category: serviceCategory,
         tag_ids: project?.tagIds ?? [],
       }));
       const { error } = await supabase.from("time_entries").insert(rows);

@@ -77,6 +77,8 @@ import {
   type WorkspaceTaskCategory,
 } from "@/lib/workspace-store";
 import { ClientLink } from "@/components/detail-panel";
+import { categoryTagsAmong } from "@/lib/service-category";
+import { CASUAL_SERVICE_CATEGORY_LABELS, type CasualServiceCategory } from "@/lib/workspace/types";
 
 const PROJECTS_PAGE_SIZE = 12;
 
@@ -125,6 +127,7 @@ function ProjectsPage() {
     activeMembers,
     memberById,
     canManage,
+    isAdmin,
     createProject,
     updateProject,
     archiveProject,
@@ -269,6 +272,7 @@ function ProjectsPage() {
           updateTag={updateTag}
           deleteTag={deleteTag}
           canManage={canManage}
+          isAdmin={isAdmin}
         />
       )}
       {tab === "projects" && (
@@ -512,7 +516,7 @@ function ProjectsPage() {
             ? updateProject(editing.id, input, opts).then(({ retaggedEntries }) => {
                 toast.success("Project updated", {
                   description: retaggedEntries
-                    ? `${input.name} saved. Tags updated on ${retaggedEntries} existing ${
+                    ? `${input.name} saved. Updated tags or casual service category on ${retaggedEntries} existing ${
                         retaggedEntries === 1 ? "entry" : "entries"
                       }.`
                     : `${input.name} saved.`,
@@ -725,6 +729,13 @@ function ProjectFormDialog({
     !!project &&
     (tagIds.length !== project.tagIds.length || tagIds.some((id) => !project.tagIds.includes(id)));
 
+  // A project is one kind of work, so it can carry at most one casual
+  // service tag. The DB's project_tags_one_category_tag trigger is the
+  // backstop; this stops the save before writeProjectLinks has deleted the
+  // old links.
+  const pickedCategoryTags = categoryTagsAmong(tagIds, tags);
+  const categoryConflict = pickedCategoryTags.length > 1;
+
   const toggle = (setter: (fn: (prev: string[]) => string[]) => void) => (id: string) =>
     setter((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
 
@@ -825,6 +836,12 @@ function ProjectFormDialog({
                 selected={tagIds}
                 onToggle={toggle(setTagIds)}
               />
+              {categoryConflict && (
+                <p className="text-xs text-destructive" role="alert">
+                  A project can only have one casual service tag. Untick all but one of{" "}
+                  {pickedCategoryTags.map((t) => t.name).join(", ")}.
+                </p>
+              )}
               {tagsChanged && (
                 <>
                   <div className="flex items-start gap-2">
@@ -843,8 +860,8 @@ function ProjectFormDialog({
                   </div>
                   <p className="text-xs text-muted-foreground">
                     {retagExisting
-                      ? "Reports will show the new tags on past entries too."
-                      : "Unticked, only entries logged from now on get the new tags."}
+                      ? "Past entries get the new tags too. If this changes the project's casual service category, their billed hours change as well."
+                      : "Unticked, only entries logged from now on get the new tags and category."}
                   </p>
                 </>
               )}
@@ -930,6 +947,7 @@ function ProjectFormDialog({
                 // Would silently save as "all", the opposite of what the
                 // scoped choice says.
                 (scopedCategories && taskCategoryIds.length === 0) ||
+                categoryConflict ||
                 saving
               }
               onClick={async () => {
@@ -1684,12 +1702,23 @@ function TagsTab({
   updateTag,
   deleteTag,
   canManage,
+  isAdmin,
 }: {
   tags: WorkspaceTag[];
-  createTag: (name: string, color: string) => Promise<void>;
-  updateTag: (id: string, name: string, color: string) => Promise<void>;
+  createTag: (
+    name: string,
+    color: string,
+    serviceCategory?: CasualServiceCategory | null,
+  ) => Promise<void>;
+  updateTag: (
+    id: string,
+    name: string,
+    color: string,
+    serviceCategory?: CasualServiceCategory | null,
+  ) => Promise<void>;
   deleteTag: (id: string) => Promise<void>;
   canManage: boolean;
+  isAdmin: boolean;
 }) {
   const [formOpen, setFormOpen] = useState(false);
   const [editingTag, setEditingTag] = useState<WorkspaceTag | null>(null);
@@ -1756,6 +1785,11 @@ function TagsTab({
                 >
                   <ProjectDot color={t.color} />
                   <span className="truncate">{t.name}</span>
+                  {t.serviceCategory && (
+                    <span className="shrink-0 text-xs font-normal opacity-80">
+                      · {CASUAL_SERVICE_CATEGORY_LABELS[t.serviceCategory]}
+                    </span>
+                  )}
                   <span className="sr-only"> — view entries</span>
                 </button>
                 <div className="flex shrink-0 items-center gap-1">
@@ -1800,6 +1834,7 @@ function TagsTab({
         tag={editingTag}
         createTag={createTag}
         updateTag={updateTag}
+        isAdmin={isAdmin}
       />
 
       <TagEntriesDialog tag={viewingTag} onOpenChange={(open) => !open && setViewingTag(null)} />
@@ -1809,13 +1844,15 @@ function TagsTab({
           <AlertDialogHeader>
             <AlertDialogTitle>Delete {deleteTarget?.name}?</AlertDialogTitle>
             <AlertDialogDescription>
-              {deleteTarget && deleteTarget.entryCount > 0
-                ? `Currently on ${deleteTarget.entryCount} time ${
-                    deleteTarget.entryCount === 1 ? "entry" : "entries"
-                  }. It'll be removed from any projects using it, and won't appear as a choice going
+              {deleteTarget?.serviceCategory
+                ? "This tag sets the casual service category for its projects. Deleting it clears that category on their entries, past ones included (entries already marked paid keep theirs), which changes billed hours and revenue in Reports."
+                : deleteTarget && deleteTarget.entryCount > 0
+                  ? `Currently on ${deleteTarget.entryCount} time ${
+                      deleteTarget.entryCount === 1 ? "entry" : "entries"
+                    }. It'll be removed from any projects using it, and won't appear as a choice going
                     forward. Past time entries keep their own history regardless — nothing about
                     them changes.`
-                : "It'll be removed from any projects using it, and won't appear as a choice going forward."}
+                  : "It'll be removed from any projects using it, and won't appear as a choice going forward."}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -1836,15 +1873,27 @@ function TagFormDialog({
   tag,
   createTag,
   updateTag,
+  isAdmin,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   tag: WorkspaceTag | null;
-  createTag: (name: string, color: string) => Promise<void>;
-  updateTag: (id: string, name: string, color: string) => Promise<void>;
+  createTag: (
+    name: string,
+    color: string,
+    serviceCategory?: CasualServiceCategory | null,
+  ) => Promise<void>;
+  updateTag: (
+    id: string,
+    name: string,
+    color: string,
+    serviceCategory?: CasualServiceCategory | null,
+  ) => Promise<void>;
+  isAdmin: boolean;
 }) {
   const [name, setName] = useState("");
   const [color, setColor] = useState(dotColors[0]);
+  const [serviceCategory, setServiceCategory] = useState<CasualServiceCategory | null>(null);
   const [saving, setSaving] = useState(false);
   const [nameError, setNameError] = useState<string | null>(null);
 
@@ -1852,6 +1901,7 @@ function TagFormDialog({
     if (open) {
       setName(tag?.name ?? "");
       setColor(tag?.color ?? dotColors[0]);
+      setServiceCategory(tag?.serviceCategory ?? null);
       setNameError(null);
     }
   }, [open, tag]);
@@ -1866,10 +1916,10 @@ function TagFormDialog({
     setSaving(true);
     try {
       if (tag) {
-        await updateTag(tag.id, trimmed, color);
+        await updateTag(tag.id, trimmed, color, serviceCategory);
         toast.success("Tag updated");
       } else {
-        await createTag(trimmed, color);
+        await createTag(trimmed, color, serviceCategory);
         toast.success("Tag added");
       }
       onOpenChange(false);
@@ -1908,6 +1958,35 @@ function TagFormDialog({
           <div className="grid gap-2" role="group" aria-labelledby="tag-colour-label">
             <Label id="tag-colour-label">Colour</Label>
             <ColorDotPicker value={color} onChange={setColor} />
+          </div>
+          <div className="grid gap-2">
+            <Label htmlFor="tag-service-category">Casual service category</Label>
+            <Select
+              value={serviceCategory ?? "none"}
+              onValueChange={(v) =>
+                setServiceCategory(v === "none" ? null : (v as CasualServiceCategory))
+              }
+              disabled={!isAdmin}
+            >
+              <SelectTrigger id="tag-service-category" aria-describedby="tag-service-category-help">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">None (ordinary tag)</SelectItem>
+                {(Object.keys(CASUAL_SERVICE_CATEGORY_LABELS) as CasualServiceCategory[]).map(
+                  (category) => (
+                    <SelectItem key={category} value={category}>
+                      {CASUAL_SERVICE_CATEGORY_LABELS[category]}
+                    </SelectItem>
+                  ),
+                )}
+              </SelectContent>
+            </Select>
+            <p id="tag-service-category-help" className="text-xs text-muted-foreground">
+              {isAdmin
+                ? "Every entry on a project with this tag is billed as this category, past entries included. A project can only have one of these tags."
+                : "Only admins can change this, because it changes billing."}
+            </p>
           </div>
         </div>
         <DialogFooter>

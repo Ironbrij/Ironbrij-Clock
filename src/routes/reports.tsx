@@ -1702,6 +1702,7 @@ function Reports() {
             "Description",
             basis === "billed" ? "Hours (with increment)" : "Hours (actual)",
             "Billable",
+            "Category",
           ],
           ...filteredDetailed.map((r) => [
             r.date,
@@ -1716,6 +1717,7 @@ function Reports() {
               : r.hours
             ).toFixed(2),
             r.billable ? "Yes" : "No",
+            r.serviceCategory ? CASUAL_SERVICE_CATEGORY_LABELS[r.serviceCategory] : "",
           ]),
         ],
       );
