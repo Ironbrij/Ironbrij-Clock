@@ -1548,6 +1548,81 @@ if (hasLocalSupabase) {
         RPC_TIMEOUT,
       );
 
+      // 20261016050000_subscriptions.sql: the Subscriptions page.
+      it(
+        "lets a manager add, change and remove a subscription",
+        async () => {
+          const { data: created, error } = await managerUser.client
+            .from("subscriptions")
+            .insert({
+              name: `Test tool ${suffix}`,
+              category: "ai_tools",
+              amount: 30,
+              currency: "USD",
+            })
+            .select("id, billing_cycle, status")
+            .single();
+          expect(error).toBeNull();
+          expect(created).toMatchObject({ billing_cycle: "monthly", status: "active" });
+
+          const { data: updated } = await managerUser.client
+            .from("subscriptions")
+            .update({ status: "cancelled" })
+            .eq("id", created!.id)
+            .select("status");
+          expect(updated).toEqual([{ status: "cancelled" }]);
+
+          const { data: removed } = await managerUser.client
+            .from("subscriptions")
+            .delete()
+            .eq("id", created!.id)
+            .select("id");
+          expect(removed).toHaveLength(1);
+        },
+        RPC_TIMEOUT,
+      );
+
+      it(
+        "rejects an unknown tab, a negative cost and a currency that isn't a 3-letter code",
+        async () => {
+          const bad: Database["public"]["Tables"]["subscriptions"]["Insert"][] = [
+            { name: "Bad tab", category: "games" },
+            { name: "Negative", category: "other", amount: -5 },
+            { name: "Currency", category: "other", currency: "usd" },
+          ];
+          for (const row of bad) {
+            const { error } = await managerUser.client.from("subscriptions").insert(row);
+            expect(error?.code).toBe("23514");
+          }
+        },
+        RPC_TIMEOUT,
+      );
+
+      it(
+        "hides subscriptions from a plain member, and won't let them add any",
+        async () => {
+          const { data: sub } = await admin
+            .from("subscriptions")
+            .insert({ name: `Hidden tool ${suffix}`, category: "other" })
+            .select("id")
+            .single();
+
+          const { data } = await memberUser.client
+            .from("subscriptions")
+            .select("id")
+            .eq("id", sub!.id);
+          expect(data).toEqual([]);
+
+          const { error } = await memberUser.client
+            .from("subscriptions")
+            .insert({ name: "Sneaky", category: "other" });
+          expect(error?.code).toBe("42501");
+
+          await admin.from("subscriptions").delete().eq("id", sub!.id);
+        },
+        RPC_TIMEOUT,
+      );
+
       it(
         "keeps placements away from a plain member",
         async () => {

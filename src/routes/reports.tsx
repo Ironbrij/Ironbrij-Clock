@@ -45,6 +45,12 @@ import { DetailedReportView } from "@/components/reports/detailed-report-view";
 import { EmployeeReportView } from "@/components/reports/employee-report-view";
 import { ProfitReportView } from "@/components/reports/profit-report-view";
 import { ProjectReportView } from "@/components/reports/project-report-view";
+import { WeeklyPnlView } from "@/components/reports/weekly-pnl-view";
+import {
+  buildWeeklyFinancials,
+  WEEKLY_DEPARTMENT_LABELS,
+  weeklyPnlRows,
+} from "@/lib/weekly-financials";
 import {
   AUDIENCE_LABELS,
   CASUAL_CHART_MAX_BARS,
@@ -233,6 +239,13 @@ function Reports() {
   // placement block below. A missing week means "use the contracted hours".
   const [placementHours, setPlacementHours] = useState<Map<string, number>>(new Map());
   const [loadingPlacementHours, setLoadingPlacementHours] = useState(true);
+  // 2026-10-16: Weekly P&L. Whole Monday-to-Sunday weeks — every week the
+  // range touches, like the sheet's columns — so it fetches its own entries
+  // and placement hours over those weeks rather than reusing the range's.
+  const [weeklyEntries, setWeeklyEntries] = useState<DetailedEntry[] | null>(null);
+  const [weeklyHours, setWeeklyHours] = useState<Map<string, number>>(new Map());
+  const [loadingWeekly, setLoadingWeekly] = useState(true);
+  const [selectedWeek, setSelectedWeek] = useState<string | null>(null);
 
   // M51: shared by the three tabs derived from `detailedEntries`. The
   // Project and Employee tabs come from SQL aggregates with no service
@@ -436,6 +449,39 @@ function Reports() {
       cancelled = true;
     };
   }, [from, to, canManage, placementWeekHoursForRange]);
+
+  const weeklyWeeks = useMemo(() => weeksInRange(from, to).map((w) => w.weekStart), [from, to]);
+  const weeklyFrom = weeklyWeeks[0] ?? from;
+  const weeklyTo =
+    weeklyWeeks.length > 0
+      ? toDateKey(addDays(fromDateKey(weeklyWeeks[weeklyWeeks.length - 1]), 6))
+      : to;
+
+  // Only fetched while the tab is open: it's a second, wider pull of entries.
+  useEffect(() => {
+    if (!canManage || view !== "weekly") {
+      setLoadingWeekly(false);
+      return;
+    }
+    let cancelled = false;
+    setLoadingWeekly(true);
+    Promise.all([
+      detailedEntriesForRange(weeklyFrom, weeklyTo),
+      placementWeekHoursForRange(weeklyFrom, weeklyTo),
+    ])
+      .then(([entries, hours]) => {
+        if (cancelled) return;
+        setWeeklyEntries(entries);
+        setWeeklyHours(hours);
+      })
+      .catch((error: Error) => toast.error("Couldn't load report", { description: error.message }))
+      .finally(() => {
+        if (!cancelled) setLoadingWeekly(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [canManage, view, weeklyFrom, weeklyTo, detailedEntriesForRange, placementWeekHoursForRange]);
 
   // M46: client-health data (all-time, company-wide) — the casual-service
   // rollup itself is derived below from `detailedEntries` (already fetched
@@ -1418,6 +1464,38 @@ function Reports() {
     currentDetailedPage * DETAILED_PAGE_SIZE,
   );
 
+  // Weekly P&L (2026-10-16): company-wide like the sheet, so none of the
+  // team/client/tag/audience filters apply. Truncation suppresses the
+  // figures, the same rule as Gross Profit.
+  const weeklyTruncated = (weeklyEntries?.length ?? 0) >= DETAILED_ENTRIES_LIMIT;
+  const weeklyFinancials =
+    view === "weekly" && weeklyEntries && !weeklyTruncated
+      ? buildWeeklyFinancials({
+          weeks: weeklyWeeks,
+          placements,
+          weekHours: (placementId, weekStart) =>
+            weeklyHours.get(placementWeekKey(placementId, weekStart)) ?? null,
+          entries: weeklyEntries.map((e) => ({
+            ...e,
+            clientId: projects.find((p) => p.id === e.projectId)?.clientId ?? null,
+          })),
+          billingRates,
+          employmentByUser,
+          revenueItems,
+          incrementHours: billingOpts.incrementHours,
+          upliftPct: billingOpts.upliftPct,
+        })
+      : [];
+  const weeklyRows = weeklyPnlRows(weeklyFinancials);
+  const weeklyClientLabel = (clientId: string | null) =>
+    clientId === null
+      ? NO_CLIENT
+      : (clients.find((cl) => cl.id === clientId)?.name ?? "Unknown client");
+  const weeklyPersonLabel = (row: { source: "placement" | "entry"; personId: string }) =>
+    row.source === "placement"
+      ? (placedVAs.find((v) => v.id === row.personId)?.fullName ?? "Unknown VA")
+      : (members.find((m) => m.id === row.personId)?.name ?? "Former member");
+
   const rangeLabel = preset === "custom" ? `${from} to ${to}` : presetLabels[preset];
   const loading =
     view === "project"
@@ -1428,7 +1506,9 @@ function Reports() {
           ? loadingDetailed || loadingCasual
           : view === "profit"
             ? loadingDetailed || loadingPlacementHours
-            : loadingDetailed;
+            : view === "weekly"
+              ? loadingWeekly
+              : loadingDetailed;
   // M48: gross profit reads `detailedEntries`, which detailedEntriesForRange
   // caps. A truncated money report is worse than none, so hitting the cap
   // suppresses the numbers rather than quietly under-reporting them.
@@ -1448,7 +1528,18 @@ function Reports() {
           ? casualTotalBillableHours
           : view === "profit"
             ? profitGrandTotals.actualHours
-            : filteredDetailed.reduce((s, r) => s + r.hours, 0);
+            : view === "weekly"
+              ? weeklyFinancials.reduce(
+                  (s, w) =>
+                    s +
+                    w.ib.hours +
+                    w.departments.reduce(
+                      (d, dept) => d + dept.rows.reduce((h, row) => h + row.hours, 0),
+                      0,
+                    ),
+                  0,
+                )
+              : filteredDetailed.reduce((s, r) => s + r.hours, 0);
   // H17: only meaningful on the employee view — a project or a raw entry
   // list has no single per-row rate to sum against.
   const totalAmount =
@@ -1510,6 +1601,60 @@ function Reports() {
       tagFilter === "all"
         ? ""
         : `_tag-${tags.find((t) => t.id === tagFilter)?.name.replace(/\s+/g, "-") ?? "unknown"}`;
+    if (view === "weekly") {
+      // The summary grid as on screen, then every week's detail rows in one
+      // long table, so the file can be pivoted however accounts likes.
+      const weekLabels = weeklyFinancials.map((w) => formatWeekRange(fromDateKey(w.weekStart)));
+      downloadCsv(`ironbrij-weekly-pnl_${weeklyFrom}_to_${weeklyTo}.csv`, [
+        ["", ...weekLabels],
+        ...weeklyRows.map((row) => [
+          row.label,
+          ...row.values.map((v) =>
+            v === null
+              ? ""
+              : row.format === "money" || row.format === "pct"
+                ? v.toFixed(2)
+                : String(v),
+          ),
+        ]),
+        [],
+        [
+          "Week",
+          "Department",
+          "Client",
+          "VA",
+          "Hours",
+          "Billed Hours",
+          `Pay Rate (${settings.currency})`,
+          `Paid (${settings.currency})`,
+          `Invoice Rate (${settings.currency})`,
+          `Invoiced (${settings.currency})`,
+          `Gross Profit (${settings.currency})`,
+        ],
+        ...weeklyFinancials.flatMap((w) =>
+          w.departments.flatMap((d) =>
+            d.rows.map((row) => [
+              w.weekStart,
+              WEEKLY_DEPARTMENT_LABELS[d.key],
+              weeklyClientLabel(row.clientId),
+              weeklyPersonLabel(row),
+              row.hours.toFixed(2),
+              row.billedHours.toFixed(2),
+              row.payRate === null
+                ? ""
+                : row.payRate === "salaried"
+                  ? "Salary"
+                  : row.payRate.toFixed(2),
+              row.paid.toFixed(2),
+              row.invoiceRate === null ? "No rate set" : row.invoiceRate.toFixed(2),
+              row.invoiced.toFixed(2),
+              row.profit.toFixed(2),
+            ]),
+          ),
+        ),
+      ]);
+      return;
+    }
     if (view === "project") {
       downloadCsv(`ironbrij-hours-by-project_${clientLabel}${tagLabel}_${from}_to_${to}.csv`, [
         ["Project", "Team", "Hours", "Billable Hours", "Date range"],
@@ -1968,6 +2113,7 @@ function Reports() {
               <TabsTrigger value="detailed">Detailed</TabsTrigger>
               <TabsTrigger value="casual">Casual Service</TabsTrigger>
               <TabsTrigger value="profit">Gross Profit</TabsTrigger>
+              <TabsTrigger value="weekly">Weekly P&amp;L</TabsTrigger>
             </TabsList>
           </Tabs>
         )}
@@ -2185,6 +2331,17 @@ function Reports() {
           settings={settings}
           sortedCasualGroups={sortedCasualGroups}
           tags={tags}
+        />
+      ) : view === "weekly" ? (
+        <WeeklyPnlView
+          weeks={weeklyFinancials}
+          rows={weeklyRows}
+          selectedWeek={selectedWeek}
+          setSelectedWeek={setSelectedWeek}
+          clientLabel={weeklyClientLabel}
+          personLabel={weeklyPersonLabel}
+          settings={settings}
+          truncated={weeklyTruncated}
         />
       ) : showClientFacing ? (
         /* M51: the client-facing view. A separate table fed by a separate

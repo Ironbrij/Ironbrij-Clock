@@ -3,7 +3,7 @@
 import { addDays, startOfWeek, toDateKey } from "@/lib/time-utils";
 import type { CasualServiceCategory, EmploymentType } from "@/lib/workspace/types";
 
-export type ReportView = "project" | "employee" | "detailed" | "casual" | "profit";
+export type ReportView = "project" | "employee" | "detailed" | "casual" | "profit" | "weekly";
 
 /**
  * Which hour figure an export prints, for the exports that offer a choice.
@@ -12,7 +12,14 @@ export type ReportView = "project" | "employee" | "detailed" | "casual" | "profi
  * — nothing else in the file is recomputed from them.
  */
 export type ExportHoursBasis = "billed" | "actual";
-export const reportViews: ReportView[] = ["project", "employee", "detailed", "casual", "profit"];
+export const reportViews: ReportView[] = [
+  "project",
+  "employee",
+  "detailed",
+  "casual",
+  "profit",
+  "weekly",
+];
 export const rangePresets: RangePreset[] = [
   "this_week",
   "this_month",

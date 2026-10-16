@@ -664,6 +664,82 @@ export type Database = {
         };
         Relationships: [];
       };
+      subscriptions: {
+        Row: {
+          amount: number | null;
+          billing_cycle: string;
+          category: string;
+          created_at: string;
+          created_by: string | null;
+          currency: string;
+          department_note: string | null;
+          id: string;
+          name: string;
+          notes: string | null;
+          renews_on: string | null;
+          status: string;
+          team_id: string | null;
+          updated_at: string;
+          updated_by: string | null;
+        };
+        Insert: {
+          amount?: number | null;
+          billing_cycle?: string;
+          category: string;
+          created_at?: string;
+          created_by?: string | null;
+          currency?: string;
+          department_note?: string | null;
+          id?: string;
+          name: string;
+          notes?: string | null;
+          renews_on?: string | null;
+          status?: string;
+          team_id?: string | null;
+          updated_at?: string;
+          updated_by?: string | null;
+        };
+        Update: {
+          amount?: number | null;
+          billing_cycle?: string;
+          category?: string;
+          created_at?: string;
+          created_by?: string | null;
+          currency?: string;
+          department_note?: string | null;
+          id?: string;
+          name?: string;
+          notes?: string | null;
+          renews_on?: string | null;
+          status?: string;
+          team_id?: string | null;
+          updated_at?: string;
+          updated_by?: string | null;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "subscriptions_created_by_fkey";
+            columns: ["created_by"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "subscriptions_team_id_fkey";
+            columns: ["team_id"];
+            isOneToOne: false;
+            referencedRelation: "teams";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "subscriptions_updated_by_fkey";
+            columns: ["updated_by"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       tags: {
         Row: {
           color: string;

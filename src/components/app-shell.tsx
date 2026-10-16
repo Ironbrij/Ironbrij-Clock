@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
 import {
   BarChart3,
+  Boxes,
   Clock,
   ClipboardList,
   FolderKanban,
@@ -37,6 +38,7 @@ const nav = [
   { to: "/announcements", label: "Announcements", icon: Megaphone, managersOnly: false },
   { to: "/reports", label: "Reports", icon: BarChart3, managersOnly: true },
   { to: "/billing", label: "Billing", icon: Receipt, managersOnly: true },
+  { to: "/subscriptions", label: "Subscriptions", icon: Boxes, managersOnly: true },
   { to: "/projects", label: "Projects", icon: FolderKanban, managersOnly: false },
   { to: "/teams", label: "Team", icon: Users, managersOnly: false },
   { to: "/time-off", label: "Time off", icon: Plane, managersOnly: false },

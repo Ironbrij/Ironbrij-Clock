@@ -17,6 +17,7 @@ import { Route as ManageRouteImport } from './routes/manage'
 import { Route as ProjectsRouteImport } from './routes/projects'
 import { Route as ReportsRouteImport } from './routes/reports'
 import { Route as SettingsRouteImport } from './routes/settings'
+import { Route as SubscriptionsRouteImport } from './routes/subscriptions'
 import { Route as TeamsRouteImport } from './routes/teams'
 import { Route as TimeRouteImport } from './routes/time'
 import { Route as TimeOffRouteImport } from './routes/time-off'
@@ -62,6 +63,11 @@ const SettingsRoute = SettingsRouteImport.update({
   path: '/settings',
   getParentRoute: () => rootRouteImport,
 } as any)
+const SubscriptionsRoute = SubscriptionsRouteImport.update({
+  id: '/subscriptions',
+  path: '/subscriptions',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const TeamsRoute = TeamsRouteImport.update({
   id: '/teams',
   path: '/teams',
@@ -92,6 +98,7 @@ export interface FileRoutesByFullPath {
   '/projects': typeof ProjectsRoute
   '/reports': typeof ReportsRoute
   '/settings': typeof SettingsRoute
+  '/subscriptions': typeof SubscriptionsRoute
   '/teams': typeof TeamsRoute
   '/time': typeof TimeRoute
   '/time-off': typeof TimeOffRoute
@@ -106,6 +113,7 @@ export interface FileRoutesByTo {
   '/projects': typeof ProjectsRoute
   '/reports': typeof ReportsRoute
   '/settings': typeof SettingsRoute
+  '/subscriptions': typeof SubscriptionsRoute
   '/teams': typeof TeamsRoute
   '/time': typeof TimeRoute
   '/time-off': typeof TimeOffRoute
@@ -121,6 +129,7 @@ export interface FileRoutesById {
   '/projects': typeof ProjectsRoute
   '/reports': typeof ReportsRoute
   '/settings': typeof SettingsRoute
+  '/subscriptions': typeof SubscriptionsRoute
   '/teams': typeof TeamsRoute
   '/time': typeof TimeRoute
   '/time-off': typeof TimeOffRoute
@@ -137,6 +146,7 @@ export interface FileRouteTypes {
     | '/projects'
     | '/reports'
     | '/settings'
+    | '/subscriptions'
     | '/teams'
     | '/time'
     | '/time-off'
@@ -151,6 +161,7 @@ export interface FileRouteTypes {
     | '/projects'
     | '/reports'
     | '/settings'
+    | '/subscriptions'
     | '/teams'
     | '/time'
     | '/time-off'
@@ -165,6 +176,7 @@ export interface FileRouteTypes {
     | '/projects'
     | '/reports'
     | '/settings'
+    | '/subscriptions'
     | '/teams'
     | '/time'
     | '/time-off'
@@ -180,6 +192,7 @@ export interface RootRouteChildren {
   ProjectsRoute: typeof ProjectsRoute
   ReportsRoute: typeof ReportsRoute
   SettingsRoute: typeof SettingsRoute
+  SubscriptionsRoute: typeof SubscriptionsRoute
   TeamsRoute: typeof TeamsRoute
   TimeRoute: typeof TimeRoute
   TimeOffRoute: typeof TimeOffRoute
@@ -244,6 +257,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/subscriptions': {
+      id: '/subscriptions'
+      path: '/subscriptions'
+      fullPath: '/subscriptions'
+      preLoaderRoute: typeof SubscriptionsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/teams': {
       id: '/teams'
       path: '/teams'
@@ -284,6 +304,7 @@ const rootRouteChildren: RootRouteChildren = {
   ProjectsRoute: ProjectsRoute,
   ReportsRoute: ReportsRoute,
   SettingsRoute: SettingsRoute,
+  SubscriptionsRoute: SubscriptionsRoute,
   TeamsRoute: TeamsRoute,
   TimeRoute: TimeRoute,
   TimeOffRoute: TimeOffRoute,
