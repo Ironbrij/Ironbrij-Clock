@@ -6,6 +6,7 @@ import type {
   DetailedEntry,
   WorkspaceMember,
   WorkspacePlacement,
+  WorkspaceRevenueItem,
   WorkspaceProject,
   WorkspaceTag,
 } from "@/lib/workspace/types";
@@ -84,6 +85,9 @@ export type RetainerReportRow = WorkspacePlacement & {
   revenue: number;
   profit: number;
 };
+
+/** 2026-10-16: one recruitment & set-up fee inside the report range, for Gross Profit. */
+export type FeeReportRow = WorkspaceRevenueItem & { clientLabel: string };
 
 export type SalaryWeekRow = {
   weekStart: string;

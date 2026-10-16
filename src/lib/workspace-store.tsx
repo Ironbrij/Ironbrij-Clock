@@ -27,6 +27,8 @@ import {
   type WorkspaceAnnouncement,
   type WorkspaceBillingRate,
   type WorkspaceBillingRateInput,
+  type WorkspaceRevenueItem,
+  type WorkspaceRevenueItemInput,
   type WorkspaceClient,
   type WorkspaceClientProfile,
   type WorkspaceEmployment,
@@ -44,6 +46,7 @@ import {
 } from "@/lib/workspace/types";
 import { useAnnouncementsData } from "@/lib/workspace/use-announcements";
 import { useBillingRatesData } from "@/lib/workspace/use-billing-rates";
+import { useRevenueItemsData } from "@/lib/workspace/use-revenue-items";
 import {
   useCasualReportsData,
   type CasualReportPreview,
@@ -96,6 +99,8 @@ export {
   type WorkspaceActivityEvent,
   type WorkspaceBillingRate,
   type WorkspaceBillingRateInput,
+  type WorkspaceRevenueItem,
+  type WorkspaceRevenueItemInput,
   type WorkspaceClient,
   type WorkspaceClientProfile,
   type WorkspaceEmployment,
@@ -200,6 +205,11 @@ type WorkspaceContextValue = {
   createBillingRate: (input: WorkspaceBillingRateInput) => Promise<void>;
   updateBillingRate: (id: string, hourlyRate: number) => Promise<void>;
   deleteBillingRate: (id: string) => Promise<void>;
+  /** 2026-10-16: one-off fees (recruitment & set-up) for Billing → Fees & revenue and Reports → Gross Profit — empty for anyone who isn't a manager/admin. */
+  revenueItems: WorkspaceRevenueItem[];
+  createRevenueItem: (input: WorkspaceRevenueItemInput) => Promise<void>;
+  updateRevenueItem: (id: string, input: WorkspaceRevenueItemInput) => Promise<void>;
+  deleteRevenueItem: (id: string) => Promise<void>;
   /** M49: VA↔client retainer placements, for Manage → Placements and the retainer half of Reports → Gross Profit — empty for anyone who isn't a manager/admin. Price one with `placementWeekFigures` / `placementFiguresForRange` (src/lib/retainer.ts). */
   placements: WorkspacePlacement[];
   /** The people named on those placements. Not IronTrack members — they log no time here. */
@@ -447,6 +457,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
 
   const { billingRates, createBillingRate, updateBillingRate, deleteBillingRate } =
     useBillingRatesData(enabled, canManage, uid);
+  const { revenueItems, createRevenueItem, updateRevenueItem, deleteRevenueItem } =
+    useRevenueItemsData(enabled, canManage, uid);
 
   const {
     placements,
@@ -619,6 +631,10 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       createBillingRate,
       updateBillingRate,
       deleteBillingRate,
+      revenueItems,
+      createRevenueItem,
+      updateRevenueItem,
+      deleteRevenueItem,
       placements,
       placedVAs,
       createPlacement,
@@ -744,6 +760,10 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     createBillingRate,
     updateBillingRate,
     deleteBillingRate,
+    revenueItems,
+    createRevenueItem,
+    updateRevenueItem,
+    deleteRevenueItem,
     placements,
     placedVAs,
     createPlacement,

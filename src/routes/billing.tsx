@@ -3,6 +3,7 @@ import { AppShell } from "@/components/app-shell";
 import { BillingRatesTab } from "@/components/billing-rates-tab";
 import { CasualServiceTab } from "@/components/casual-service-tab";
 import { PlacementsTab } from "@/components/placements-tab";
+import { RevenueItemsTab } from "@/components/revenue-items-tab";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 // The finance tabs, moved out of Manage so Manage is only about running the
@@ -14,6 +15,7 @@ const BILLING_TABS = [
   { id: "casual", label: "Casual Service" },
   { id: "rates", label: "Billing Rates" },
   { id: "placements", label: "Placements" },
+  { id: "fees", label: "Fees & revenue" },
 ] as const;
 type BillingTab = (typeof BILLING_TABS)[number]["id"];
 
@@ -29,7 +31,7 @@ export const Route = createFileRoute("/billing")({
       { title: "Billing — IronTrack" },
       {
         name: "description",
-        content: "Casual service entries, client billing rates and VA placements.",
+        content: "Casual service entries, client billing rates, VA placements and fees.",
       },
       { property: "og:title", content: "Billing — IronTrack" },
       {
@@ -74,8 +76,10 @@ function BillingPage() {
         <CasualServiceTab />
       ) : tab === "rates" ? (
         <BillingRatesTab />
-      ) : (
+      ) : tab === "placements" ? (
         <PlacementsTab />
+      ) : (
+        <RevenueItemsTab />
       )}
     </AppShell>
   );

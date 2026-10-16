@@ -198,6 +198,32 @@ export type WorkspacePlacementInput = Omit<WorkspacePlacement, "id" | "placedVaI
   placedVaName?: string;
 };
 
+/**
+ * 2026-10-16: revenue that doesn't come from hours — one-off fees entered by
+ * hand in Billing → Fees & revenue and added to Reports → Gross Profit. Only
+ * recruitment & set-up fees for now; another kind is a value here plus a
+ * wider CHECK on revenue_items.kind.
+ */
+export type RevenueKind = "recruitment_setup";
+
+export const REVENUE_KIND_LABELS: Record<RevenueKind, string> = {
+  recruitment_setup: "Recruitment & set-up fee",
+};
+
+export type WorkspaceRevenueItem = {
+  id: string;
+  /** Date key the fee counts towards — the week and period it's reported in. */
+  receivedOn: string;
+  /** Null for a fee that belongs to no client. */
+  clientId: string | null;
+  kind: RevenueKind;
+  amount: number;
+  note: string | null;
+};
+
+/** The editable half of a revenue item — what the add/edit form collects. */
+export type WorkspaceRevenueItemInput = Omit<WorkspaceRevenueItem, "id">;
+
 export type WorkspaceTaskCategory = { id: string; name: string };
 
 export type WorkspaceSettings = {

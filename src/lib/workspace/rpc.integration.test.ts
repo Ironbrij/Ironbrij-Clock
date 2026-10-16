@@ -1477,6 +1477,77 @@ if (hasLocalSupabase) {
         RPC_TIMEOUT,
       );
 
+      // 20261016040000_revenue_items.sql: recruitment & set-up fees.
+      it(
+        "lets a manager add, change and remove a recruitment fee",
+        async () => {
+          const { data: created, error } = await managerUser.client
+            .from("revenue_items")
+            .insert({ received_on: "2026-10-07", client_id: clientId, amount: 227.15 })
+            .select("id, kind, amount")
+            .single();
+          expect(error).toBeNull();
+          expect(created?.kind).toBe("recruitment_setup");
+          expect(created?.amount).toBe(227.15);
+
+          const { data: updated } = await managerUser.client
+            .from("revenue_items")
+            .update({ amount: 400 })
+            .eq("id", created!.id)
+            .select("amount");
+          expect(updated).toEqual([{ amount: 400 }]);
+
+          const { data: removed } = await managerUser.client
+            .from("revenue_items")
+            .delete()
+            .eq("id", created!.id)
+            .select("id");
+          expect(removed).toHaveLength(1);
+        },
+        RPC_TIMEOUT,
+      );
+
+      it(
+        "rejects a zero amount and any kind other than recruitment_setup",
+        async () => {
+          const { error: zero } = await managerUser.client
+            .from("revenue_items")
+            .insert({ received_on: "2026-10-07", amount: 0 });
+          expect(zero?.code).toBe("23514");
+
+          const { error: otherKind } = await managerUser.client
+            .from("revenue_items")
+            .insert({ received_on: "2026-10-07", amount: 10, kind: "business_coaching" });
+          expect(otherKind?.code).toBe("23514");
+        },
+        RPC_TIMEOUT,
+      );
+
+      it(
+        "hides fees from a plain member, and won't let them add any",
+        async () => {
+          const { data: fee } = await admin
+            .from("revenue_items")
+            .insert({ received_on: "2026-10-07", amount: 50 })
+            .select("id")
+            .single();
+
+          const { data } = await memberUser.client
+            .from("revenue_items")
+            .select("id")
+            .eq("id", fee!.id);
+          expect(data).toEqual([]);
+
+          const { error } = await memberUser.client
+            .from("revenue_items")
+            .insert({ received_on: "2026-10-07", amount: 50 });
+          expect(error?.code).toBe("42501");
+
+          await admin.from("revenue_items").delete().eq("id", fee!.id);
+        },
+        RPC_TIMEOUT,
+      );
+
       it(
         "keeps placements away from a plain member",
         async () => {

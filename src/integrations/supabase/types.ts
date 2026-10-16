@@ -585,6 +585,67 @@ export type Database = {
           },
         ];
       };
+      revenue_items: {
+        Row: {
+          amount: number;
+          client_id: string | null;
+          created_at: string;
+          created_by: string | null;
+          id: string;
+          kind: string;
+          note: string | null;
+          received_on: string;
+          updated_at: string;
+          updated_by: string | null;
+        };
+        Insert: {
+          amount: number;
+          client_id?: string | null;
+          created_at?: string;
+          created_by?: string | null;
+          id?: string;
+          kind?: string;
+          note?: string | null;
+          received_on: string;
+          updated_at?: string;
+          updated_by?: string | null;
+        };
+        Update: {
+          amount?: number;
+          client_id?: string | null;
+          created_at?: string;
+          created_by?: string | null;
+          id?: string;
+          kind?: string;
+          note?: string | null;
+          received_on?: string;
+          updated_at?: string;
+          updated_by?: string | null;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "revenue_items_client_id_fkey";
+            columns: ["client_id"];
+            isOneToOne: false;
+            referencedRelation: "clients";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "revenue_items_created_by_fkey";
+            columns: ["created_by"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "revenue_items_updated_by_fkey";
+            columns: ["updated_by"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       signup_invites: {
         Row: {
           created_at: string;

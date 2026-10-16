@@ -81,6 +81,7 @@ import type {
   CasualGroup,
   ClientFacingRow,
   DepartmentRow,
+  FeeReportRow,
   ProfitGroup,
   ProfitRow,
 } from "@/components/reports/report-rows";
@@ -251,6 +252,7 @@ function Reports() {
     placements,
     placedVAs,
     placementWeekHoursForRange,
+    revenueItems,
     projectHoursForRange,
     projectBillableHoursForRange,
     employeeHoursForRange,
@@ -1141,6 +1143,32 @@ function Reports() {
     { cost: 0, revenue: 0, profit: 0 },
   );
 
+  // 2026-10-16: recruitment & set-up fees (Billing → Fees & revenue) — revenue
+  // with no hours behind it, which the weekly sheet adds to Gross Profit
+  // ("Recruitment and Set Up Fee"). Counted on the date they were given.
+  // Withheld under a team filter for the same reason placements are (a fee
+  // belongs to no team), and under the Internal audience because it's client
+  // revenue. A client filter keeps that client's fees ("No client" keeps the
+  // ones with none).
+  const feesApply = teamFilter === "all" && audience === "all";
+
+  const feeRows: FeeReportRow[] = (feesApply ? revenueItems : [])
+    .filter((f) => f.receivedOn >= from && f.receivedOn <= to)
+    .filter((f) => {
+      if (clientFilter === "all") return true;
+      if (clientFilter === "none") return f.clientId === null;
+      return f.clientId === clientFilter;
+    })
+    .map((f) => ({
+      ...f,
+      clientLabel: f.clientId
+        ? (clients.find((c) => c.id === f.clientId)?.name ?? "Unknown client")
+        : NO_CLIENT,
+    }))
+    .sort((a, b) => a.receivedOn.localeCompare(b.receivedOn));
+
+  const feeTotal = feeRows.reduce((sum, f) => sum + f.amount, 0);
+
   // M50: the workbook's Net Loss line — casual gross profit against the fixed
   // weekly salary bill, week by week, because "did casual work cover payroll"
   // is a weekly question even when the report range isn't.
@@ -1379,8 +1407,8 @@ function Reports() {
 
   const combinedTotals = {
     cost: profitGrandTotals.cost + retainerTotals.cost + salaryTotals.salary,
-    revenue: profitGrandTotals.revenue + retainerTotals.revenue,
-    profit: profitGrandTotals.profit + retainerTotals.profit - salaryTotals.salary,
+    revenue: profitGrandTotals.revenue + retainerTotals.revenue + feeTotal,
+    profit: profitGrandTotals.profit + retainerTotals.profit + feeTotal - salaryTotals.salary,
   };
 
   const totalDetailedPages = Math.max(1, Math.ceil(filteredDetailed.length / DETAILED_PAGE_SIZE));
@@ -1676,6 +1704,20 @@ function Reports() {
                 ],
               ]
             : []),
+          ...(feesApply && feeRows.length > 0
+            ? [
+                [],
+                ["Recruitment & set-up fees"],
+                ["Date", "Client", "Note", `Amount (${settings.currency})`],
+                ...feeRows.map((f) => [
+                  f.receivedOn,
+                  f.clientLabel,
+                  f.note ?? "",
+                  f.amount.toFixed(2),
+                ]),
+                ["Total", "", "", feeTotal.toFixed(2)],
+              ]
+            : []),
           ...(salariesApply && salaryWeeks.length > 0
             ? [
                 [],
@@ -1710,7 +1752,7 @@ function Reports() {
             ? [
                 [],
                 [
-                  "Total profit (hourly + placements − salaries)",
+                  "Total profit (hourly + placements + fees − salaries)",
                   "",
                   "",
                   combinedTotals.cost.toFixed(2),
@@ -2173,6 +2215,9 @@ function Reports() {
           retainerRows={retainerRows}
           retainerTotals={retainerTotals}
           retainersApply={retainersApply}
+          feeRows={feeRows}
+          feeTotal={feeTotal}
+          feesApply={feesApply}
           salariesApply={salariesApply}
           salaryTotals={salaryTotals}
           salaryWeeks={salaryWeeks}
