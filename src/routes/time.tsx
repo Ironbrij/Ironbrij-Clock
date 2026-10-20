@@ -37,6 +37,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { CopyEodButton } from "@/components/copy-eod-button";
 import { DescriptionAutocomplete } from "@/components/description-autocomplete";
 import { EntryFormDialog } from "@/components/entry-form-dialog";
 import { useLongRunningTimerWarnings } from "@/components/running-timer";
@@ -630,7 +631,12 @@ function ListView() {
                 {index === 0 ? `Today · ${formatDayLong(day)}` : formatDayLong(day)}
               </CardTitle>
               <div className="flex items-center gap-3">
-                {index === 0 && <CopyYesterdayButton />}
+                {index === 0 && (
+                  <>
+                    <CopyEodButton day={day} entries={dayEntries} />
+                    <CopyYesterdayButton />
+                  </>
+                )}
                 <span className="text-sm text-muted-foreground tabular-nums">
                   {formatDuration(dayEntries.reduce((s, e) => s + e.seconds, 0))}
                 </span>
