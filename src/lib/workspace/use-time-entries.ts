@@ -26,6 +26,12 @@ import type {
  */
 export const DETAILED_ENTRIES_LIMIT = 5000;
 
+/** Row cap on your own entries (the rolling ENTRIES_HISTORY_DAYS window). Exported so History can say when it may be showing a cut-short list. */
+export const OWN_ENTRIES_LIMIT = 5000;
+
+/** Row cap on one person's entries over a date range (useMemberEntriesRangeData) — the newest rows win, so a capped result is missing its oldest days. */
+export const MEMBER_HISTORY_LIMIT = 5000;
+
 type TimeEntryUpdate = Database["public"]["Tables"]["time_entries"]["Update"];
 type TimeEntryRow = {
   id: string;
@@ -115,7 +121,7 @@ export function useTimeEntriesData(
             .order("start_time", { ascending: false })
             .order("id")
             .range(start, end),
-        5000,
+        OWN_ENTRIES_LIMIT,
       );
     },
   });
@@ -134,6 +140,7 @@ export function useTimeEntriesData(
     // updateEntry/deleteEntry are also what Manage > Entries uses for a
     // manager/admin editing someone else's entry — refresh that view too.
     qc.invalidateQueries({ queryKey: ["member_entries"] });
+    qc.invalidateQueries({ queryKey: ["member_entries_range"] });
   }, [qc]);
 
   // A second tab, a second device, or a manager acting on this person's
@@ -573,6 +580,47 @@ export function useMemberEntriesData(enabled: boolean, userId: string | null, we
   );
 
   return { entriesQ, entries };
+}
+
+/**
+ * One person's entries over an arbitrary date range — for History when a
+ * manager/admin looks at someone else (your own come from the already-loaded
+ * window instead). RLS scopes who that can be: admins anyone, managers people
+ * sharing a team. Paged past the server's 1,000-row cap; `truncated` means
+ * the cap was hit and the oldest days are missing.
+ */
+export function useMemberEntriesRangeData(
+  enabled: boolean,
+  userId: string | null,
+  from: string,
+  to: string,
+) {
+  const entriesQ = useQuery({
+    queryKey: ["member_entries_range", userId, from, to],
+    enabled: enabled && !!userId,
+    queryFn: () =>
+      fetchAllRows(
+        (start, end) =>
+          supabase
+            .from("time_entries")
+            .select(ENTRY_COLUMNS)
+            .eq("user_id", userId!)
+            .gte("entry_date", from)
+            .lte("entry_date", to)
+            .order("entry_date", { ascending: false })
+            .order("start_time", { ascending: false })
+            .order("id")
+            .range(start, end),
+        MEMBER_HISTORY_LIMIT,
+      ),
+  });
+
+  const entries = useMemo<WorkspaceEntry[]>(
+    () => (entriesQ.data ?? []).map(mapEntryRow),
+    [entriesQ.data],
+  );
+
+  return { entriesQ, entries, truncated: entries.length >= MEMBER_HISTORY_LIMIT };
 }
 
 export type ActiveTimer = {
