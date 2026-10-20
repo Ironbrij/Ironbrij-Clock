@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AnnouncementsRouteImport } from './routes/announcements'
 import { Route as BillingRouteImport } from './routes/billing'
+import { Route as HistoryRouteImport } from './routes/history'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as ManageRouteImport } from './routes/manage'
 import { Route as ProjectsRouteImport } from './routes/projects'
@@ -36,6 +37,11 @@ const AnnouncementsRoute = AnnouncementsRouteImport.update({
 const BillingRoute = BillingRouteImport.update({
   id: '/billing',
   path: '/billing',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const HistoryRoute = HistoryRouteImport.update({
+  id: '/history',
+  path: '/history',
   getParentRoute: () => rootRouteImport,
 } as any)
 const LoginRoute = LoginRouteImport.update({
@@ -93,6 +99,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/announcements': typeof AnnouncementsRoute
   '/billing': typeof BillingRoute
+  '/history': typeof HistoryRoute
   '/login': typeof LoginRoute
   '/manage': typeof ManageRoute
   '/projects': typeof ProjectsRoute
@@ -108,6 +115,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/announcements': typeof AnnouncementsRoute
   '/billing': typeof BillingRoute
+  '/history': typeof HistoryRoute
   '/login': typeof LoginRoute
   '/manage': typeof ManageRoute
   '/projects': typeof ProjectsRoute
@@ -124,6 +132,7 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/announcements': typeof AnnouncementsRoute
   '/billing': typeof BillingRoute
+  '/history': typeof HistoryRoute
   '/login': typeof LoginRoute
   '/manage': typeof ManageRoute
   '/projects': typeof ProjectsRoute
@@ -141,6 +150,7 @@ export interface FileRouteTypes {
     | '/'
     | '/announcements'
     | '/billing'
+    | '/history'
     | '/login'
     | '/manage'
     | '/projects'
@@ -156,6 +166,7 @@ export interface FileRouteTypes {
     | '/'
     | '/announcements'
     | '/billing'
+    | '/history'
     | '/login'
     | '/manage'
     | '/projects'
@@ -171,6 +182,7 @@ export interface FileRouteTypes {
     | '/'
     | '/announcements'
     | '/billing'
+    | '/history'
     | '/login'
     | '/manage'
     | '/projects'
@@ -187,6 +199,7 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AnnouncementsRoute: typeof AnnouncementsRoute
   BillingRoute: typeof BillingRoute
+  HistoryRoute: typeof HistoryRoute
   LoginRoute: typeof LoginRoute
   ManageRoute: typeof ManageRoute
   ProjectsRoute: typeof ProjectsRoute
@@ -220,6 +233,13 @@ declare module '@tanstack/react-router' {
       path: '/billing'
       fullPath: '/billing'
       preLoaderRoute: typeof BillingRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/history': {
+      id: '/history'
+      path: '/history'
+      fullPath: '/history'
+      preLoaderRoute: typeof HistoryRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/login': {
@@ -299,6 +319,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AnnouncementsRoute: AnnouncementsRoute,
   BillingRoute: BillingRoute,
+  HistoryRoute: HistoryRoute,
   LoginRoute: LoginRoute,
   ManageRoute: ManageRoute,
   ProjectsRoute: ProjectsRoute,

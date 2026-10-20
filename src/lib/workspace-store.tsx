@@ -65,8 +65,11 @@ import { useSettingsData } from "@/lib/workspace/use-settings";
 import { useTeamsData } from "@/lib/workspace/use-teams";
 import {
   DETAILED_ENTRIES_LIMIT,
+  MEMBER_HISTORY_LIMIT,
+  OWN_ENTRIES_LIMIT,
   useActiveTimersData,
   useMemberEntriesData,
+  useMemberEntriesRangeData,
   useTimeEntriesData,
   type ActiveTimer,
 } from "@/lib/workspace/use-time-entries";
@@ -81,6 +84,8 @@ import { useTaskCategoriesData } from "@/lib/workspace/use-task-categories";
 export {
   currencies,
   DETAILED_ENTRIES_LIMIT,
+  MEMBER_HISTORY_LIMIT,
+  OWN_ENTRIES_LIMIT,
   dotColors,
   initialsFrom,
   nameFromEmail,
@@ -991,6 +996,12 @@ export function useThisWeekStart() {
 export function useMemberEntries(userId: string | null, weekStart: Date) {
   const { session, canManage } = useWorkspace();
   return useMemberEntriesData(!!session && canManage, userId, weekStart);
+}
+
+/** One team member's entries over a date range — for History's person picker. Same gating as useMemberEntries. */
+export function useMemberEntriesRange(userId: string | null, from: string, to: string) {
+  const { session, canManage } = useWorkspace();
+  return useMemberEntriesRangeData(!!session && canManage, userId, from, to);
 }
 
 /** Every currently-running timer visible to this manager/admin (M18) — passive flagging, not auto-stop. */

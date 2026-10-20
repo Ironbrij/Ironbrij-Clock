@@ -6,6 +6,7 @@ import {
   Clock,
   ClipboardList,
   FolderKanban,
+  History,
   LayoutDashboard,
   Loader2,
   LogOut,
@@ -34,6 +35,7 @@ import { useWorkspace } from "@/lib/workspace-store";
 const nav = [
   { to: "/time", label: "Time", icon: Clock, managersOnly: false },
   { to: "/timesheet", label: "Timesheet", icon: ClipboardList, managersOnly: false },
+  { to: "/history", label: "History", icon: History, managersOnly: false },
   { to: "/", label: "Dashboard", icon: LayoutDashboard, managersOnly: false },
   { to: "/announcements", label: "Announcements", icon: Megaphone, managersOnly: false },
   { to: "/reports", label: "Reports", icon: BarChart3, managersOnly: true },
