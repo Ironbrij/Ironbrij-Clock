@@ -10,7 +10,9 @@ import {
   X,
   type LucideIcon,
 } from "lucide-react";
-import { AppShell, ProjectDot } from "@/components/app-shell";
+import { AppShell } from "@/components/app-shell";
+import { MyDayCard } from "@/components/my-day-card";
+import { TimeSplitCard } from "@/components/time-split-card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -162,16 +164,6 @@ function Dashboard() {
   const showWeekNudge =
     !weekNudgeDismissed && localWeekday === "Fri" && localHour >= 14 && weekEntries.length === 0;
 
-  const topProjects = projects
-    .map((p) => ({
-      ...p,
-      myWeekHours:
-        weekEntries.filter((e) => e.projectId === p.id).reduce((s, e) => s + e.seconds, 0) / 3600,
-    }))
-    .filter((p) => p.myWeekHours > 0)
-    .sort((a, b) => b.myWeekHours - a.myWeekHours)
-    .slice(0, 5);
-  const maxProject = topProjects[0]?.myWeekHours ?? 1;
   const activeProjects = projects.filter((p) => !p.archived).length;
 
   // L33: a quick glance back at the week that just ended — right when
@@ -362,6 +354,8 @@ function Dashboard() {
         />
       </div>
 
+      <MyDayCard />
+
       <div className="mt-6 grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
         <Card className="shadow-card">
           <CardHeader>
@@ -391,43 +385,7 @@ function Dashboard() {
           </CardContent>
         </Card>
 
-        <Card className="shadow-card">
-          <CardHeader>
-            <CardTitle className="text-base">Top projects this week</CardTitle>
-          </CardHeader>
-          <CardContent className="grid gap-4">
-            {topProjects.length === 0 && (
-              <p className="text-sm text-muted-foreground">
-                Nothing logged yet this week — start the timer on the Time page and this fills in.
-              </p>
-            )}
-            {topProjects.map((p) => (
-              <div key={p.id} className="grid gap-1.5">
-                <div className="flex items-center justify-between gap-3">
-                  <span className="flex min-w-0 items-center gap-2">
-                    <ProjectDot color={p.color} />
-                    <span className="truncate text-sm font-medium">{p.name}</span>
-                  </span>
-                  <span className="shrink-0 text-sm tabular-nums text-muted-foreground">
-                    {formatHours(p.myWeekHours)}
-                  </span>
-                </div>
-                <div
-                  className="h-1.5 w-full overflow-hidden rounded-full bg-muted"
-                  aria-hidden="true"
-                >
-                  <div
-                    className="h-full rounded-full"
-                    style={{
-                      width: `${maxProject ? (p.myWeekHours / maxProject) * 100 : 0}%`,
-                      backgroundColor: p.color,
-                    }}
-                  />
-                </div>
-              </div>
-            ))}
-          </CardContent>
-        </Card>
+        <TimeSplitCard entries={weekEntries} />
       </div>
 
       {lastWeekEntries.length > 0 && (
