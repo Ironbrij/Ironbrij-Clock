@@ -6,6 +6,7 @@ import { Combobox } from "@/components/combobox";
 import { CopyEodButton } from "@/components/copy-eod-button";
 import { EntryList } from "@/components/entry-list";
 import { downloadCsv } from "@/components/reports/report-config";
+import { WorkBreakdownView } from "@/components/work-breakdown-view";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -16,6 +17,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   HISTORY_PRESETS,
   filterHistoryEntries,
@@ -34,6 +36,7 @@ import {
   startOfWeek,
   toDateKey,
 } from "@/lib/time-utils";
+import { buildWorkBreakdown } from "@/lib/work-breakdown";
 import {
   MEMBER_HISTORY_LIMIT,
   OWN_ENTRIES_LIMIT,
@@ -43,11 +46,13 @@ import {
 } from "@/lib/workspace-store";
 
 type RangeChoice = HistoryPreset | "custom";
+type HistoryView = "list" | "breakdown";
 
 // Every filter lives in the URL so a refresh, or a link sent to someone,
-// opens the same view. Defaults (last 30 days, yourself, no filters) are
-// left out of the URL.
+// opens the same view. Defaults (the list, yourself, no filters, and the
+// view's own default range) are left out of the URL.
 type HistorySearch = {
+  view?: "breakdown";
   range?: RangeChoice;
   from?: string;
   to?: string;
@@ -59,6 +64,8 @@ type HistorySearch = {
 
 const DATE_KEY = /^\d{4}-\d{2}-\d{2}$/;
 const DEFAULT_PRESET: HistoryPreset = "last-30";
+/** The Breakdown answers "what did they do this week?", so it opens on this week. */
+const BREAKDOWN_DEFAULT_PRESET: HistoryPreset = "this-week";
 const ALL = "all";
 /** Day cards rendered per "Show older days" step — and days added to the range once they're all showing. */
 const DAYS_PER_STEP = 30;
@@ -76,6 +83,7 @@ export const Route = createFileRoute("/history")({
           ? (search.range as HistoryPreset)
           : undefined;
     return {
+      view: search.view === "breakdown" ? "breakdown" : undefined,
       range,
       from: range === "custom" ? from : undefined,
       to: range === "custom" ? to : undefined,
@@ -133,14 +141,19 @@ function HistoryPage() {
   const update = (patch: Partial<HistorySearch>) =>
     void navigate({ search: (prev) => ({ ...prev, ...patch }), replace: true });
 
+  // The Breakdown is for admins and managers only. Anyone else who opens a
+  // ?view=breakdown link just gets the list.
+  const view: HistoryView = canManage && search.view === "breakdown" ? "breakdown" : "list";
+  const defaultPreset = view === "breakdown" ? BREAKDOWN_DEFAULT_PRESET : DEFAULT_PRESET;
+
   const today = useMemo(() => new Date(), []);
   const todayKey = toDateKey(today);
   const floor = historyFloorKey(today);
-  const rangeChoice: RangeChoice = search.range ?? DEFAULT_PRESET;
+  const rangeChoice: RangeChoice = search.range ?? defaultPreset;
   const { from, to } =
     rangeChoice === "custom" && search.from && search.to
       ? { from: search.from < floor ? floor : search.from, to: search.to }
-      : historyRangeForPreset(rangeChoice === "custom" ? DEFAULT_PRESET : rangeChoice, today);
+      : historyRangeForPreset(rangeChoice === "custom" ? defaultPreset : rangeChoice, today);
 
   // Same people Manage > Entries offers: admins anyone active, managers
   // whoever shares a team with them. RLS enforces the same thing on the
@@ -176,6 +189,11 @@ function HistoryPage() {
   );
   const days = useMemo(() => groupEntriesByDay(filtered), [filtered]);
   const totalSeconds = filtered.reduce((s, e) => s + e.seconds, 0);
+  const breakdown = useMemo(
+    () => (view === "breakdown" ? buildWorkBreakdown(filtered, projectById) : null),
+    [view, filtered, projectById],
+  );
+  const runningInRange = filtered.some((e) => e.running);
 
   const [dayLimit, setDayLimit] = useState(DAYS_PER_STEP);
   const visibleDays = days.slice(0, dayLimit);
@@ -192,7 +210,7 @@ function HistoryPage() {
     if (value === "custom") update({ range: "custom", from, to });
     else
       update({
-        range: value === DEFAULT_PRESET ? undefined : (value as HistoryPreset),
+        range: value === defaultPreset ? undefined : (value as HistoryPreset),
         from: undefined,
         to: undefined,
       });
@@ -252,17 +270,31 @@ function HistoryPage() {
               triggerClassName="w-56"
             />
           )}
-          <Button
-            variant="outline"
-            className="gap-2"
-            disabled={filtered.length === 0}
-            onClick={exportCsv}
-          >
-            <Download className="h-4 w-4" aria-hidden="true" /> Export
-          </Button>
+          {view === "list" && (
+            <Button
+              variant="outline"
+              className="gap-2"
+              disabled={filtered.length === 0}
+              onClick={exportCsv}
+            >
+              <Download className="h-4 w-4" aria-hidden="true" /> Export
+            </Button>
+          )}
         </div>
       }
     >
+      {canManage && (
+        <Tabs
+          value={view}
+          onValueChange={(v) => update({ view: v === "breakdown" ? "breakdown" : undefined })}
+          className="mb-4"
+        >
+          <TabsList>
+            <TabsTrigger value="list">List</TabsTrigger>
+            <TabsTrigger value="breakdown">Breakdown</TabsTrigger>
+          </TabsList>
+        </Tabs>
+      )}
       <Card className="shadow-card">
         <CardContent className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-[minmax(0,2fr)_repeat(3,minmax(0,1fr))]">
           <div className="relative sm:col-span-2 lg:col-span-1">
@@ -378,6 +410,17 @@ function HistoryPage() {
             </p>
           </CardContent>
         </Card>
+      ) : breakdown ? (
+        <>
+          {runningInRange && (
+            <p className="mt-4 text-sm text-muted-foreground">
+              A timer is still running, so its time isn't in the breakdown until it stops.
+            </p>
+          )}
+          {breakdown.groups.length > 0 && (
+            <WorkBreakdownView totalSeconds={breakdown.totalSeconds} groups={breakdown.groups} />
+          )}
+        </>
       ) : (
         <div className="mt-4 grid gap-6">
           {visibleDays.map((day) => (
@@ -417,7 +460,7 @@ function HistoryPage() {
         </div>
       )}
 
-      {!loadingMember && (
+      {view === "list" && !loadingMember && (
         <div className="mt-6 flex justify-center">
           {hiddenDays > 0 || canGoFurther ? (
             <Button variant="outline" onClick={showOlder}>
