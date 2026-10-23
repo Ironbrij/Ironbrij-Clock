@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { throwIf } from "./utils";
-import type { EmploymentType, WeeklyScheduleDays, WorkspaceEmployment } from "./types";
+import type { EmploymentType, StaffType, WeeklyScheduleDays, WorkspaceEmployment } from "./types";
 
 export function useEmploymentData(enabled: boolean, canManage: boolean, uid: string | null) {
   const qc = useQueryClient();
@@ -33,7 +33,7 @@ export function useEmploymentData(enabled: boolean, canManage: boolean, uid: str
       const { data, error } = await supabase
         .from("member_employment")
         .select(
-          "user_id, employment_type, hourly_rate, weekly_schedule, weekly_schedule_days, weekly_salary, salary_from, salary_to",
+          "user_id, employment_type, staff_type, hourly_rate, weekly_schedule, weekly_schedule_days, weekly_salary, salary_from, salary_to",
         );
       if (error) throw error;
       return data;
@@ -46,6 +46,7 @@ export function useEmploymentData(enabled: boolean, canManage: boolean, uid: str
       map.set(row.user_id, {
         userId: row.user_id,
         employmentType: row.employment_type as EmploymentType,
+        staffType: row.staff_type as StaffType,
         hourlyRate: row.hourly_rate,
         weeklySchedule: row.weekly_schedule,
         weeklyScheduleDays: (row.weekly_schedule_days as WeeklyScheduleDays | null) ?? null,
@@ -62,6 +63,7 @@ export function useEmploymentData(enabled: boolean, canManage: boolean, uid: str
       userId: string,
       patch: {
         employmentType?: EmploymentType;
+        staffType?: StaffType;
         hourlyRate?: number | null;
         weeklySchedule?: string | null;
         weeklyScheduleDays?: WeeklyScheduleDays | null;
@@ -74,6 +76,7 @@ export function useEmploymentData(enabled: boolean, canManage: boolean, uid: str
       const { error } = await supabase.from("member_employment").upsert({
         user_id: userId,
         employment_type: patch.employmentType ?? existing?.employmentType ?? "full_time",
+        staff_type: patch.staffType ?? existing?.staffType ?? "internal",
         hourly_rate:
           patch.hourlyRate !== undefined ? patch.hourlyRate : (existing?.hourlyRate ?? null),
         weekly_schedule:

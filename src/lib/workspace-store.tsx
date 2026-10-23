@@ -5,6 +5,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { dayIndexOf, fromDateKey, startOfWeek } from "@/lib/time-utils";
 import {
   currencies,
+  STAFF_TYPE_LABELS,
   dotColors,
   initialsFrom,
   nameFromEmail,
@@ -17,6 +18,7 @@ import {
   type DbTimesheetStatus,
   type DetailedEntry,
   type EmploymentType,
+  type StaffType,
   type PendingApproval,
   type PlacementCategory,
   type PendingApprovalEntry,
@@ -83,6 +85,7 @@ import { useTaskCategoriesData } from "@/lib/workspace/use-task-categories";
 // internals are now spread across src/lib/workspace/*.
 export {
   currencies,
+  STAFF_TYPE_LABELS,
   DETAILED_ENTRIES_LIMIT,
   MEMBER_HISTORY_LIMIT,
   OWN_ENTRIES_LIMIT,
@@ -97,6 +100,7 @@ export {
   type DaySchedule,
   type DetailedEntry,
   type EmploymentType,
+  type StaffType,
   type PendingApproval,
   type PlacementCategory,
   type PendingApprovalEntry,
@@ -202,6 +206,7 @@ type WorkspaceContextValue = {
     userId: string,
     patch: {
       employmentType?: EmploymentType;
+      staffType?: StaffType;
       hourlyRate?: number | null;
       weeklySchedule?: string | null;
       weeklyScheduleDays?: WeeklyScheduleDays | null;

@@ -1643,5 +1643,64 @@ if (hasLocalSupabase) {
         RPC_TIMEOUT,
       );
     });
+
+    describe("member_employment staff_type", () => {
+      let va: Awaited<ReturnType<typeof fixtureUser>>;
+      // Its own plain member, for the same reason as the placements block.
+      let plainMember: Awaited<ReturnType<typeof fixtureUser>>;
+
+      beforeAll(async () => {
+        va = await fixtureUser("staff-type-va", "member");
+        plainMember = await fixtureUser("staff-type-member", "member");
+      }, RPC_TIMEOUT);
+
+      it(
+        "starts everyone as internal team, and lets a manager mark someone a placement",
+        async () => {
+          const { data: created, error } = await managerUser.client
+            .from("member_employment")
+            .insert({ user_id: va.userId })
+            .select("staff_type")
+            .single();
+          expect(error).toBeNull();
+          expect(created?.staff_type).toBe("internal");
+
+          const { data: updated } = await managerUser.client
+            .from("member_employment")
+            .update({ staff_type: "placement" })
+            .eq("user_id", va.userId)
+            .select("staff_type");
+          expect(updated).toEqual([{ staff_type: "placement" }]);
+        },
+        RPC_TIMEOUT,
+      );
+
+      it(
+        "rejects anything other than internal or placement",
+        async () => {
+          const { error } = await managerUser.client
+            .from("member_employment")
+            .update({ staff_type: "contractor" })
+            .eq("user_id", va.userId);
+          expect(error?.code).toBe("23514");
+        },
+        RPC_TIMEOUT,
+      );
+
+      it(
+        "won't let a plain member change it",
+        async () => {
+          const { data, error } = await plainMember.client
+            .from("member_employment")
+            .update({ staff_type: "internal" })
+            .eq("user_id", va.userId)
+            .select("user_id");
+          // RLS hides the row rather than raising: zero rows, no error.
+          expect(error).toBeNull();
+          expect(data).toEqual([]);
+        },
+        RPC_TIMEOUT,
+      );
+    });
   });
 }

@@ -30,6 +30,7 @@ const employment = (
 ): WorkspaceEmployment => ({
   userId,
   employmentType: "full_time",
+  staffType: "internal",
   hourlyRate: 6,
   weeklySchedule: null,
   weeklyScheduleDays: null,

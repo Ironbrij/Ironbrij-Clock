@@ -75,6 +75,7 @@ import {
   WEEKDAY_ABBR,
 } from "@/lib/time-utils";
 import {
+  STAFF_TYPE_LABELS,
   useActiveTimers,
   useMemberEntries,
   useThisWeekStart,
@@ -82,6 +83,7 @@ import {
   type ActiveTimer,
   type EmploymentType,
   type PendingApproval,
+  type StaffType,
   type WeeklyScheduleDays,
   type WorkspaceActivityEvent,
   type WorkspaceEmployment,
@@ -1160,6 +1162,7 @@ function ScheduleRow({
     userId: string,
     patch: {
       employmentType?: EmploymentType;
+      staffType?: StaffType;
       hourlyRate?: number | null;
       weeklyScheduleDays?: WeeklyScheduleDays | null;
       weeklySalary?: number | null;
@@ -1201,6 +1204,8 @@ function ScheduleRow({
   ]);
 
   const employmentType = employment?.employmentType ?? "full_time";
+  // No employment row yet means internal team; a placement is always set on purpose.
+  const staffType = employment?.staffType ?? "internal";
   // A salary set means cost comes from the flat weekly figure, so the hourly
   // rate stops being used — visible right where it's entered.
   const isSalaried = employment?.weeklySalary != null;
@@ -1210,6 +1215,20 @@ function ScheduleRow({
     try {
       await updateMemberEmployment(member.id, { employmentType: type });
       toast.success(`${member.name} marked ${type === "full_time" ? "full-time" : "part-time"}`);
+    } catch (error) {
+      toast.error("Couldn't update that", { description: (error as Error).message });
+    } finally {
+      setSavingType(false);
+    }
+  };
+
+  const saveStaffType = async (type: StaffType) => {
+    setSavingType(true);
+    try {
+      await updateMemberEmployment(member.id, { staffType: type });
+      toast.success(
+        `${member.name} is now ${type === "placement" ? "a placement" : "on the internal team"}`,
+      );
     } catch (error) {
       toast.error("Couldn't update that", { description: (error as Error).message });
     } finally {
@@ -1368,6 +1387,25 @@ function ScheduleRow({
           <SelectContent>
             <SelectItem value="full_time">Full-time</SelectItem>
             <SelectItem value="part_time">Part-time</SelectItem>
+          </SelectContent>
+        </Select>
+        <Select
+          value={staffType}
+          onValueChange={(v) => void saveStaffType(v as StaffType)}
+          disabled={savingType}
+        >
+          <SelectTrigger
+            className="mt-1.5 h-8 w-32"
+            aria-label={`Internal team or placement for ${member.name}`}
+          >
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {(Object.keys(STAFF_TYPE_LABELS) as StaffType[]).map((t) => (
+              <SelectItem key={t} value={t}>
+                {STAFF_TYPE_LABELS[t]}
+              </SelectItem>
+            ))}
           </SelectContent>
         </Select>
       </td>
