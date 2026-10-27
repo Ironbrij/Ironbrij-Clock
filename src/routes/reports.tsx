@@ -21,6 +21,13 @@ import {
 } from "@/components/ui/select";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { billableHoursForCasualEntry } from "@/lib/casual-billing";
+import {
+  casualHoursTotals,
+  casualPerformanceByVa,
+  formatDateSpan,
+  previousPeriod,
+  topPaidCasualVa,
+} from "@/lib/casual-performance";
 import { grossProfitForEntry, resolveInvoiceRate } from "@/lib/gross-profit";
 import { placementFiguresForRange } from "@/lib/retainer";
 import { placementWeekKey } from "@/lib/workspace/use-placements";
@@ -37,8 +44,14 @@ import {
   CASUAL_SERVICE_CATEGORY_LABELS,
   dotColors,
   NO_CLIENT,
+  STAFF_TYPE_LABELS,
   type CasualServiceCategory,
 } from "@/lib/workspace/types";
+import {
+  CasualPerformanceView,
+  type CasualPerformanceRow,
+  type PerformanceSortKey,
+} from "@/components/reports/casual-performance-view";
 import { CasualReportView } from "@/components/reports/casual-report-view";
 import { ClientFacingReportView } from "@/components/reports/client-facing-report-view";
 import { DetailedReportView } from "@/components/reports/detailed-report-view";
@@ -229,6 +242,12 @@ function Reports() {
   const [lastWeekDetailedEntries, setLastWeekDetailedEntries] = useState<DetailedEntry[] | null>(
     null,
   );
+  // 2026-10-23: the casual services performance section compares the range
+  // with the period before it (see previousPeriod), unlike the KPI row
+  // above, which only ever compares this week with last.
+  const [previousEntries, setPreviousEntries] = useState<DetailedEntry[] | null>(null);
+  const [perfSortKey, setPerfSortKey] = useState<PerformanceSortKey>("paid_casual");
+  const [perfAsc, setPerfAsc] = useState(false);
 
   // M48: gross profit — cost vs revenue over the same entries, grouped by
   // whoever's margin is being questioned. Like the casual tab, the rows
@@ -533,6 +552,28 @@ function Reports() {
     };
   }, [canManage, preset, from, detailedEntriesForRange]);
 
+  const previousRange = useMemo(() => previousPeriod(from, to), [from, to]);
+
+  // A second pull of entries, so only while the Casual Service tab is open.
+  useEffect(() => {
+    if (!canManage || view !== "casual") {
+      setPreviousEntries(null);
+      return;
+    }
+    let cancelled = false;
+    setPreviousEntries(null);
+    detailedEntriesForRange(previousRange.from, previousRange.to)
+      .then((rows) => {
+        if (!cancelled) setPreviousEntries(rows);
+      })
+      .catch((error: Error) =>
+        toast.error("Couldn't load the earlier period", { description: error.message }),
+      );
+    return () => {
+      cancelled = true;
+    };
+  }, [canManage, view, previousRange, detailedEntriesForRange]);
+
   // Any filter/range change invalidates whatever page the table was
   // scrolled to — resetting avoids landing on a now out-of-range page.
   useEffect(() => {
@@ -761,6 +802,45 @@ function Reports() {
   ).size;
   const lastWeekCasualActiveVAs = new Set(lastWeekCasualEntries.map((e) => e.userId)).size;
   const lastWeekCasualTotalBillableHours = casualBillableTotal(lastWeekCasualEntries);
+
+  // 2026-10-23: casual services performance, the accounts sheet's per-VA
+  // table and weekly-performance rows. Each category is its own column, so
+  // it takes every casual entry the team filter allows and ignores the
+  // client, tag, audience and category filters that narrow the rest of this
+  // tab. The maths is in lib/casual-performance.ts.
+  const memberById = new Map(members.map((m) => [m.id, m]));
+  const onTeam = (e: DetailedEntry) =>
+    teamFilter === "all" || (memberById.get(e.userId)?.teamIds ?? []).includes(teamFilter);
+  const perfEntries = (detailedEntries ?? []).filter(onTeam);
+  const perfTotals = casualHoursTotals(perfEntries, billingOpts);
+  const perfPrevious = previousEntries
+    ? casualHoursTotals(previousEntries.filter(onTeam), billingOpts).hours
+    : null;
+  const perfByVa = casualPerformanceByVa(perfEntries, billingOpts);
+  const perfTop = topPaidCasualVa(perfByVa);
+  const perfRows: CasualPerformanceRow[] = perfByVa.map((r) => ({
+    ...r,
+    name: memberById.get(r.userId)?.name ?? "Former member",
+    staffType: employmentByUser.get(r.userId)?.staffType ?? "internal",
+  }));
+  const sortedPerfRows = [...perfRows].sort((a, b) => {
+    const dir = perfAsc ? 1 : -1;
+    const byName = a.name.localeCompare(b.name);
+    if (perfSortKey === "name") return dir * byName;
+    if (perfSortKey === "type")
+      return (
+        dir * STAFF_TYPE_LABELS[a.staffType].localeCompare(STAFF_TYPE_LABELS[b.staffType]) || byName
+      );
+    return dir * (a.hours[perfSortKey] - b.hours[perfSortKey]) || byName;
+  });
+  // Names and types read best A to Z first; hours, most first.
+  const togglePerfSort = (key: PerformanceSortKey) => {
+    if (key === perfSortKey) setPerfAsc((v) => !v);
+    else {
+      setPerfSortKey(key);
+      setPerfAsc(key === "name" || key === "type");
+    }
+  };
 
   // M46: "Group by" — Client (default), VA, Day, or Week. All four reuse
   // this exact same aggregation, only the grouping key changes; category
@@ -2245,6 +2325,31 @@ function Reports() {
               " Someone on more than one team is counted under each — group totals will add up to more than the grand total."}
           </p>
         </div>
+      )}
+
+      {view === "casual" && detailedEntries !== null && (
+        <CasualPerformanceView
+          rangeLabel={formatDateSpan(from, to)}
+          previousLabel={formatDateSpan(previousRange.from, previousRange.to)}
+          from={from}
+          to={to}
+          current={perfTotals.hours}
+          previous={perfPrevious}
+          previousTruncated={(previousEntries?.length ?? 0) >= DETAILED_ENTRIES_LIMIT}
+          paidCasualActual={perfTotals.paidCasualActual}
+          top={
+            perfTop
+              ? {
+                  name: memberById.get(perfTop.userId)?.name ?? "Former member",
+                  hours: perfTop.hours.paid_casual,
+                }
+              : null
+          }
+          rows={sortedPerfRows}
+          sortKey={perfSortKey}
+          sortAsc={perfAsc}
+          onSort={togglePerfSort}
+        />
       )}
 
       {view === "casual" && (

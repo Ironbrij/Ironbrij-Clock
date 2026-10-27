@@ -96,10 +96,18 @@ export type WorkspaceClientProfile = Omit<WorkspaceClient, "id" | "name" | "acti
 import type { WeeklyScheduleDays } from "@/lib/time-utils";
 
 export type EmploymentType = "full_time" | "part_time";
+/** 2026-10-23: on Ironbrij's internal team, or a VA placed with a client. Shown in Reports → Casual Service. */
+export type StaffType = "internal" | "placement";
+
+export const STAFF_TYPE_LABELS: Record<StaffType, string> = {
+  internal: "Internal team",
+  placement: "Placement",
+};
 export type { DaySchedule, WeeklyScheduleDays } from "@/lib/time-utils";
 export type WorkspaceEmployment = {
   userId: string;
   employmentType: EmploymentType;
+  staffType: StaffType;
   hourlyRate: number | null;
   /** Legacy single free-text note — superseded by weeklyScheduleDays, kept only as a fallback to seed it. */
   weeklySchedule: string | null;

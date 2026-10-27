@@ -22,6 +22,7 @@ export const reportViews: ReportView[] = [
 ];
 export const rangePresets: RangePreset[] = [
   "this_week",
+  "last_week",
   "this_month",
   "last_30",
   "this_quarter",
@@ -34,12 +35,13 @@ export type ProjectSortKey = "name" | "hours" | "billable" | "team";
 export type EmployeeSortKey = "name" | "hours" | "billable" | "team" | "overtime" | "amount";
 export type CasualSortKey = "group" | "entries" | "rawHours" | "billableHours" | "paid";
 export type RangePreset =
-  "this_week" | "this_month" | "last_30" | "this_quarter" | "this_year" | "custom";
+  "this_week" | "last_week" | "this_month" | "last_30" | "this_quarter" | "this_year" | "custom";
 
 export const DETAILED_PAGE_SIZE = 50;
 
 export const presetLabels: Record<RangePreset, string> = {
   this_week: "This week",
+  last_week: "Last week",
   this_month: "This month",
   last_30: "Last 30 days",
   this_quarter: "This quarter",
@@ -219,12 +221,20 @@ export function truncateChartLabel(label: string, max = 14) {
 // M38: only ever called for the fixed presets — "custom" is resolved
 // directly in Reports() from the two date inputs instead, since there's
 // no formula to compute it from.
-export function computeRange(preset: Exclude<RangePreset, "custom">): { from: string; to: string } {
-  const today = new Date();
+export function computeRange(
+  preset: Exclude<RangePreset, "custom">,
+  today = new Date(),
+): { from: string; to: string } {
   const to = toDateKey(today);
   switch (preset) {
     case "this_week":
       return { from: toDateKey(startOfWeek(today)), to };
+    // The accounts team reads the casual figures on a Monday, about the
+    // whole week before.
+    case "last_week": {
+      const monday = addDays(startOfWeek(today), -7);
+      return { from: toDateKey(monday), to: toDateKey(addDays(monday, 6)) };
+    }
     case "last_30":
       return { from: toDateKey(addDays(today, -29)), to };
     case "this_quarter": {
