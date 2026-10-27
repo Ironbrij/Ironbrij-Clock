@@ -12,6 +12,7 @@ import { useEffect, type ReactNode } from "react";
 import appCss from "../styles.css?url";
 import { reportLovableError } from "../lib/lovable-error-reporting";
 import { themeInitScript } from "@/lib/theme";
+import { FloatingTimerProvider } from "@/components/floating-timer";
 import { Toaster } from "@/components/ui/sonner";
 import { WorkspaceProvider } from "@/lib/workspace-store";
 
@@ -166,9 +167,11 @@ function RootComponent() {
   return (
     <QueryClientProvider client={queryClient}>
       <WorkspaceProvider>
-        {/* Required: nested routes render here. Removing <Outlet /> breaks all child routes. */}
-        <Outlet />
-        <Toaster />
+        <FloatingTimerProvider>
+          {/* Required: nested routes render here. Removing <Outlet /> breaks all child routes. */}
+          <Outlet />
+          <Toaster />
+        </FloatingTimerProvider>
       </WorkspaceProvider>
     </QueryClientProvider>
   );

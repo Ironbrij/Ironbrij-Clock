@@ -1,34 +1,18 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { Link, useRouterState } from "@tanstack/react-router";
 import { Square } from "lucide-react";
 import { toast } from "sonner";
+import { PopOutTimerButton } from "@/components/floating-timer";
 import { Button } from "@/components/ui/button";
+import { useElapsedSeconds } from "@/hooks/use-elapsed-seconds";
+import {
+  formatTimerClock,
+  runningTimerLines,
+  stripTimerTitle,
+  timerStoppedMessage,
+  timerTabTitle,
+} from "@/lib/timer-display";
 import { useWorkspace } from "@/lib/workspace-store";
-
-const pad = (n: number) => n.toString().padStart(2, "0");
-
-export function formatClock(seconds: number) {
-  const h = Math.floor(seconds / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  return `${pad(h)}:${pad(m)}:${pad(seconds % 60)}`;
-}
-
-/** Wall-clock seconds since `startTime`, ticking once a second; 0 when there's no timer. */
-export function useElapsedSeconds(startTime: string | null) {
-  const [seconds, setSeconds] = useState(0);
-  useEffect(() => {
-    if (!startTime) {
-      setSeconds(0);
-      return;
-    }
-    const tick = () =>
-      setSeconds(Math.max(0, Math.floor((Date.now() - new Date(startTime).getTime()) / 1000)));
-    tick();
-    const interval = setInterval(tick, 1000);
-    return () => clearInterval(interval);
-  }, [startTime]);
-  return seconds;
-}
 
 // Keyed by entry id and kept at module level, so the Time page's timer bar
 // and the header pill never both warn about the same threshold of the same
@@ -69,28 +53,103 @@ export function useLongRunningTimerWarnings(
   }, [enabled, entryId, seconds]);
 }
 
-const TITLE_PREFIX = /^▶ \d+:\d{2}:\d{2} · /;
+function useDocumentHidden() {
+  return useSyncExternalStore(
+    (onChange) => {
+      document.addEventListener("visibilitychange", onChange);
+      return () => document.removeEventListener("visibilitychange", onChange);
+    },
+    () => document.hidden,
+    () => false,
+  );
+}
 
 /** Puts the running time at the front of the browser tab's title, so it shows from any tab. */
 function useTimerTabTitle(seconds: number | null) {
+  const hidden = useDocumentHidden();
   useEffect(() => {
-    const base = document.title.replace(TITLE_PREFIX, "");
-    document.title = seconds === null ? base : `▶ ${formatClock(seconds)} · ${base}`;
-  }, [seconds]);
+    document.title = timerTabTitle(document.title, seconds, hidden);
+  }, [seconds, hidden]);
   useEffect(
     () => () => {
-      document.title = document.title.replace(TITLE_PREFIX, "");
+      document.title = stripTimerTitle(document.title);
     },
     [],
   );
 }
 
+// Drawn once, then reused by every page's pill.
+let runningIcon: Promise<string> | null = null;
+
+/** The site icon with a red "recording" dot in the corner, as a data URL. */
+function drawRunningIcon(baseHref: string) {
+  runningIcon ??= new Promise((resolve) => {
+    const size = 32;
+    const canvas = document.createElement("canvas");
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return resolve(baseHref);
+    const finish = () => {
+      // A canvas can't read CSS variables, hence a literal red; the white
+      // ring keeps the dot visible against a dark tab strip.
+      ctx.beginPath();
+      ctx.arc(size - 8, size - 8, 7, 0, Math.PI * 2);
+      ctx.fillStyle = "#e5484d";
+      ctx.fill();
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = "#ffffff";
+      ctx.stroke();
+      resolve(canvas.toDataURL("image/png"));
+    };
+    const image = new Image();
+    image.onload = () => {
+      ctx.drawImage(image, 0, 0, size, size);
+      finish();
+    };
+    // No base icon to draw on: the dot alone still says "running".
+    image.onerror = finish;
+    image.src = baseHref;
+  });
+  return runningIcon;
+}
+
+/** Swaps the tab's icon for one with a red dot while a timer runs. */
+function useTimerFavicon(running: boolean) {
+  useEffect(() => {
+    if (!running) return;
+    const links = Array.from(document.querySelectorAll<HTMLLinkElement>('link[rel~="icon"]'));
+    if (links.length === 0) return;
+    const originals = links.map((link) => ({
+      href: link.getAttribute("href"),
+      type: link.getAttribute("type"),
+    }));
+    let cancelled = false;
+    void drawRunningIcon(links[0].href).then((href) => {
+      if (cancelled) return;
+      for (const link of links) {
+        link.type = "image/png";
+        link.href = href;
+      }
+    });
+    return () => {
+      cancelled = true;
+      links.forEach((link, i) => {
+        const { href, type } = originals[i];
+        if (href) link.setAttribute("href", href);
+        if (type) link.setAttribute("type", type);
+      });
+    };
+  }, [running]);
+}
+
 /**
  * The running timer, visible from every page: a compact pill in the header
- * with the project, the elapsed time and a Stop button, plus the elapsed time
- * in the browser tab title. Hidden on /time, where the full timer bar already
- * shows all of this (and owns the description being typed, which a stop from
- * here would otherwise discard).
+ * with the project, the elapsed time, a Stop button and the mini timer's
+ * pop-out button, plus the elapsed time in the browser tab title and a red
+ * dot on its icon. Hidden on /time, where the full timer bar already shows
+ * all of this (and owns the description being typed, which a stop from here
+ * would otherwise discard).
  */
 export function RunningTimerPill() {
   const { runningEntry, projects, stopTimer } = useWorkspace();
@@ -105,9 +164,7 @@ export function RunningTimerPill() {
     try {
       const result = await stopTimer(runningEntry.id);
       toast.success("Timer stopped", {
-        description: result.splitAcrossDays
-          ? "This ran past midnight, so it's been split into a separate entry for each day."
-          : "Entry saved to your timesheet.",
+        description: timerStoppedMessage(result.splitAcrossDays),
       });
     } catch (error) {
       toast.error("Couldn't stop the timer", { description: (error as Error).message });
@@ -117,12 +174,13 @@ export function RunningTimerPill() {
   };
 
   useTimerTabTitle(runningEntry ? seconds : null);
+  useTimerFavicon(!!runningEntry);
   useLongRunningTimerWarnings(runningEntry?.id ?? null, seconds, () => void stop(), !onTimePage);
 
   if (!runningEntry || onTimePage) return null;
 
   const project = projects.find((p) => p.id === runningEntry.projectId);
-  const label = project?.name ?? (runningEntry.description || "No project");
+  const { label } = runningTimerLines(runningEntry, project);
   const color = project?.color ?? "var(--brand)";
 
   return (
@@ -146,8 +204,9 @@ export function RunningTimerPill() {
         <span className="hidden max-w-[10rem] truncate sm:inline" aria-hidden="true">
           {label}
         </span>
-        <span className="font-mono font-medium tabular-nums">{formatClock(seconds)}</span>
+        <span className="font-mono font-medium tabular-nums">{formatTimerClock(seconds)}</span>
       </Link>
+      <PopOutTimerButton className="h-7 w-7 rounded-full" />
       <Button
         size="icon"
         variant="ghost"

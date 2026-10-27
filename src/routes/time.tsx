@@ -38,10 +38,12 @@ import { CopyEodButton } from "@/components/copy-eod-button";
 import { DescriptionAutocomplete } from "@/components/description-autocomplete";
 import { EntryFormDialog } from "@/components/entry-form-dialog";
 import { EntryList } from "@/components/entry-list";
+import { PopOutTimerButton, useShareTimerBarDraft } from "@/components/floating-timer";
 import { useLongRunningTimerWarnings } from "@/components/running-timer";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { formatDuration, formatHours } from "@/lib/mock-data";
 import { tintedChipStyle } from "@/lib/chip-style";
+import { timerStoppedMessage } from "@/lib/timer-display";
 import {
   addDays,
   formatDayLong,
@@ -210,17 +212,27 @@ function TimerBar() {
   const m = Math.floor((seconds % 3600) / 60);
   const s = seconds % 60;
 
+  // Saves whatever's in the description box. Throws on failure: toggle
+  // reports that with a toast, the floating mini timer inside its own window.
+  const stopRunning = useCallback(async () => {
+    if (!runningEntry) return;
+    const result = await stopTimer(runningEntry.id, description);
+    toast.success("Timer stopped", { description: timerStoppedMessage(result.splitAcrossDays) });
+    setDescription("");
+  }, [runningEntry, stopTimer, description]);
+
+  useShareTimerBarDraft(
+    useMemo(
+      () => (runningEntry ? { description, stop: stopRunning } : null),
+      [runningEntry, description, stopRunning],
+    ),
+  );
+
   const toggle = useCallback(async () => {
     setBusy(true);
     try {
       if (runningEntry) {
-        const result = await stopTimer(runningEntry.id, description);
-        toast.success("Timer stopped", {
-          description: result.splitAcrossDays
-            ? "This ran past midnight, so it's been split into a separate entry for each day."
-            : "Entry saved to your timesheet.",
-        });
-        setDescription("");
+        await stopRunning();
       } else {
         if (settings.requireDescriptions && !description.trim()) {
           toast.error("Add a description first", {
@@ -256,7 +268,7 @@ function TimerBar() {
     task,
     description,
     startTimer,
-    stopTimer,
+    stopRunning,
     settings.requireDescriptions,
     projects,
     clientBudgets,
@@ -410,6 +422,7 @@ function TimerBar() {
               </span>
             )}
           </div>
+          <PopOutTimerButton className="h-10 w-10 rounded-full" />
           <Button
             size="icon"
             variant={running ? "destructive" : "default"}
