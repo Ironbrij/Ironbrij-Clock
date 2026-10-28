@@ -30,10 +30,10 @@ declare global {
 
 /**
  * What the Time page's timer bar holds while a timer runs: the description
- * being typed (nothing writes it to the entry until the timer stops) and the
- * bar's own stop, which saves that text. The floating window reads both, so
- * it shows the live text and stopping from it can't throw away what was
- * typed. Module-level, like warnedThresholds in running-timer.tsx, because
+ * being typed (saved to the entry once typing pauses, so the entry can be a
+ * second behind) and the bar's own stop, which saves that text. The floating
+ * window reads both, so it shows the live text and stopping from it can't
+ * throw away what was typed. Module-level, like warnedThresholds in running-timer.tsx, because
  * the bar and the window sit in different parts of the tree.
  */
 type TimerBarDraft = { description: string; stop: () => Promise<void> };

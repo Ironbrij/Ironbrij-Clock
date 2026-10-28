@@ -209,7 +209,7 @@ export function useTimeEntriesData(
   const stopTimer = useCallback(
     async (
       entryId: string,
-      /** Whatever's currently in the timer bar's description box — the entry's own `description` column is stale the moment someone types after starting, since nothing writes it back until now. */
+      /** Whatever's currently in the timer bar's description box — the entry's own `description` column can be a second behind it, since the bar saves only once typing pauses. */
       description?: string,
     ): Promise<{ splitAcrossDays: boolean }> => {
       const entry = entries.find((e) => e.id === entryId);
