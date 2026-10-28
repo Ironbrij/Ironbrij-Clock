@@ -15,6 +15,7 @@ export function DescriptionAutocomplete({
   id,
   value,
   onChange,
+  onBlur,
   suggestions,
   placeholder,
   disabled,
@@ -27,6 +28,7 @@ export function DescriptionAutocomplete({
   "aria-describedby"?: string;
   value: string;
   onChange: (value: string) => void;
+  onBlur?: () => void;
   suggestions: string[];
   placeholder?: string;
   disabled?: boolean;
@@ -77,7 +79,10 @@ export function DescriptionAutocomplete({
             setHighlighted(0);
           }}
           onFocus={() => setFocused(true)}
-          onBlur={() => setFocused(false)}
+          onBlur={() => {
+            setFocused(false);
+            onBlur?.();
+          }}
           onKeyDown={(e) => {
             if (!open) return;
             if (e.key === "ArrowDown") {

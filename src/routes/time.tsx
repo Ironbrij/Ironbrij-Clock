@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowRight,
   ChevronLeft,
@@ -43,6 +43,7 @@ import { useLongRunningTimerWarnings } from "@/components/running-timer";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { formatDuration, formatHours } from "@/lib/mock-data";
 import { tintedChipStyle } from "@/lib/chip-style";
+import { createDescriptionAutosave } from "@/lib/description-autosave";
 import { timerStoppedMessage } from "@/lib/timer-display";
 import {
   addDays,
@@ -147,8 +148,16 @@ function TimePage() {
 }
 
 function TimerBar() {
-  const { projects, entries, runningEntry, startTimer, stopTimer, settings, taskCategories } =
-    useWorkspace();
+  const {
+    projects,
+    entries,
+    runningEntry,
+    startTimer,
+    stopTimer,
+    updateEntry,
+    settings,
+    taskCategories,
+  } = useWorkspace();
   const clientBudgets = useClientBudgets();
   const active = projects.filter((p) => !p.archived);
   const { recent: recentProjects, rest: otherProjects } = orderByRecency(active, entries);
@@ -197,7 +206,6 @@ function TimerBar() {
     }
     setProject(runningEntry.projectId ?? NO_PROJECT);
     setTask(runningEntry.task || taskCategories[0]?.name || "");
-    setDescription(runningEntry.description);
     const tick = () =>
       setSeconds(
         Math.max(0, Math.floor((Date.now() - new Date(runningEntry.startTime).getTime()) / 1000)),
@@ -206,6 +214,49 @@ function TimerBar() {
     const interval = setInterval(tick, 1000);
     return () => clearInterval(interval);
   }, [runningEntry, taskCategories]);
+
+  // The description is saved to the running entry as it's typed (see
+  // description-autosave.ts). The effect above deliberately doesn't copy it
+  // back from runningEntry: that object is rebuilt on every refetch, which
+  // used to put the entry's old text over whatever had been typed since.
+  const updateEntryRef = useRef(updateEntry);
+  const requireDescriptionsRef = useRef(settings.requireDescriptions);
+  useEffect(() => {
+    updateEntryRef.current = updateEntry;
+    requireDescriptionsRef.current = settings.requireDescriptions;
+  }, [updateEntry, settings.requireDescriptions]);
+  const [autosave] = useState(() =>
+    createDescriptionAutosave({
+      save: (entryId, text) => updateEntryRef.current(entryId, { description: text }),
+      canSave: (text) => !(requireDescriptionsRef.current && !text.trim()),
+      onError: (error) =>
+        toast.error("Couldn't save the description", {
+          id: "timer-description-save",
+          description: `${error.message} It's still in the box, and stopping the timer saves it.`,
+        }),
+    }),
+  );
+
+  const runningId = runningEntry?.id ?? null;
+  const savedDescription = runningEntry?.description ?? "";
+
+  // A timer starting, or the page opening on one already running, starts
+  // from its saved text. Later changes to that text go through the next effect.
+  useEffect(() => {
+    autosave.reset(runningId, savedDescription);
+    if (runningId) setDescription(savedDescription);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autosave, runningId]);
+
+  // An edit from the entry dialog or another device shows up here, but never
+  // over typing that hasn't been saved yet.
+  useEffect(() => {
+    const next = autosave.entryChanged(savedDescription);
+    if (next !== null) setDescription(next);
+  }, [autosave, savedDescription]);
+
+  // Leaving the page saves the last bit of typing rather than dropping it.
+  useEffect(() => () => autosave.flush(), [autosave]);
 
   const running = !!runningEntry;
   const h = Math.floor(seconds / 3600);
@@ -216,10 +267,13 @@ function TimerBar() {
   // reports that with a toast, the floating mini timer inside its own window.
   const stopRunning = useCallback(async () => {
     if (!runningEntry) return;
+    // A save already on its way could otherwise land after the stop and put
+    // older text on the finished entry.
+    await autosave.settle();
     const result = await stopTimer(runningEntry.id, description);
     toast.success("Timer stopped", { description: timerStoppedMessage(result.splitAcrossDays) });
     setDescription("");
-  }, [runningEntry, stopTimer, description]);
+  }, [runningEntry, stopTimer, description, autosave]);
 
   useShareTimerBarDraft(
     useMemo(
@@ -317,7 +371,11 @@ function TimerBar() {
           id="timer-description"
           placeholder="What are you working on?"
           value={description}
-          onChange={setDescription}
+          onChange={(text) => {
+            setDescription(text);
+            autosave.edit(text);
+          }}
+          onBlur={autosave.flush}
           suggestions={recentDescriptions(entries)}
           className="lg:min-w-[220px] lg:flex-1"
         />
