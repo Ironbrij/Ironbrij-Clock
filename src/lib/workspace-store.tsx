@@ -60,6 +60,8 @@ import {
 import { useClientsData } from "@/lib/workspace/use-clients";
 import { usePlacementsData } from "@/lib/workspace/use-placements";
 import { useEmploymentData } from "@/lib/workspace/use-employment";
+import { usePayRatesData, type PayRateInput } from "@/lib/workspace/use-pay-rates";
+import type { PayRateRow } from "@/lib/pay-rates";
 import { useMembersData } from "@/lib/workspace/use-members";
 import { useProjectsData } from "@/lib/workspace/use-projects";
 import { useActivityLogData, type WorkspaceActivityEvent } from "@/lib/workspace/use-activity-log";
@@ -215,6 +217,11 @@ type WorkspaceContextValue = {
       salaryTo?: string | null;
     },
   ) => Promise<void>;
+  /** 2026-10-30: each member's pay changes, oldest first (member_pay_rates). Look pay up with payOn / salaryForRange (src/lib/pay-rates.ts) rather than reading employment's old single figures. Empty for anyone who isn't a manager/admin. */
+  payHistoryByUser: Map<string, PayRateRow[]>;
+  /** Adds a pay change, or replaces the one already on that date for that person. */
+  setPayRate: (input: PayRateInput) => Promise<void>;
+  removePayRate: (id: string) => Promise<void>;
   /** M48: every effective-dated client invoice rate, for Manage → Billing Rates and Reports → Gross Profit — empty for anyone who isn't a manager/admin. Resolve one with `resolveInvoiceRate` (src/lib/gross-profit.ts) rather than reading it directly. */
   billingRates: WorkspaceBillingRate[];
   createBillingRate: (input: WorkspaceBillingRateInput) => Promise<void>;
@@ -474,6 +481,12 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     canManage,
     uid,
   );
+  const { payHistoryByUser, setPayRate, removePayRate } = usePayRatesData(
+    enabled,
+    canManage,
+    uid,
+    employmentByUser,
+  );
 
   const { billingRates, createBillingRate, updateBillingRate, deleteBillingRate } =
     useBillingRatesData(enabled, canManage, uid);
@@ -649,6 +662,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       deleteAnnouncement,
       employmentByUser,
       updateMemberEmployment,
+      payHistoryByUser,
+      setPayRate,
+      removePayRate,
       billingRates,
       createBillingRate,
       updateBillingRate,
@@ -782,6 +798,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     deleteAnnouncement,
     employmentByUser,
     updateMemberEmployment,
+    payHistoryByUser,
+    setPayRate,
+    removePayRate,
     billingRates,
     createBillingRate,
     updateBillingRate,

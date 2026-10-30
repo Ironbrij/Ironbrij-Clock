@@ -339,6 +339,54 @@ export type Database = {
           },
         ];
       };
+      member_pay_rates: {
+        Row: {
+          created_at: string;
+          effective_from: string;
+          hourly_rate: number | null;
+          id: string;
+          updated_at: string;
+          updated_by: string | null;
+          user_id: string;
+          weekly_salary: number | null;
+        };
+        Insert: {
+          created_at?: string;
+          effective_from: string;
+          hourly_rate?: number | null;
+          id?: string;
+          updated_at?: string;
+          updated_by?: string | null;
+          user_id: string;
+          weekly_salary?: number | null;
+        };
+        Update: {
+          created_at?: string;
+          effective_from?: string;
+          hourly_rate?: number | null;
+          id?: string;
+          updated_at?: string;
+          updated_by?: string | null;
+          user_id?: string;
+          weekly_salary?: number | null;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "member_pay_rates_updated_by_fkey";
+            columns: ["updated_by"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "member_pay_rates_user_id_fkey";
+            columns: ["user_id"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       placed_vas: {
         Row: {
           created_at: string;

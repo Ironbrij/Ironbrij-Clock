@@ -1718,5 +1718,94 @@ if (hasLocalSupabase) {
         RPC_TIMEOUT,
       );
     });
+
+    // 20261030110000_member_pay_rates.sql: team pay with start dates.
+    describe("member_pay_rates", () => {
+      let va: Awaited<ReturnType<typeof fixtureUser>>;
+      // Its own plain member, for the same reason as the placements block.
+      let plainMember: Awaited<ReturnType<typeof fixtureUser>>;
+
+      beforeAll(async () => {
+        va = await fixtureUser("pay-rate-va", "member");
+        plainMember = await fixtureUser("pay-rate-member", "member");
+      }, RPC_TIMEOUT);
+
+      it(
+        "lets a manager add a raise from a date and read the history",
+        async () => {
+          const { error } = await managerUser.client.from("member_pay_rates").insert([
+            { user_id: va.userId, effective_from: "2000-01-01", hourly_rate: 6 },
+            { user_id: va.userId, effective_from: "2026-11-02", hourly_rate: 6.5 },
+          ]);
+          expect(error).toBeNull();
+          const { data } = await managerUser.client
+            .from("member_pay_rates")
+            .select("effective_from, hourly_rate, weekly_salary")
+            .eq("user_id", va.userId)
+            .order("effective_from");
+          expect(data).toEqual([
+            { effective_from: "2000-01-01", hourly_rate: 6, weekly_salary: null },
+            { effective_from: "2026-11-02", hourly_rate: 6.5, weekly_salary: null },
+          ]);
+        },
+        RPC_TIMEOUT,
+      );
+
+      it(
+        "won't take an hourly rate and a salary on the same change",
+        async () => {
+          const { error } = await managerUser.client.from("member_pay_rates").insert({
+            user_id: va.userId,
+            effective_from: "2026-12-01",
+            hourly_rate: 7,
+            weekly_salary: 500,
+          });
+          expect(error?.code).toBe("23514");
+        },
+        RPC_TIMEOUT,
+      );
+
+      it(
+        "won't take two changes for one person on the same date",
+        async () => {
+          const { error } = await managerUser.client
+            .from("member_pay_rates")
+            .insert({ user_id: va.userId, effective_from: "2026-11-02", hourly_rate: 7 });
+          expect(error?.code).toBe("23505");
+        },
+        RPC_TIMEOUT,
+      );
+
+      it(
+        "hides pay from a plain member, and won't let them add any",
+        async () => {
+          const { data } = await plainMember.client
+            .from("member_pay_rates")
+            .select("id")
+            .eq("user_id", va.userId);
+          expect(data).toEqual([]);
+          const { error } = await plainMember.client
+            .from("member_pay_rates")
+            .insert({ user_id: plainMember.userId, effective_from: "2026-11-02", hourly_rate: 50 });
+          expect(error?.code).toBe("42501");
+        },
+        RPC_TIMEOUT,
+      );
+
+      it(
+        "hides pay from a pending manager",
+        async () => {
+          const pendingManager = await fixtureUser("pay-rate-pending", "manager", {
+            pending: true,
+          });
+          const { data } = await pendingManager.client
+            .from("member_pay_rates")
+            .select("id")
+            .eq("user_id", va.userId);
+          expect(data).toEqual([]);
+        },
+        RPC_TIMEOUT,
+      );
+    });
   });
 }
