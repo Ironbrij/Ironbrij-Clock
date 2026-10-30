@@ -1807,5 +1807,44 @@ if (hasLocalSupabase) {
         RPC_TIMEOUT,
       );
     });
+
+    // 20261030120000_subscription_all_departments.sql: a subscription every
+    // department uses, shown as its own line in the spend summary.
+    describe("subscriptions all_departments", () => {
+      const created: string[] = [];
+
+      afterAll(async () => {
+        for (const id of created) await admin.from("subscriptions").delete().eq("id", id);
+      }, RPC_TIMEOUT);
+
+      it(
+        "lets a manager mark a subscription as used by all departments",
+        async () => {
+          const { data, error } = await managerUser.client
+            .from("subscriptions")
+            .insert({ name: `Shared tool ${suffix}`, category: "other", all_departments: true })
+            .select("id, all_departments, team_id")
+            .single();
+          expect(error).toBeNull();
+          expect(data).toMatchObject({ all_departments: true, team_id: null });
+          if (data) created.push(data.id);
+        },
+        RPC_TIMEOUT,
+      );
+
+      it(
+        "won't have all departments and one department at once",
+        async () => {
+          const { error } = await managerUser.client.from("subscriptions").insert({
+            name: `Confused tool ${suffix}`,
+            category: "other",
+            all_departments: true,
+            team_id: teamId,
+          });
+          expect(error?.code).toBe("23514");
+        },
+        RPC_TIMEOUT,
+      );
+    });
   });
 }

@@ -717,6 +717,7 @@ export type Database = {
       };
       subscriptions: {
         Row: {
+          all_departments: boolean;
           amount: number | null;
           billing_cycle: string;
           category: string;
@@ -734,6 +735,7 @@ export type Database = {
           updated_by: string | null;
         };
         Insert: {
+          all_departments?: boolean;
           amount?: number | null;
           billing_cycle?: string;
           category: string;
@@ -751,6 +753,7 @@ export type Database = {
           updated_by?: string | null;
         };
         Update: {
+          all_departments?: boolean;
           amount?: number | null;
           billing_cycle?: string;
           category?: string;
