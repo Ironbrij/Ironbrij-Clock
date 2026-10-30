@@ -15,6 +15,16 @@ describe("formatHours", () => {
   it("formats zero", () => {
     expect(formatHours(0)).toBe("0h 00m");
   });
+
+  // A client over their allowance has negative remaining hours.
+  it("formats negative hours as the same time with a minus sign", () => {
+    expect(formatHours(-23.62)).toBe("-23h 37m");
+    expect(formatHours(-0.25)).toBe("-0h 15m");
+  });
+
+  it("carries a minute that rounds up to 60 into the hour", () => {
+    expect(formatHours(10.995)).toBe("11h 00m");
+  });
 });
 
 describe("formatMinutes", () => {

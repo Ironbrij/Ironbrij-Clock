@@ -49,7 +49,7 @@ export function ImportRemainingHoursDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
-  const { clients, setClientSubscriptionHours } = useWorkspace();
+  const { clients, setClientSubscriptionHours, clientPlacementHoursLoaded } = useWorkspace();
   const rendered = useClientRenderedHours();
   const [text, setText] = useState("");
   const [parsed, setParsed] = useState<{ rows: ParsedLine[]; unread: UnreadLine[] } | null>(null);
@@ -230,6 +230,13 @@ export function ImportRemainingHoursDialog({
                 </TableBody>
               </Table>
             </div>
+            {!clientPlacementHoursLoaded && (
+              <p className="text-sm text-destructive">
+                Placed VAs' hours haven't loaded, so the new subscriptions would be wrong for
+                clients with placements. Apply stays off until they load: wait a moment, or reload
+                the page.
+              </p>
+            )}
             {parsed.unread.length > 0 && (
               <div className="text-xs text-muted-foreground">
                 <p className="font-medium">
@@ -273,7 +280,10 @@ export function ImportRemainingHoursDialog({
               <Button variant="outline" disabled={applying} onClick={() => setParsed(null)}>
                 Back
               </Button>
-              <Button disabled={applying || toApply.length === 0} onClick={() => void apply()}>
+              <Button
+                disabled={applying || toApply.length === 0 || !clientPlacementHoursLoaded}
+                onClick={() => void apply()}
+              >
                 Apply to {toApply.length} {toApply.length === 1 ? "client" : "clients"}
               </Button>
             </>

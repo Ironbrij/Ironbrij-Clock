@@ -50,6 +50,8 @@ export function useClientsData(enabled: boolean) {
   // placements, which come off the client's remaining hours. If the function
   // isn't there yet (the app deployed a moment before its migration), fall
   // back to none: remaining hours then behave as they did before it existed.
+  // null rather than [] in that case, so the import can tell "no placement
+  // hours" from "couldn't load them" (clientPlacementHoursLoaded).
   const placementHoursQ = useQuery({
     queryKey: ["client_placement_hours"],
     enabled,
@@ -57,7 +59,7 @@ export function useClientsData(enabled: boolean) {
       const { data, error } = await supabase.rpc("client_placement_hours");
       if (error) {
         console.error("client_placement_hours failed; counting no placement hours", error);
-        return [];
+        return null;
       }
       return data;
     },
@@ -67,6 +69,8 @@ export function useClientsData(enabled: boolean) {
     () => new Map((placementHoursQ.data ?? []).map((r) => [r.client_id, Number(r.hours)])),
     [placementHoursQ.data],
   );
+  // False while loading and after a failure.
+  const clientPlacementHoursLoaded = placementHoursQ.data != null;
 
   const clients = useMemo<WorkspaceClient[]>(
     () =>
@@ -172,5 +176,6 @@ export function useClientsData(enabled: boolean) {
     deleteClient,
     setClientSubscriptionHours,
     clientPlacementHours,
+    clientPlacementHoursLoaded,
   };
 }
