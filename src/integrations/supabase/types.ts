@@ -1168,6 +1168,13 @@ export type Database = {
           week_start: string;
         }[];
       };
+      client_placement_hours: {
+        Args: never;
+        Returns: {
+          client_id: string;
+          hours: number;
+        }[];
+      };
       create_announcement: {
         Args: {
           _audience: string;
