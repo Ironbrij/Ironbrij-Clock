@@ -62,6 +62,7 @@ import { ProjectReportView } from "@/components/reports/project-report-view";
 import { WeeklyPnlView } from "@/components/reports/weekly-pnl-view";
 import {
   buildWeeklyFinancials,
+  INTERNAL_CLIENT_LABEL,
   WEEKLY_DEPARTMENT_LABELS,
   weeklyPnlRows,
 } from "@/lib/weekly-financials";
@@ -1585,6 +1586,11 @@ function Reports() {
           revenueItems,
           incrementHours: billingOpts.incrementHours,
           upliftPct: billingOpts.upliftPct,
+          // Internal work shows against the Louis Swart client in the
+          // Internal Team section, so that client's own work joins the same row.
+          internalClientId:
+            clients.find((c) => c.name.trim().toLowerCase() === INTERNAL_CLIENT_LABEL.toLowerCase())
+              ?.id ?? null,
         })
       : [];
   const weeklyRows = weeklyPnlRows(weeklyFinancials);
@@ -1748,6 +1754,26 @@ function Reports() {
               row.profit.toFixed(2),
             ]),
           ),
+        ),
+        // The Internal Team section: pay only, so the invoice columns are blank.
+        ...weeklyFinancials.flatMap((w) =>
+          w.internalTeam.rows.map((row) => [
+            w.weekStart,
+            "Internal Team",
+            row.internal ? INTERNAL_CLIENT_LABEL : weeklyClientLabel(row.clientId),
+            weeklyPersonLabel({ source: "entry", personId: row.personId }),
+            row.hours.toFixed(2),
+            row.billedHours.toFixed(2),
+            row.payRate === null
+              ? ""
+              : row.payRate === "salaried"
+                ? "Salary"
+                : row.payRate.toFixed(2),
+            row.payRate === "salaried" ? "" : row.paid.toFixed(2),
+            "",
+            "",
+            "",
+          ]),
         ),
       ]);
       return;

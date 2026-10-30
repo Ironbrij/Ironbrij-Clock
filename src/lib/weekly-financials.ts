@@ -103,6 +103,28 @@ export type WeeklyDepartment = {
   rows: WeeklyDetailRow[];
 };
 
+/** The client internal work shows against in the Internal Team section (decided 2026-10-30). */
+export const INTERNAL_CLIENT_LABEL = "Louis Swart";
+
+/**
+ * One line of the Internal Team section (decided 2026-10-30): an internal
+ * staff member's work for one client in the week, at one pay rate. Internal
+ * work, and work for the Louis Swart client, shows as Louis Swart
+ * (`internal`). No invoice side: it's a view of pay, not of profit.
+ */
+export type InternalTeamRow = {
+  key: string;
+  /** The client worked for; the Louis Swart client (or null) when `internal`. */
+  clientId: string | null;
+  internal: boolean;
+  personId: string;
+  hours: number;
+  billedHours: number;
+  /** "salaried" for a salaried member, whose pay is the IB salary instead. */
+  payRate: number | "salaried" | null;
+  paid: number;
+};
+
 export type WeeklyFinancials = {
   weekStart: string;
   departments: WeeklyDepartment[];
@@ -111,6 +133,14 @@ export type WeeklyFinancials = {
   grossProfit: number;
   ib: { fullTime: number; partTime: number; hours: number; wages: number };
   gpAfterWages: number;
+  /** Extra view of the internal team's work and pay. Never part of the profit lines. */
+  internalTeam: {
+    rows: InternalTeamRow[];
+    clients: number;
+    vas: number;
+    hours: number;
+    paid: number;
+  };
 };
 
 export type WeeklyFinancialsInput = {
@@ -135,6 +165,8 @@ export type WeeklyFinancialsInput = {
   revenueItems: WorkspaceRevenueItem[];
   incrementHours: number;
   upliftPct: number;
+  /** The client named "Louis Swart", if there is one: internal work shows against it. */
+  internalClientId: string | null;
 };
 
 export type WeeklyPnlRow = {
@@ -212,6 +244,22 @@ export function weeklyPnlRows(weeks: WeeklyFinancials[]): WeeklyPnlRow[] {
       format: "money",
       values: weeks.map((w) => w.gpAfterWages),
       emphasis: true,
+    },
+    {
+      label: "Internal Team clients",
+      format: "count",
+      values: weeks.map((w) => w.internalTeam.clients),
+    },
+    { label: "Internal Team VAs", format: "count", values: weeks.map((w) => w.internalTeam.vas) },
+    {
+      label: "Internal Team hours",
+      format: "hours",
+      values: weeks.map((w) => w.internalTeam.hours),
+    },
+    {
+      label: "Internal Team paid",
+      format: "money",
+      values: weeks.map((w) => w.internalTeam.paid),
     },
   );
   return rows;
@@ -315,6 +363,8 @@ function buildWeek(input: WeeklyFinancialsInput, weekStart: string): WeeklyFinan
   const ib = { fullTime: new Set<string>(), partTime: new Set<string>(), hours: 0 };
   /** Internal work's hours per person and pay rate: each becomes one wage line. */
   const ibWageLines = new Map<string, { hours: number; rate: number }>();
+  /** The Internal Team section's lines, while the week is being added up. */
+  const teamRows = new Map<string, Omit<InternalTeamRow, "key" | "paid"> & { clientKey: string }>();
   for (const e of input.entries) {
     if (e.date < weekStart || e.date > weekEnd) continue;
     const employment = input.employmentByUser.get(e.userId);
@@ -325,6 +375,38 @@ function buildWeek(input: WeeklyFinancialsInput, weekStart: string): WeeklyFinan
 
     // Decided 2026-10-30: Promotional work isn't part of the weekly P&L.
     if (department === "promotional") continue;
+
+    const invoiceRate = e.clientId
+      ? resolveInvoiceRate(input.billingRates, e.clientId, e.userId, e.date)
+      : null;
+    const money = grossProfitForEntry(e, {
+      payRate,
+      invoiceRate,
+      incrementHours: input.incrementHours,
+      upliftPct: input.upliftPct,
+      salaried,
+    });
+    const linePay = salaried ? "salaried" : payRate;
+
+    // Internal staff only; members marked as placements aren't in it.
+    if ((employment?.staffType ?? "internal") === "internal") {
+      const internal =
+        department === "internal" || (e.clientId !== null && e.clientId === input.internalClientId);
+      const clientKey = internal ? "louis-swart" : (e.clientId ?? "none");
+      const key = `${e.userId}:${clientKey}:${linePay}`;
+      const line = teamRows.get(key) ?? {
+        clientId: internal ? input.internalClientId : e.clientId,
+        clientKey,
+        internal,
+        personId: e.userId,
+        hours: 0,
+        billedHours: 0,
+        payRate: linePay,
+      };
+      line.hours += money.actualHours;
+      line.billedHours += money.billedHours;
+      teamRows.set(key, line);
+    }
 
     if (department === "internal") {
       const hours = e.seconds / 3600;
@@ -339,16 +421,6 @@ function buildWeek(input: WeeklyFinancialsInput, weekStart: string): WeeklyFinan
       continue;
     }
 
-    const invoiceRate = e.clientId
-      ? resolveInvoiceRate(input.billingRates, e.clientId, e.userId, e.date)
-      : null;
-    const money = grossProfitForEntry(e, {
-      payRate,
-      invoiceRate,
-      incrementHours: input.incrementHours,
-      upliftPct: input.upliftPct,
-      salaried,
-    });
     const weeklyDepartment: WeeklyDepartmentKey =
       department === "paid_casual"
         ? "casual"
@@ -359,7 +431,6 @@ function buildWeek(input: WeeklyFinancialsInput, weekStart: string): WeeklyFinan
             : "full_time";
     if (money.revenue === null && e.billable) unpriced.add(weeklyDepartment);
     const chargeable = isChargeableEntry(e);
-    const linePay = salaried ? "salaried" : payRate;
     const row = rowFor(
       weeklyDepartment,
       `entry:${e.userId}:${e.clientId ?? "none"}:${linePay}:${invoiceRate}:${chargeable}`,
@@ -412,6 +483,21 @@ function buildWeek(input: WeeklyFinancialsInput, weekStart: string): WeeklyFinan
     };
   });
 
+  const internalTeamRows = [...teamRows.entries()]
+    .map(([key, { clientKey: _clientKey, ...r }]) => {
+      const hours = round2(r.hours);
+      const paidCents = typeof r.payRate === "number" ? lineCents(hours, r.payRate) : 0;
+      return { key, ...r, hours, billedHours: round2(r.billedHours), paid: dollars(paidCents) };
+    })
+    .sort((a, b) => b.hours - a.hours);
+  const internalTeam = {
+    rows: internalTeamRows,
+    clients: new Set([...teamRows.values()].map((r) => r.clientKey)).size,
+    vas: new Set(internalTeamRows.map((r) => r.personId)).size,
+    hours: dollars(internalTeamRows.reduce((s, r) => s + Math.round(r.hours * 100), 0)),
+    paid: dollars(internalTeamRows.reduce((s, r) => s + Math.round(r.paid * 100), 0)),
+  };
+
   const totalProfitCents = departments.reduce((s, d) => s + Math.round(d.profit * 100), 0);
   const recruitmentFeesCents = input.revenueItems
     .filter(
@@ -433,5 +519,6 @@ function buildWeek(input: WeeklyFinancialsInput, weekStart: string): WeeklyFinan
       wages: dollars(ibWagesCents),
     },
     gpAfterWages: dollars(grossProfitCents - ibWagesCents),
+    internalTeam,
   };
 }
