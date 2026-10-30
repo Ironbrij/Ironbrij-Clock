@@ -1,9 +1,9 @@
 // Reports → Weekly P&L. Presentation only: every figure is computed in
 // src/lib/weekly-financials.ts and handed over by Reports().
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { formatHours } from "@/lib/mock-data";
 import { formatWeekRange, fromDateKey } from "@/lib/time-utils";
 import {
+  INTERNAL_CLIENT_LABEL,
   WEEKLY_DEPARTMENT_LABELS,
   type WeeklyDetailRow,
   type WeeklyFinancials,
@@ -19,7 +19,7 @@ type WeeklyPnlViewProps = {
   selectedWeek: string | null;
   setSelectedWeek: (weekStart: string) => void;
   clientLabel: (clientId: string | null) => string;
-  personLabel: (row: WeeklyDetailRow) => string;
+  personLabel: (row: { source: WeeklyDetailRow["source"]; personId: string }) => string;
   settings: WorkspaceSettings;
   truncated: boolean;
 };
@@ -75,11 +75,13 @@ export function WeeklyPnlView({
     <div className="space-y-6">
       <p className="text-xs text-muted-foreground">
         The accounts team&apos;s weekly financial report, company-wide — the team, client and tag
-        filters don&apos;t apply. Paid = hours × pay rate, invoiced = hours × invoice rate, profit =
-        invoiced − paid. Placed VAs use the hours entered in Billing → Placements (else their
-        contracted hours); the internal team&apos;s Paid Casual work is invoiced with the increment.
-        &ldquo;Wages % of invoiced&rdquo; is the sheet&apos;s &ldquo;GP %&rdquo;. Pick a week to see
-        its detail.
+        filters don&apos;t apply. Paid = hours × pay rate, invoiced = billed hours × invoice rate,
+        profit = invoiced − paid, each line worked out from the hours and rates it shows and rounded
+        to the cent; every total is the sum of its lines. Placed VAs use the hours entered in
+        Billing → Placements (else their contracted hours); the internal team&apos;s Paid Casual
+        work is invoiced with the increment, and paid at the rate in effect on the day. Promotional
+        work isn&apos;t included. &ldquo;Wages % of invoiced&rdquo; is the sheet&apos;s &ldquo;GP
+        %&rdquo;. Pick a week to see its detail.
       </p>
 
       <Card className="shadow-card">
@@ -179,9 +181,9 @@ export function WeeklyPnlView({
                     >
                       <td className="px-5 py-2">{clientLabel(r.clientId)}</td>
                       <td className="px-5 py-2">{personLabel(r)}</td>
-                      <td className="px-5 py-2 text-right">{formatHours(r.hours)}</td>
+                      <td className="px-5 py-2 text-right">{r.hours.toFixed(2)}</td>
                       <td className="px-5 py-2 text-right text-muted-foreground">
-                        {formatHours(r.billedHours)}
+                        {r.billedHours.toFixed(2)}
                       </td>
                       <td className="px-5 py-2 text-right text-muted-foreground">
                         {r.payRate === null
@@ -233,7 +235,7 @@ export function WeeklyPnlView({
           <div>
             <p className="text-xs text-muted-foreground">
               − IB Core Team wages ({week.ib.fullTime} FT, {week.ib.partTime} PT,{" "}
-              {formatHours(week.ib.hours)})
+              {week.ib.hours.toFixed(2)} h)
             </p>
             <p className="font-semibold">{money(week.ib.wages)}</p>
           </div>
@@ -245,6 +247,76 @@ export function WeeklyPnlView({
               {money(week.gpAfterWages)}
             </p>
           </div>
+        </CardContent>
+      </Card>
+
+      <Card className="shadow-card">
+        <CardHeader className="pb-2">
+          <CardTitle className="flex flex-wrap items-baseline gap-x-4 gap-y-1 text-sm font-medium">
+            <span>Internal Team</span>
+            <span className="text-xs font-normal text-muted-foreground">
+              {week.internalTeam.clients} {week.internalTeam.clients === 1 ? "client" : "clients"} ·{" "}
+              {week.internalTeam.vas} {week.internalTeam.vas === 1 ? "VA" : "VAs"} · what the
+              internal team worked on and was paid. Not part of the profit lines above.
+            </span>
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="overflow-x-auto p-0">
+          {week.internalTeam.rows.length === 0 ? (
+            <p className="px-5 py-4 text-sm text-muted-foreground">Nothing this week.</p>
+          ) : (
+            <table className="w-full min-w-[640px] text-sm tabular-nums">
+              <thead>
+                <tr className="border-b border-border text-xs uppercase tracking-wide text-muted-foreground">
+                  <th className="px-5 py-3 text-left font-medium">Client</th>
+                  <th className="px-5 py-3 text-left font-medium">VA</th>
+                  <th className="px-5 py-3 text-right font-medium">Hours</th>
+                  <th className="px-5 py-3 text-right font-medium">Billed hours</th>
+                  <th className="px-5 py-3 text-right font-medium">Pay rate</th>
+                  <th className="px-5 py-3 text-right font-medium">Paid</th>
+                </tr>
+              </thead>
+              <tbody>
+                {week.internalTeam.rows.map((r) => (
+                  <tr
+                    key={r.key}
+                    className="border-b border-border last:border-0 hover:bg-muted/40"
+                  >
+                    <td className="px-5 py-2">
+                      {r.internal ? INTERNAL_CLIENT_LABEL : clientLabel(r.clientId)}
+                    </td>
+                    <td className="px-5 py-2">
+                      {personLabel({ source: "entry", personId: r.personId })}
+                    </td>
+                    <td className="px-5 py-2 text-right">{r.hours.toFixed(2)}</td>
+                    <td className="px-5 py-2 text-right text-muted-foreground">
+                      {r.billedHours.toFixed(2)}
+                    </td>
+                    <td className="px-5 py-2 text-right text-muted-foreground">
+                      {r.payRate === null
+                        ? "—"
+                        : r.payRate === "salaried"
+                          ? "Salary"
+                          : money(r.payRate)}
+                    </td>
+                    <td className="px-5 py-2 text-right">
+                      {r.payRate === "salaried" ? "—" : money(r.paid)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr className="border-t-2 border-border bg-muted/50 font-semibold">
+                  <td className="px-5 py-2" colSpan={2}>
+                    Internal Team total
+                  </td>
+                  <td className="px-5 py-2 text-right">{week.internalTeam.hours.toFixed(2)}</td>
+                  <td colSpan={2} />
+                  <td className="px-5 py-2 text-right">{money(week.internalTeam.paid)}</td>
+                </tr>
+              </tfoot>
+            </table>
+          )}
         </CardContent>
       </Card>
     </div>

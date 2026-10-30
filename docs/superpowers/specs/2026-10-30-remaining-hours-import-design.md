@@ -178,7 +178,7 @@ else is written.
 
 ### Database changes
 
-One migration, `20261030000000_client_placement_hours.sql`: the function above,
+One migration, `20261030130000_client_placement_hours.sql`: the function above,
 its grants, and a comment. Safe to re-run (`CREATE OR REPLACE`). No table or
 policy changes. `src/integrations/supabase/types.ts` gets the function by hand.
 

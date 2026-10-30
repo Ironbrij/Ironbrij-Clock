@@ -35,7 +35,7 @@
 ### Task 1: `client_placement_hours()` function
 
 **Files:**
-- Create: `supabase/migrations/20261030000000_client_placement_hours.sql`
+- Create: `supabase/migrations/20261030130000_client_placement_hours.sql`
 - Modify: `src/integrations/supabase/types.ts` (Functions section, alphabetical, next to `casual_*`/`client_*` entries)
 - Test: `src/lib/workspace/rpc.integration.test.ts` (new `describe("client_placement_hours", …)` inside the main describe)
 

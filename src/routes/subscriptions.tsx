@@ -51,6 +51,8 @@ const CATEGORIES = Object.keys(SUBSCRIPTION_CATEGORY_LABELS) as SubscriptionCate
 const isCategory = (v: unknown): v is SubscriptionCategory =>
   CATEGORIES.includes(v as SubscriptionCategory);
 const NO_TEAM = "__none__";
+/** The "All departments" choice: used by every department, shown as its own spend line. */
+const ALL_TEAMS = "__all__";
 
 export const Route = createFileRoute("/subscriptions")({
   // The first tab stays out of the URL, the same as Billing and Manage.
@@ -129,17 +131,25 @@ function SubscriptionsPage() {
     const groups = new Map<string, WorkspaceSubscription[]>();
     for (const s of subscriptions) {
       if (s.status !== "active") continue;
-      const key = s.teamId ?? NO_TEAM;
+      const key = s.allDepartments ? ALL_TEAMS : (s.teamId ?? NO_TEAM);
       groups.set(key, [...(groups.get(key) ?? []), s]);
     }
-    return [...groups.entries()]
-      .map(([key, subs]) => ({
-        key,
-        team: key === NO_TEAM ? undefined : team(key),
-        count: subs.length,
-        totals: monthlyTotalsByCurrency(subs),
-      }))
-      .sort((a, b) => (a.team?.name ?? "~").localeCompare(b.team?.name ?? "~"));
+    return (
+      [...groups.entries()]
+        .map(([key, subs]) => ({
+          key,
+          all: key === ALL_TEAMS,
+          team: key === NO_TEAM || key === ALL_TEAMS ? undefined : team(key),
+          count: subs.length,
+          totals: monthlyTotalsByCurrency(subs),
+        }))
+        // All departments first, then the teams, then "No department".
+        .sort(
+          (a, b) =>
+            Number(b.all) - Number(a.all) ||
+            (a.team?.name ?? "~").localeCompare(b.team?.name ?? "~"),
+        )
+    );
   }, [subscriptions, team]);
 
   if (!canManage) {
@@ -196,7 +206,7 @@ function SubscriptionsPage() {
                 >
                   <span className="flex items-center gap-2">
                     {d.team ? <ProjectDot color={d.team.color} /> : null}
-                    {d.team?.name ?? "No department"}
+                    {d.all ? "All departments" : (d.team?.name ?? "No department")}
                     <span className="text-xs text-muted-foreground">
                       {d.count} {d.count === 1 ? "subscription" : "subscriptions"}
                     </span>
@@ -205,7 +215,7 @@ function SubscriptionsPage() {
                 </li>
               ))}
               <li className="flex flex-wrap items-center justify-between gap-2 bg-muted/50 px-5 py-2 font-semibold">
-                <span>All departments</span>
+                <span>Total</span>
                 <span className="tabular-nums">
                   {totalsText(monthlyTotalsByCurrency(subscriptions))} /mo
                 </span>
@@ -292,7 +302,11 @@ function SubscriptionsPage() {
                       <td className="px-5 py-3">
                         <span className="flex items-center gap-2">
                           {t ? <ProjectDot color={t.color} /> : null}
-                          {t?.name ?? <span className="text-muted-foreground">No department</span>}
+                          {s.allDepartments
+                            ? "All departments"
+                            : (t?.name ?? (
+                                <span className="text-muted-foreground">No department</span>
+                              ))}
                         </span>
                         {s.departmentNote && (
                           <div className="text-xs text-muted-foreground">{s.departmentNote}</div>
@@ -444,7 +458,7 @@ function SubscriptionDialog({
     if (!open) return;
     setName(subscription?.name ?? "");
     setCategory(subscription?.category ?? defaultCategory);
-    setTeamChoice(subscription?.teamId ?? NO_TEAM);
+    setTeamChoice(subscription?.allDepartments ? ALL_TEAMS : (subscription?.teamId ?? NO_TEAM));
     setDepartmentNote(subscription?.departmentNote ?? "");
     setAmount(subscription?.amount != null ? String(subscription.amount) : "");
     setCurrency(subscription?.currency ?? settings.currency);
@@ -466,7 +480,8 @@ function SubscriptionDialog({
       await onSubmit({
         name,
         category,
-        teamId: teamChoice === NO_TEAM ? null : teamChoice,
+        teamId: teamChoice === NO_TEAM || teamChoice === ALL_TEAMS ? null : teamChoice,
+        allDepartments: teamChoice === ALL_TEAMS,
         departmentNote: departmentNote || null,
         amount: amountValue,
         currency: currency.trim().toUpperCase(),
@@ -533,6 +548,7 @@ function SubscriptionDialog({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
+                  <SelectItem value={ALL_TEAMS}>All departments</SelectItem>
                   <SelectItem value={NO_TEAM}>No department</SelectItem>
                   {teams.map((t) => (
                     <SelectItem key={t.id} value={t.id}>

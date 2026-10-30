@@ -40,9 +40,9 @@ export function useSubscriptionsData(enabled: boolean, canManage: boolean, uid: 
         (start, end) =>
           supabase
             .from("subscriptions")
-            .select(
-              "id, name, category, team_id, department_note, amount, currency, billing_cycle, renews_on, status, notes",
-            )
+            // "*" rather than a column list, so a column added by a migration
+            // that hasn't run yet can't fail the whole read (see use-placements).
+            .select("*")
             .order("name")
             .order("id")
             .range(start, end),
@@ -57,6 +57,8 @@ export function useSubscriptionsData(enabled: boolean, canManage: boolean, uid: 
         name: s.name,
         category: s.category as SubscriptionCategory,
         teamId: s.team_id,
+        // `?? false` covers the column not existing yet.
+        allDepartments: s.all_departments ?? false,
         departmentNote: s.department_note,
         amount: s.amount === null ? null : Number(s.amount),
         currency: s.currency,
@@ -79,7 +81,8 @@ export function useSubscriptionsData(enabled: boolean, canManage: boolean, uid: 
     return {
       name,
       category: input.category,
-      team_id: input.teamId,
+      team_id: input.allDepartments ? null : input.teamId,
+      all_departments: input.allDepartments,
       department_note: input.departmentNote?.trim() || null,
       amount: input.amount,
       currency,

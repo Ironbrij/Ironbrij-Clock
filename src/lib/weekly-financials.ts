@@ -1,8 +1,13 @@
 import { departmentFor } from "@/components/reports/report-config";
-import { grossProfitForEntry, resolveInvoiceRate, type BillingRate } from "@/lib/gross-profit";
+import {
+  grossProfitForEntry,
+  isChargeableEntry,
+  resolveInvoiceRate,
+  type BillingRate,
+} from "@/lib/gross-profit";
+import { payOn, salaryForRange, type PayRateRow } from "@/lib/pay-rates";
 import { placementWeekFigures } from "@/lib/retainer";
 import { addDays, fromDateKey, toDateKey } from "@/lib/time-utils";
-import { salaryAccrualForWeek } from "@/lib/weekly-salary";
 import type {
   CasualServiceCategory,
   PlacementCategory,
@@ -43,8 +48,7 @@ import type {
  * as zero profit.
  */
 
-export type WeeklyDepartmentKey =
-  "full_time" | "part_time" | "casual" | "vip" | "lmt" | "promotional";
+export type WeeklyDepartmentKey = "full_time" | "part_time" | "casual" | "vip" | "lmt";
 
 export const WEEKLY_DEPARTMENT_LABELS: Record<WeeklyDepartmentKey, string> = {
   full_time: "Full Time",
@@ -52,18 +56,10 @@ export const WEEKLY_DEPARTMENT_LABELS: Record<WeeklyDepartmentKey, string> = {
   casual: "Casual",
   vip: "VIP",
   lmt: "LMT",
-  promotional: "Promotional",
 };
 
-/** The sheet's order. Promotional is IronTrack's addition and only appears when it has rows. */
-const DEPARTMENT_ORDER: WeeklyDepartmentKey[] = [
-  "full_time",
-  "part_time",
-  "casual",
-  "vip",
-  "lmt",
-  "promotional",
-];
+/** The sheet's order. Promotional work is left out of the weekly P&L (decided 2026-10-30). */
+const DEPARTMENT_ORDER: WeeklyDepartmentKey[] = ["full_time", "part_time", "casual", "vip", "lmt"];
 
 const CATEGORY_DEPARTMENT: Record<PlacementCategory, WeeklyDepartmentKey> = {
   full_time: "full_time",
@@ -107,6 +103,28 @@ export type WeeklyDepartment = {
   rows: WeeklyDetailRow[];
 };
 
+/** The client internal work shows against in the Internal Team section (decided 2026-10-30). */
+export const INTERNAL_CLIENT_LABEL = "Louis Swart";
+
+/**
+ * One line of the Internal Team section (decided 2026-10-30): an internal
+ * staff member's work for one client in the week, at one pay rate. Internal
+ * work, and work for the Louis Swart client, shows as Louis Swart
+ * (`internal`). No invoice side: it's a view of pay, not of profit.
+ */
+export type InternalTeamRow = {
+  key: string;
+  /** The client worked for; the Louis Swart client (or null) when `internal`. */
+  clientId: string | null;
+  internal: boolean;
+  personId: string;
+  hours: number;
+  billedHours: number;
+  /** "salaried" for a salaried member, whose pay is the IB salary instead. */
+  payRate: number | "salaried" | null;
+  paid: number;
+};
+
 export type WeeklyFinancials = {
   weekStart: string;
   departments: WeeklyDepartment[];
@@ -115,6 +133,14 @@ export type WeeklyFinancials = {
   grossProfit: number;
   ib: { fullTime: number; partTime: number; hours: number; wages: number };
   gpAfterWages: number;
+  /** Extra view of the internal team's work and pay. Never part of the profit lines. */
+  internalTeam: {
+    rows: InternalTeamRow[];
+    clients: number;
+    vas: number;
+    hours: number;
+    paid: number;
+  };
 };
 
 export type WeeklyFinancialsInput = {
@@ -134,12 +160,14 @@ export type WeeklyFinancialsInput = {
   }[];
   billingRates: BillingRate[];
   employmentByUser: Map<string, WorkspaceEmployment>;
+  /** Each person's pay changes (src/lib/pay-rates.ts): entries are paid at the rate on their own day. */
+  payHistoryByUser: Map<string, PayRateRow[]>;
   revenueItems: WorkspaceRevenueItem[];
   incrementHours: number;
   upliftPct: number;
+  /** The client named "Louis Swart", if there is one: internal work shows against it. */
+  internalClientId: string | null;
 };
-
-type MutableRow = Omit<WeeklyDetailRow, "key">;
 
 export type WeeklyPnlRow = {
   label: string;
@@ -217,6 +245,22 @@ export function weeklyPnlRows(weeks: WeeklyFinancials[]): WeeklyPnlRow[] {
       values: weeks.map((w) => w.gpAfterWages),
       emphasis: true,
     },
+    {
+      label: "Internal Team clients",
+      format: "count",
+      values: weeks.map((w) => w.internalTeam.clients),
+    },
+    { label: "Internal Team VAs", format: "count", values: weeks.map((w) => w.internalTeam.vas) },
+    {
+      label: "Internal Team hours",
+      format: "hours",
+      values: weeks.map((w) => w.internalTeam.hours),
+    },
+    {
+      label: "Internal Team paid",
+      format: "money",
+      values: weeks.map((w) => w.internalTeam.paid),
+    },
   );
   return rows;
 }
@@ -225,17 +269,64 @@ export function buildWeeklyFinancials(input: WeeklyFinancialsInput): WeeklyFinan
   return input.weeks.map((weekStart) => buildWeek(input, weekStart));
 }
 
+/** Hours or a rate as the report shows them: to two decimals. */
+const round2 = (n: number) => Math.round(n * 100) / 100;
+
+/**
+ * One line's money in whole cents, from the hours and rate exactly as shown:
+ * hours to two decimals times a cent rate, rounded to the cent. Done in
+ * integers so a half cent rounds up instead of whichever way binary
+ * floating point lands (0.25 h × $6.06 is $1.52, not $1.51).
+ */
+const lineCents = (hours: number, rate: number | null) =>
+  rate === null ? 0 : Math.round((Math.round(hours * 100) * Math.round(rate * 100)) / 100);
+
+const dollars = (cents: number) => cents / 100;
+
+/** A line while its week is being added up: exact hours, money worked out at the end. */
+type OpenRow = {
+  source: WeeklyDetailRow["source"];
+  clientId: string | null;
+  personId: string;
+  hours: number;
+  billedHours: number;
+  payRate: WeeklyDetailRow["payRate"];
+  invoiceRate: number | null;
+  /** False for work that's tracked but never charged; its line invoices nothing. */
+  chargeable: boolean;
+};
+
+type ClosedRow = WeeklyDetailRow & { paidCents: number; invoicedCents: number };
+
+function closeRow(key: string, r: OpenRow): ClosedRow {
+  const hours = round2(r.hours);
+  const billedHours = round2(r.billedHours);
+  const paidCents = typeof r.payRate === "number" ? lineCents(hours, r.payRate) : 0;
+  const invoicedCents = r.chargeable ? lineCents(billedHours, r.invoiceRate) : 0;
+  return {
+    key,
+    source: r.source,
+    clientId: r.clientId,
+    personId: r.personId,
+    hours,
+    billedHours,
+    payRate: r.payRate,
+    paid: dollars(paidCents),
+    invoiceRate: r.invoiceRate,
+    invoiced: dollars(invoicedCents),
+    profit: dollars(invoicedCents - paidCents),
+    paidCents,
+    invoicedCents,
+  };
+}
+
 function buildWeek(input: WeeklyFinancialsInput, weekStart: string): WeeklyFinancials {
   const weekEnd = toDateKey(addDays(fromDateKey(weekStart), 6));
-  const rowsByDepartment = new Map<WeeklyDepartmentKey, Map<string, MutableRow>>();
+  const rowsByDepartment = new Map<WeeklyDepartmentKey, Map<string, OpenRow>>();
   const unpriced = new Set<WeeklyDepartmentKey>();
 
-  const rowFor = (
-    department: WeeklyDepartmentKey,
-    key: string,
-    make: () => MutableRow,
-  ): MutableRow => {
-    const rows = rowsByDepartment.get(department) ?? new Map<string, MutableRow>();
+  const rowFor = (department: WeeklyDepartmentKey, key: string, make: () => OpenRow): OpenRow => {
+    const rows = rowsByDepartment.get(department) ?? new Map<string, OpenRow>();
     rowsByDepartment.set(department, rows);
     const existing = rows.get(key);
     if (existing) return existing;
@@ -251,8 +342,6 @@ function buildWeek(input: WeeklyFinancialsInput, weekStart: string): WeeklyFinan
     if (week.days === 0) continue;
     const department = CATEGORY_DEPARTMENT[p.category];
     const hours = week.hours ?? 0;
-    const paid = week.cost ?? 0;
-    const invoiced = week.revenue ?? 0;
     if (p.clientHourlyRate === null && hours > 0) unpriced.add(department);
     const row = rowFor(department, `placement:${p.id}`, () => ({
       source: "placement",
@@ -261,34 +350,31 @@ function buildWeek(input: WeeklyFinancialsInput, weekStart: string): WeeklyFinan
       hours: 0,
       billedHours: 0,
       payRate: p.vaHourlyRate,
-      paid: 0,
       invoiceRate: p.clientHourlyRate,
-      invoiced: 0,
-      profit: 0,
+      chargeable: true,
     }));
     row.hours += hours;
     row.billedHours += hours;
-    row.paid += paid;
-    row.invoiced += invoiced;
-    row.profit += invoiced - paid;
   }
 
   // The internal team: client work into departments, internal work into IB.
-  const ib = { fullTime: new Set<string>(), partTime: new Set<string>(), hours: 0, wages: 0 };
+  // Pay is whatever was in effect on the entry's own day, and a line holds
+  // one pay rate and one invoice rate, so a mid-week change splits it.
+  const ib = { fullTime: new Set<string>(), partTime: new Set<string>(), hours: 0 };
+  /** Internal work's hours per person and pay rate: each becomes one wage line. */
+  const ibWageLines = new Map<string, { hours: number; rate: number }>();
+  /** The Internal Team section's lines, while the week is being added up. */
+  const teamRows = new Map<string, Omit<InternalTeamRow, "key" | "paid"> & { clientKey: string }>();
   for (const e of input.entries) {
     if (e.date < weekStart || e.date > weekEnd) continue;
     const employment = input.employmentByUser.get(e.userId);
-    const salaried = employment?.weeklySalary != null;
-    const payRate = employment?.hourlyRate ?? null;
+    const pay = payOn(input.payHistoryByUser.get(e.userId) ?? [], e.date);
+    const salaried = pay.weeklySalary !== null;
+    const payRate = pay.hourlyRate;
     const department = departmentFor(e, employment?.employmentType);
 
-    if (department === "internal") {
-      const hours = e.seconds / 3600;
-      ib.hours += hours;
-      if (!salaried && payRate !== null) ib.wages += hours * payRate;
-      (employment?.employmentType === "part_time" ? ib.partTime : ib.fullTime).add(e.userId);
-      continue;
-    }
+    // Decided 2026-10-30: Promotional work isn't part of the weekly P&L.
+    if (department === "promotional") continue;
 
     const invoiceRate = e.clientId
       ? resolveInvoiceRate(input.billingRates, e.clientId, e.userId, e.date)
@@ -300,90 +386,139 @@ function buildWeek(input: WeeklyFinancialsInput, weekStart: string): WeeklyFinan
       upliftPct: input.upliftPct,
       salaried,
     });
+    const linePay = salaried ? "salaried" : payRate;
+
+    // Internal staff only; members marked as placements aren't in it.
+    if ((employment?.staffType ?? "internal") === "internal") {
+      const internal =
+        department === "internal" || (e.clientId !== null && e.clientId === input.internalClientId);
+      const clientKey = internal ? "louis-swart" : (e.clientId ?? "none");
+      const key = `${e.userId}:${clientKey}:${linePay}`;
+      const line = teamRows.get(key) ?? {
+        clientId: internal ? input.internalClientId : e.clientId,
+        clientKey,
+        internal,
+        personId: e.userId,
+        hours: 0,
+        billedHours: 0,
+        payRate: linePay,
+      };
+      line.hours += money.actualHours;
+      line.billedHours += money.billedHours;
+      teamRows.set(key, line);
+    }
+
+    if (department === "internal") {
+      const hours = e.seconds / 3600;
+      ib.hours += hours;
+      if (!salaried && payRate !== null) {
+        const key = `${e.userId}:${payRate}`;
+        const line = ibWageLines.get(key) ?? { hours: 0, rate: payRate };
+        line.hours += hours;
+        ibWageLines.set(key, line);
+      }
+      (employment?.employmentType === "part_time" ? ib.partTime : ib.fullTime).add(e.userId);
+      continue;
+    }
+
     const weeklyDepartment: WeeklyDepartmentKey =
       department === "paid_casual"
         ? "casual"
         : department === "vip_client"
           ? "vip"
-          : department === "promotional"
-            ? "promotional"
-            : department === "part_time"
-              ? "part_time"
-              : "full_time";
+          : department === "part_time"
+            ? "part_time"
+            : "full_time";
     if (money.revenue === null && e.billable) unpriced.add(weeklyDepartment);
-    const row = rowFor(weeklyDepartment, `entry:${e.userId}:${e.clientId ?? "none"}`, () => ({
-      source: "entry",
-      clientId: e.clientId,
-      personId: e.userId,
-      hours: 0,
-      billedHours: 0,
-      payRate: salaried ? "salaried" : payRate,
-      paid: 0,
-      invoiceRate,
-      invoiced: 0,
-      profit: 0,
-    }));
-    const paid = money.cost ?? 0;
-    const invoiced = money.revenue ?? 0;
+    const chargeable = isChargeableEntry(e);
+    const row = rowFor(
+      weeklyDepartment,
+      `entry:${e.userId}:${e.clientId ?? "none"}:${linePay}:${invoiceRate}:${chargeable}`,
+      () => ({
+        source: "entry",
+        clientId: e.clientId,
+        personId: e.userId,
+        hours: 0,
+        billedHours: 0,
+        payRate: linePay,
+        invoiceRate,
+        chargeable,
+      }),
+    );
     row.hours += money.actualHours;
     row.billedHours += money.billedHours;
-    row.paid += paid;
-    row.invoiced += invoiced;
-    row.profit += invoiced - paid;
   }
 
-  // Weekly salaries are IB wages, whatever the salaried member worked on.
-  const salaryWeek = { weekStart, from: weekStart, to: weekEnd, days: 7 };
-  for (const employment of input.employmentByUser.values()) {
-    const accrual = salaryAccrualForWeek(employment, salaryWeek);
+  // IB wages: each person's internal hours at each rate, then each salary,
+  // all to the cent before they're added. Salaries are IB wages whatever the
+  // salaried member worked on, a day at a time at the salary then in effect.
+  let ibWagesCents = 0;
+  for (const line of ibWageLines.values()) ibWagesCents += lineCents(line.hours, line.rate);
+  for (const [userId, history] of input.payHistoryByUser) {
+    const accrual = salaryForRange(history, weekStart, weekEnd);
     if (accrual.days === 0) continue;
-    ib.wages += accrual.salary;
-    (employment.employmentType === "part_time" ? ib.partTime : ib.fullTime).add(employment.userId);
+    ibWagesCents += Math.round(accrual.salary * 100);
+    const employment = input.employmentByUser.get(userId);
+    (employment?.employmentType === "part_time" ? ib.partTime : ib.fullTime).add(userId);
   }
 
-  const departments: WeeklyDepartment[] = DEPARTMENT_ORDER.flatMap((key) => {
-    const rows = [...(rowsByDepartment.get(key)?.entries() ?? [])].map(([rowKey, row]) => ({
-      key: rowKey,
-      ...row,
-    }));
-    if (key === "promotional" && rows.length === 0) return [];
-    const invoiced = rows.reduce((s, r) => s + r.invoiced, 0);
-    const paid = rows.reduce((s, r) => s + r.paid, 0);
-    return [
-      {
-        key,
-        clients: new Set(rows.map((r) => r.clientId ?? "none")).size,
-        vas: new Set(rows.map((r) => `${r.source}:${r.personId}`)).size,
-        invoiced,
-        paid,
-        profit: invoiced - paid,
-        wagesPct: invoiced > 0 ? (paid / invoiced) * 100 : null,
-        unpriced: unpriced.has(key),
-        rows: rows.sort((a, b) => b.invoiced - a.invoiced || b.hours - a.hours),
-      },
-    ];
+  const departments: WeeklyDepartment[] = DEPARTMENT_ORDER.map((key) => {
+    const rows = [...(rowsByDepartment.get(key)?.entries() ?? [])].map(([rowKey, row]) =>
+      closeRow(rowKey, row),
+    );
+    const invoicedCents = rows.reduce((s, r) => s + r.invoicedCents, 0);
+    const paidCents = rows.reduce((s, r) => s + r.paidCents, 0);
+    return {
+      key,
+      clients: new Set(rows.map((r) => r.clientId ?? "none")).size,
+      vas: new Set(rows.map((r) => `${r.source}:${r.personId}`)).size,
+      invoiced: dollars(invoicedCents),
+      paid: dollars(paidCents),
+      profit: dollars(invoicedCents - paidCents),
+      wagesPct: invoicedCents > 0 ? (paidCents / invoicedCents) * 100 : null,
+      unpriced: unpriced.has(key),
+      rows: rows
+        .sort((a, b) => b.invoiced - a.invoiced || b.hours - a.hours)
+        .map(({ paidCents: _paid, invoicedCents: _invoiced, ...row }) => row),
+    };
   });
 
-  const totalProfit = departments.reduce((s, d) => s + d.profit, 0);
-  const recruitmentFees = input.revenueItems
+  const internalTeamRows = [...teamRows.entries()]
+    .map(([key, { clientKey: _clientKey, ...r }]) => {
+      const hours = round2(r.hours);
+      const paidCents = typeof r.payRate === "number" ? lineCents(hours, r.payRate) : 0;
+      return { key, ...r, hours, billedHours: round2(r.billedHours), paid: dollars(paidCents) };
+    })
+    .sort((a, b) => b.hours - a.hours);
+  const internalTeam = {
+    rows: internalTeamRows,
+    clients: new Set([...teamRows.values()].map((r) => r.clientKey)).size,
+    vas: new Set(internalTeamRows.map((r) => r.personId)).size,
+    hours: dollars(internalTeamRows.reduce((s, r) => s + Math.round(r.hours * 100), 0)),
+    paid: dollars(internalTeamRows.reduce((s, r) => s + Math.round(r.paid * 100), 0)),
+  };
+
+  const totalProfitCents = departments.reduce((s, d) => s + Math.round(d.profit * 100), 0);
+  const recruitmentFeesCents = input.revenueItems
     .filter(
       (f) => f.kind === "recruitment_setup" && f.receivedOn >= weekStart && f.receivedOn <= weekEnd,
     )
-    .reduce((s, f) => s + f.amount, 0);
-  const grossProfit = totalProfit + recruitmentFees;
+    .reduce((s, f) => s + Math.round(f.amount * 100), 0);
+  const grossProfitCents = totalProfitCents + recruitmentFeesCents;
 
   return {
     weekStart,
     departments,
-    totalProfit,
-    recruitmentFees,
-    grossProfit,
+    totalProfit: dollars(totalProfitCents),
+    recruitmentFees: dollars(recruitmentFeesCents),
+    grossProfit: dollars(grossProfitCents),
     ib: {
       fullTime: ib.fullTime.size,
       partTime: ib.partTime.size,
-      hours: ib.hours,
-      wages: ib.wages,
+      hours: round2(ib.hours),
+      wages: dollars(ibWagesCents),
     },
-    gpAfterWages: grossProfit - ib.wages,
+    gpAfterWages: dollars(grossProfitCents - ibWagesCents),
+    internalTeam,
   };
 }
