@@ -1845,7 +1845,7 @@ function Reports() {
       );
     } else if (view === "profit") {
       downloadCsv(
-        `ironbrij-gross-profit-by-${profitGroupBy}_${clientLabel}${tagLabel}_${from}_to_${to}.csv`,
+        `ironbrij-casual-profit-by-${profitGroupBy}_${clientLabel}${tagLabel}_${from}_to_${to}.csv`,
         [
           [
             profitGroupByLabels[profitGroupBy],
@@ -2070,7 +2070,7 @@ function Reports() {
       );
     } else {
       downloadCsv(
-        `ironbrij-casual-service-by-${casualGroupBy}_${clientLabel}${tagLabel}_${from}_to_${to}.csv`,
+        `ironbrij-casual-performance-by-${casualGroupBy}_${clientLabel}${tagLabel}_${from}_to_${to}.csv`,
         [
           [
             casualGroupByLabels[casualGroupBy],
@@ -2234,8 +2234,8 @@ function Reports() {
               <TabsTrigger value="project">By project</TabsTrigger>
               <TabsTrigger value="employee">By employee</TabsTrigger>
               <TabsTrigger value="detailed">Detailed</TabsTrigger>
-              <TabsTrigger value="casual">Casual Service</TabsTrigger>
-              <TabsTrigger value="profit">Gross Profit</TabsTrigger>
+              <TabsTrigger value="casual">Casual Performance</TabsTrigger>
+              <TabsTrigger value="profit">Casual Profit</TabsTrigger>
               <TabsTrigger value="weekly">Weekly P&amp;L</TabsTrigger>
             </TabsList>
           </Tabs>

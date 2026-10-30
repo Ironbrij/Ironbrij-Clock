@@ -151,7 +151,7 @@ export function RevenueItemsTab() {
           Add fee
         </Button>
         <p className="text-xs text-muted-foreground">
-          Recruitment and set-up fees, counted in Reports → Gross Profit on the date you give them.
+          Recruitment and set-up fees, counted in Reports → Casual Profit on the date you give them.
           Invoices themselves stay in Xero.
         </p>
       </div>

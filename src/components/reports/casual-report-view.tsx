@@ -153,7 +153,7 @@ export function CasualReportView({
 
       <Card className="shadow-card">
         <CardHeader>
-          <CardTitle className="text-base">Casual Service · {rangeLabel}</CardTitle>
+          <CardTitle className="text-base">Casual Performance · {rangeLabel}</CardTitle>
           <p className="text-xs text-muted-foreground">
             Ad-hoc work billed outside the standard subscription retainer. "Billable Hours" adds the
             workspace's client billing uplift
