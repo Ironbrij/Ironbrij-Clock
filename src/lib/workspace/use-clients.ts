@@ -46,6 +46,28 @@ export function useClientsData(enabled: boolean) {
     },
   });
 
+  // 2026-10-30: the finished weeks of each client's Casual VA – External
+  // placements, which come off the client's remaining hours. If the function
+  // isn't there yet (the app deployed a moment before its migration), fall
+  // back to none: remaining hours then behave as they did before it existed.
+  const placementHoursQ = useQuery({
+    queryKey: ["client_placement_hours"],
+    enabled,
+    queryFn: async () => {
+      const { data, error } = await supabase.rpc("client_placement_hours");
+      if (error) {
+        console.error("client_placement_hours failed; counting no placement hours", error);
+        return [];
+      }
+      return data;
+    },
+  });
+
+  const clientPlacementHours = useMemo(
+    () => new Map((placementHoursQ.data ?? []).map((r) => [r.client_id, Number(r.hours)])),
+    [placementHoursQ.data],
+  );
+
   const clients = useMemo<WorkspaceClient[]>(
     () =>
       (clientsQ.data ?? []).map((c) => ({
@@ -129,5 +151,6 @@ export function useClientsData(enabled: boolean) {
     setClientActive,
     updateClientProfile,
     deleteClient,
+    clientPlacementHours,
   };
 }

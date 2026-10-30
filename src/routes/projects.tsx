@@ -65,6 +65,7 @@ import {
   dotColors,
   NO_CLIENT,
   useClientBudgets,
+  useClientRenderedHours,
   useClientHealth,
   useProjectBudgets,
   useWorkspace,
@@ -1512,6 +1513,7 @@ function ClientProfileDialog({
   const [contactEmail, setContactEmail] = useState("");
   const [subscriptionHours, setSubscriptionHours] = useState("");
   const [saving, setSaving] = useState(false);
+  const renderedByClient = useClientRenderedHours();
 
   useEffect(() => {
     if (client) {
@@ -1527,7 +1529,13 @@ function ClientProfileDialog({
 
   if (!client) return null;
 
-  const rendered = client.hours;
+  // Tracked time plus finished placement weeks: the same figures as
+  // useClientBudgets, so this matches the badges and the timer warning.
+  const { trackedHours, placementHours } = renderedByClient.get(client.id) ?? {
+    trackedHours: client.hours,
+    placementHours: 0,
+  };
+  const rendered = trackedHours + placementHours;
   const subscription = client.subscriptionHours;
   const remaining = subscription != null ? subscription - rendered : null;
 
@@ -1664,6 +1672,12 @@ function ClientProfileDialog({
                 <p className="text-xs text-muted-foreground">Remaining</p>
               </div>
             </div>
+            {placementHours > 0 && (
+              <p className="-mt-3 text-xs text-muted-foreground">
+                Rendered is {formatHours(trackedHours)} tracked in IronTrack and{" "}
+                {formatHours(placementHours)} from placed VAs' weeks.
+              </p>
+            )}
             {subscription != null && remaining != null && remaining < 0 && (
               <p className="-mt-3 text-xs text-destructive">
                 This client has used {formatHours(Math.abs(remaining))} beyond their subscription.

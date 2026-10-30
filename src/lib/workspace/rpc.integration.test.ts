@@ -1846,7 +1846,10 @@ if (hasLocalSupabase) {
         "counts 0, not null, for a placement with no weekly hours or one that hasn't started",
         async () => {
           const clientId = await makeClient("no-hours");
-          await place(clientId, { started_on: addDays(monday, -14), contracted_weekly_hours: null });
+          await place(clientId, {
+            started_on: addDays(monday, -14),
+            contracted_weekly_hours: null,
+          });
           await place(clientId, { started_on: addDays(monday, 7), contracted_weekly_hours: 10 });
           expect(await hoursFor(clientId)).toBe(0);
         },

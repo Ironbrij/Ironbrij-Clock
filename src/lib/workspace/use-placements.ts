@@ -27,6 +27,8 @@ export function usePlacementsData(enabled: boolean, canManage: boolean, uid: str
   const invalidate = useCallback(() => {
     qc.invalidateQueries({ queryKey: ["va_placements"] });
     qc.invalidateQueries({ queryKey: ["placed_vas"] });
+    // A placement's dates, category or weekly hours change its client's remaining hours.
+    qc.invalidateQueries({ queryKey: ["client_placement_hours"] });
   }, [qc]);
 
   // One channel for both tables, same as use-projects.ts does for its four.
@@ -233,6 +235,7 @@ export function usePlacementsData(enabled: boolean, canManage: boolean, uid: str
           .eq("placement_id", placementId)
           .eq("week_start", weekStart);
         throwIf(error);
+        qc.invalidateQueries({ queryKey: ["client_placement_hours"] });
         return;
       }
       const { data, error } = await supabase
@@ -252,8 +255,9 @@ export function usePlacementsData(enabled: boolean, canManage: boolean, uid: str
       if (!data || data.length === 0) {
         throw new Error("Only managers and admins can enter a placement's hours.");
       }
+      qc.invalidateQueries({ queryKey: ["client_placement_hours"] });
     },
-    [uid],
+    [qc, uid],
   );
 
   return {
