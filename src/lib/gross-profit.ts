@@ -86,6 +86,19 @@ export type EntryProfit = {
 };
 
 /**
+ * Whether an entry is invoiced at all. 'ironbrij' is casual work that is
+ * tracked but never charged. Narrower than billableHoursForCasualEntry's
+ * scope since M52: VIP Client and Promotional work is still invoiced, just
+ * at exact tracked hours.
+ */
+export function isChargeableEntry(entry: {
+  billable: boolean;
+  serviceCategory: CasualServiceCategory | null;
+}): boolean {
+  return entry.billable && entry.serviceCategory !== "ironbrij";
+}
+
+/**
  * M48: the per-entry money math behind the Gross Profit report.
  *
  * Deliberately per-entry, never on a pre-summed total: the casual
@@ -139,11 +152,8 @@ export function grossProfitForEntry(
 
   const cost = opts.salaried ? 0 : opts.payRate === null ? null : actualHours * opts.payRate;
 
-  // 'ironbrij' is casual work that is tracked but never charged. Narrower
-  // than billableHoursForCasualEntry's scope since M52: VIP Client and
-  // Promotional work is still invoiced, just at exact tracked hours.
-  const chargeable = entry.billable && entry.serviceCategory !== "ironbrij";
-  const revenue = chargeable && opts.invoiceRate !== null ? billedHours * opts.invoiceRate : null;
+  const revenue =
+    isChargeableEntry(entry) && opts.invoiceRate !== null ? billedHours * opts.invoiceRate : null;
 
   return {
     actualHours,

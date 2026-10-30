@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell, ProjectDot } from "@/components/app-shell";
+import { ProjectPicker } from "@/components/project-picker";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -381,37 +382,15 @@ function TimerBar() {
         />
         <div className="grid gap-3 sm:grid-cols-2 lg:w-[380px]">
           <div>
-            <Select value={project} onValueChange={setProject} disabled={running}>
-              <SelectTrigger aria-label="Project">
-                <SelectValue placeholder="Project" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value={NO_PROJECT}>No project</SelectItem>
-                {(recentProjects.length > 0 || otherProjects.length > 0) && <SelectSeparator />}
-                {recentProjects.length > 0 && (
-                  <SelectGroup>
-                    <SelectLabel>Recent</SelectLabel>
-                    {recentProjects.map((p) => (
-                      <SelectItem key={p.id} value={p.id}>
-                        <span className="flex items-center gap-2">
-                          <ProjectDot color={p.color} />
-                          {p.name}
-                        </span>
-                      </SelectItem>
-                    ))}
-                  </SelectGroup>
-                )}
-                {recentProjects.length > 0 && otherProjects.length > 0 && <SelectSeparator />}
-                {otherProjects.map((p) => (
-                  <SelectItem key={p.id} value={p.id}>
-                    <span className="flex items-center gap-2">
-                      <ProjectDot color={p.color} />
-                      {p.name}
-                    </span>
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <ProjectPicker
+              aria-label="Project"
+              value={project}
+              onChange={setProject}
+              disabled={running}
+              recent={recentProjects}
+              rest={otherProjects}
+              noneOption={{ value: NO_PROJECT, label: "No project" }}
+            />
             {/* L39: the dropdown itself always has "No project" so it's
                 never literally empty, but with zero active projects
                 there's nothing else to explain why — a first-day

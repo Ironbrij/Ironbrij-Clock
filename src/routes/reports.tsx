@@ -31,7 +31,8 @@ import {
 import { grossProfitForEntry, resolveInvoiceRate } from "@/lib/gross-profit";
 import { placementFiguresForRange } from "@/lib/retainer";
 import { placementWeekKey } from "@/lib/workspace/use-placements";
-import { salaryAccrualForWeek, weeksInRange } from "@/lib/weekly-salary";
+import { weeksInRange } from "@/lib/weekly-salary";
+import { hourlyPayForEntries, payOn, salaryForRange } from "@/lib/pay-rates";
 import { formatHours } from "@/lib/mock-data";
 import { addDays, formatWeekRange, fromDateKey, startOfWeek, toDateKey } from "@/lib/time-utils";
 import {
@@ -61,6 +62,7 @@ import { ProjectReportView } from "@/components/reports/project-report-view";
 import { WeeklyPnlView } from "@/components/reports/weekly-pnl-view";
 import {
   buildWeeklyFinancials,
+  INTERNAL_CLIENT_LABEL,
   WEEKLY_DEPARTMENT_LABELS,
   weeklyPnlRows,
 } from "@/lib/weekly-financials";
@@ -280,6 +282,7 @@ function Reports() {
     settings,
     canManage,
     employmentByUser,
+    payHistoryByUser,
     billingRates,
     placements,
     placedVAs,
@@ -658,9 +661,24 @@ function Reports() {
       // person's full billable workload, not narrowed by the client filter
       // (a per-client-and-billable breakdown doesn't exist as its own RPC,
       // and "$ for one client" would need that, not just filtered hours).
-      const rate = employmentByUser.get(m.id)?.hourlyRate ?? null;
+      // 2026-10-30: pay has start dates. When it changed inside the range,
+      // each billable entry is priced at the rate on its own day (from the
+      // detailed entries); otherwise the one rate in effect covers it all.
+      const history = payHistoryByUser.get(m.id) ?? [];
       const billableHours = (employeeBillableMinutes?.[m.id] ?? 0) / 60;
-      const amount = rate != null ? billableHours * rate : null;
+      const payChangedInRange = history.some(
+        (r) => r.effectiveFrom > from && r.effectiveFrom <= to,
+      );
+      const rate = payOn(history, to).hourlyRate;
+      const amount =
+        payChangedInRange && detailedEntries
+          ? hourlyPayForEntries(
+              history,
+              detailedEntries.filter((e) => e.userId === m.id && e.billable),
+            )
+          : rate != null
+            ? billableHours * rate
+            : null;
       // M28: same "full workload, not client-filtered" reasoning as
       // billableHours/amount above.
       const billablePct = totalHours > 0 ? Math.round((billableHours / totalHours) * 100) : null;
@@ -1073,11 +1091,12 @@ function Reports() {
   // Per entry, never on a pre-summed total — the casual increment rounds
   // each task line up on its own (see gross-profit.ts).
   const pricedProfitEntries = profitEntries.map((e) => {
-    const employment = employmentByUser.get(e.userId);
-    const payRate = employment?.hourlyRate ?? null;
+    // 2026-10-30: the pay in effect on the entry's own day.
+    const pay = payOn(payHistoryByUser.get(e.userId) ?? [], e.date);
+    const payRate = pay.hourlyRate;
     // M50: a salaried member's cost is their flat weekly figure, charged once
     // per week in the salary block below — never per entry, or it doubles.
-    const salaried = employment?.weeklySalary != null;
+    const salaried = pay.weeklySalary !== null;
     const invoiceRate = e.clientId
       ? resolveInvoiceRate(billingRates, e.clientId, e.userId, e.date)
       : null;
@@ -1306,9 +1325,11 @@ function Reports() {
 
   const salariedMembers = (salariesApply ? members : [])
     .filter((m) => teamFilter === "all" || m.teamIds.includes(teamFilter))
+    // 2026-10-30: anyone with a salary at any point; salaryForRange charges
+    // each day at the salary in effect then, and nothing on days without one.
     .flatMap((m) => {
-      const employment = employmentByUser.get(m.id);
-      return employment && employment.weeklySalary !== null ? [employment] : [];
+      const history = payHistoryByUser.get(m.id) ?? [];
+      return history.some((r) => r.weeklySalary !== null) ? [history] : [];
     });
 
   const salaryWeeks = (() => {
@@ -1324,8 +1345,8 @@ function Reports() {
         .map((week) => {
           let salary = 0;
           let headcount = 0;
-          for (const employment of salariedMembers) {
-            const accrual = salaryAccrualForWeek(employment, week);
+          for (const history of salariedMembers) {
+            const accrual = salaryForRange(history, week.from, week.to);
             if (accrual.days > 0) headcount += 1;
             salary += accrual.salary;
           }
@@ -1416,9 +1437,9 @@ function Reports() {
     if (salariesApply && salariedMembers.length > 0) {
       const weeks = weeksInRange(from, to);
       let salary = 0;
-      for (const employment of salariedMembers) {
+      for (const history of salariedMembers) {
         for (const week of weeks) {
-          salary += salaryAccrualForWeek(employment, week).salary;
+          salary += salaryForRange(history, week.from, week.to).salary;
         }
       }
       if (salary > 0) {
@@ -1561,9 +1582,15 @@ function Reports() {
           })),
           billingRates,
           employmentByUser,
+          payHistoryByUser,
           revenueItems,
           incrementHours: billingOpts.incrementHours,
           upliftPct: billingOpts.upliftPct,
+          // Internal work shows against the Louis Swart client in the
+          // Internal Team section, so that client's own work joins the same row.
+          internalClientId:
+            clients.find((c) => c.name.trim().toLowerCase() === INTERNAL_CLIENT_LABEL.toLowerCase())
+              ?.id ?? null,
         })
       : [];
   const weeklyRows = weeklyPnlRows(weeklyFinancials);
@@ -1690,11 +1717,7 @@ function Reports() {
         ...weeklyRows.map((row) => [
           row.label,
           ...row.values.map((v) =>
-            v === null
-              ? ""
-              : row.format === "money" || row.format === "pct"
-                ? v.toFixed(2)
-                : String(v),
+            v === null ? "" : row.format === "count" ? String(v) : v.toFixed(2),
           ),
         ]),
         [],
@@ -1731,6 +1754,26 @@ function Reports() {
               row.profit.toFixed(2),
             ]),
           ),
+        ),
+        // The Internal Team section: pay only, so the invoice columns are blank.
+        ...weeklyFinancials.flatMap((w) =>
+          w.internalTeam.rows.map((row) => [
+            w.weekStart,
+            "Internal Team",
+            row.internal ? INTERNAL_CLIENT_LABEL : weeklyClientLabel(row.clientId),
+            weeklyPersonLabel({ source: "entry", personId: row.personId }),
+            row.hours.toFixed(2),
+            row.billedHours.toFixed(2),
+            row.payRate === null
+              ? ""
+              : row.payRate === "salaried"
+                ? "Salary"
+                : row.payRate.toFixed(2),
+            row.payRate === "salaried" ? "" : row.paid.toFixed(2),
+            "",
+            "",
+            "",
+          ]),
         ),
       ]);
       return;
@@ -1802,7 +1845,7 @@ function Reports() {
       );
     } else if (view === "profit") {
       downloadCsv(
-        `ironbrij-gross-profit-by-${profitGroupBy}_${clientLabel}${tagLabel}_${from}_to_${to}.csv`,
+        `ironbrij-casual-profit-by-${profitGroupBy}_${clientLabel}${tagLabel}_${from}_to_${to}.csv`,
         [
           [
             profitGroupByLabels[profitGroupBy],
@@ -2027,7 +2070,7 @@ function Reports() {
       );
     } else {
       downloadCsv(
-        `ironbrij-casual-service-by-${casualGroupBy}_${clientLabel}${tagLabel}_${from}_to_${to}.csv`,
+        `ironbrij-casual-performance-by-${casualGroupBy}_${clientLabel}${tagLabel}_${from}_to_${to}.csv`,
         [
           [
             casualGroupByLabels[casualGroupBy],
@@ -2191,8 +2234,8 @@ function Reports() {
               <TabsTrigger value="project">By project</TabsTrigger>
               <TabsTrigger value="employee">By employee</TabsTrigger>
               <TabsTrigger value="detailed">Detailed</TabsTrigger>
-              <TabsTrigger value="casual">Casual Service</TabsTrigger>
-              <TabsTrigger value="profit">Gross Profit</TabsTrigger>
+              <TabsTrigger value="casual">Casual Performance</TabsTrigger>
+              <TabsTrigger value="profit">Casual Profit</TabsTrigger>
               <TabsTrigger value="weekly">Weekly P&amp;L</TabsTrigger>
             </TabsList>
           </Tabs>

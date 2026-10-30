@@ -254,8 +254,10 @@ export type WorkspaceSubscription = {
   id: string;
   name: string;
   category: SubscriptionCategory;
-  /** The department (team) using it; null when company-wide or unassigned. */
+  /** The department (team) using it; null when every department uses it or none is set. */
   teamId: string | null;
+  /** 2026-10-30: used by every department. Always has no teamId. */
+  allDepartments: boolean;
   departmentNote: string | null;
   /** Per billing cycle, in `currency`. Null when not known yet. */
   amount: number | null;

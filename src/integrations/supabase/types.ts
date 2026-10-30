@@ -339,6 +339,54 @@ export type Database = {
           },
         ];
       };
+      member_pay_rates: {
+        Row: {
+          created_at: string;
+          effective_from: string;
+          hourly_rate: number | null;
+          id: string;
+          updated_at: string;
+          updated_by: string | null;
+          user_id: string;
+          weekly_salary: number | null;
+        };
+        Insert: {
+          created_at?: string;
+          effective_from: string;
+          hourly_rate?: number | null;
+          id?: string;
+          updated_at?: string;
+          updated_by?: string | null;
+          user_id: string;
+          weekly_salary?: number | null;
+        };
+        Update: {
+          created_at?: string;
+          effective_from?: string;
+          hourly_rate?: number | null;
+          id?: string;
+          updated_at?: string;
+          updated_by?: string | null;
+          user_id?: string;
+          weekly_salary?: number | null;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "member_pay_rates_updated_by_fkey";
+            columns: ["updated_by"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "member_pay_rates_user_id_fkey";
+            columns: ["user_id"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       placed_vas: {
         Row: {
           created_at: string;
@@ -669,6 +717,7 @@ export type Database = {
       };
       subscriptions: {
         Row: {
+          all_departments: boolean;
           amount: number | null;
           billing_cycle: string;
           category: string;
@@ -686,6 +735,7 @@ export type Database = {
           updated_by: string | null;
         };
         Insert: {
+          all_departments?: boolean;
           amount?: number | null;
           billing_cycle?: string;
           category: string;
@@ -703,6 +753,7 @@ export type Database = {
           updated_by?: string | null;
         };
         Update: {
+          all_departments?: boolean;
           amount?: number | null;
           billing_cycle?: string;
           category?: string;
