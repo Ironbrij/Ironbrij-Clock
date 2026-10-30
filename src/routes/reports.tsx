@@ -1581,6 +1581,7 @@ function Reports() {
           })),
           billingRates,
           employmentByUser,
+          payHistoryByUser,
           revenueItems,
           incrementHours: billingOpts.incrementHours,
           upliftPct: billingOpts.upliftPct,
@@ -1710,11 +1711,7 @@ function Reports() {
         ...weeklyRows.map((row) => [
           row.label,
           ...row.values.map((v) =>
-            v === null
-              ? ""
-              : row.format === "money" || row.format === "pct"
-                ? v.toFixed(2)
-                : String(v),
+            v === null ? "" : row.format === "count" ? String(v) : v.toFixed(2),
           ),
         ]),
         [],

@@ -6,6 +6,7 @@ import {
   weeklyPnlRows,
   type WeeklyFinancialsInput,
 } from "./weekly-financials";
+import { PAY_FROM_THE_START, groupPayHistory, payHistoryFromEmployment } from "./pay-rates";
 import type { WorkspaceEmployment, WorkspacePlacement } from "./workspace/types";
 
 const WEEK = "2026-09-28"; // Mon 28 Sep – Sun 4 Oct 2026
@@ -50,18 +51,26 @@ const entry = (over: Partial<WeeklyFinancialsInput["entries"][number]>) => ({
   ...over,
 });
 
-const input = (over: Partial<WeeklyFinancialsInput>): WeeklyFinancialsInput => ({
-  weeks: [WEEK],
-  placements: [],
-  weekHours: () => null,
-  entries: [],
-  billingRates: [],
-  employmentByUser: new Map(),
-  revenueItems: [],
-  incrementHours: 0.25,
-  upliftPct: 20,
-  ...over,
-});
+// Pay history comes from the fixtures' employment, by the same rules the
+// member_pay_rates migration seeded with, unless a test gives its own.
+const input = (over: Partial<WeeklyFinancialsInput>): WeeklyFinancialsInput => {
+  const employmentByUser = over.employmentByUser ?? new Map<string, WorkspaceEmployment>();
+  return {
+    weeks: [WEEK],
+    placements: [],
+    weekHours: () => null,
+    entries: [],
+    billingRates: [],
+    employmentByUser,
+    payHistoryByUser: groupPayHistory(
+      [...employmentByUser.values()].flatMap((e) => payHistoryFromEmployment(e)),
+    ),
+    revenueItems: [],
+    incrementHours: 0.25,
+    upliftPct: 20,
+    ...over,
+  };
+};
 
 const department = (week: ReturnType<typeof buildWeeklyFinancials>[number], key: string) => {
   const d = week.departments.find((x) => x.key === key);
@@ -183,14 +192,17 @@ describe("buildWeeklyFinancials — departments and totals", () => {
     expect(department(week, "vip").invoiced).toBeCloseTo(20, 6);
   });
 
-  it("only shows a Promotional row in a week that has promotional work", () => {
-    const [quiet] = buildWeeklyFinancials(input({}));
-    expect(quiet.departments.some((d) => d.key === "promotional")).toBe(false);
-
-    const [busy] = buildWeeklyFinancials(
-      input({ entries: [entry({ serviceCategory: "promotional", clientId: "promo" })] }),
+  it("leaves Promotional work out of the report entirely", () => {
+    const [week] = buildWeeklyFinancials(
+      input({
+        entries: [entry({ serviceCategory: "promotional", clientId: "promo" })],
+        employmentByUser: new Map([["staff", employment("staff")]]),
+      }),
     );
-    expect(busy.departments.some((d) => d.key === "promotional")).toBe(true);
+    expect(week.departments.map((d) => d.key as string)).not.toContain("promotional");
+    expect(week.departments.every((d) => d.paid === 0)).toBe(true);
+    expect(week.totalProfit).toBe(0);
+    expect(weeklyPnlRows([week]).some((r) => r.label.includes("Promotional"))).toBe(false);
   });
 
   it("counts internal work as IB Core Team wages and hours, not as a department", () => {
@@ -300,6 +312,117 @@ describe("buildWeeklyFinancials — departments and totals", () => {
   it("returns one result per week, in order", () => {
     const weeks = buildWeeklyFinancials(input({ weeks: ["2026-09-28", "2026-10-05"] }));
     expect(weeks.map((w) => w.weekStart)).toEqual(["2026-09-28", "2026-10-05"]);
+  });
+});
+
+describe("buildWeeklyFinancials — every line checks with a calculator (19–25 Oct 2026 export)", () => {
+  it("prices a placement at its cent rates: 40 h × $7.93 = $317.20", () => {
+    const [week] = buildWeeklyFinancials(
+      input({
+        placements: [placement({ vaHourlyRate: 7.93, clientHourlyRate: 11.68 })],
+        weekHours: () => 40,
+      }),
+    );
+    const row = department(week, "full_time").rows[0];
+    expect(row.paid).toBe(317.2);
+    expect(row.invoiced).toBe(467.2);
+    expect(row.profit).toBe(150);
+  });
+
+  it("works a line out from the hours it shows: 9.13 h × $6.00 = $54.78", () => {
+    const [week] = buildWeeklyFinancials(
+      input({
+        entries: [entry({ serviceCategory: "vip_client", clientId: "myra", seconds: 32856 })],
+        billingRates: [
+          { clientId: "myra", userId: null, hourlyRate: 10, effectiveFrom: "2026-01-01" },
+        ],
+        employmentByUser: new Map([["staff", employment("staff")]]),
+      }),
+    );
+    const row = department(week, "vip").rows[0];
+    expect(row.hours).toBe(9.13);
+    expect(row.paid).toBe(54.78);
+    expect(row.invoiced).toBe(91.3);
+  });
+
+  it("makes each department's totals the sum of its lines, to the cent", () => {
+    const placements = [
+      placement({ category: "casual_external", vaHourlyRate: 6, clientHourlyRate: 15.6 }),
+      placement({ category: "casual_external", vaHourlyRate: 8.08, clientHourlyRate: 15.6 }),
+      placement({ category: "casual_external", vaHourlyRate: 6, clientHourlyRate: 10 }),
+    ];
+    const hours = new Map([
+      [placements[0].id, 4.2617],
+      [placements[1].id, 0.3233],
+      [placements[2].id, 9.1267],
+    ]);
+    const [week] = buildWeeklyFinancials(
+      input({ placements, weekHours: (id) => hours.get(id) ?? null }),
+    );
+    const casual = department(week, "casual");
+    expect(casual.rows.map((r) => [r.hours, r.paid, r.invoiced])).toEqual([
+      [9.13, 54.78, 91.3],
+      [4.26, 25.56, 66.46],
+      [0.32, 2.59, 4.99],
+    ]);
+    expect(casual.paid).toBe(82.93);
+    expect(casual.invoiced).toBe(162.75);
+    expect(casual.profit).toBe(79.82);
+    expect(week.totalProfit).toBe(79.82);
+  });
+
+  it("splits a VA's line when their pay changes mid-week", () => {
+    const [week] = buildWeeklyFinancials(
+      input({
+        entries: [
+          entry({ serviceCategory: "vip_client", clientId: "myra", date: "2026-09-28" }),
+          entry({ serviceCategory: "vip_client", clientId: "myra", date: "2026-10-01" }),
+        ],
+        billingRates: [
+          { clientId: "myra", userId: null, hourlyRate: 10, effectiveFrom: "2026-01-01" },
+        ],
+        employmentByUser: new Map([["staff", employment("staff")]]),
+        payHistoryByUser: groupPayHistory([
+          { userId: "staff", effectiveFrom: PAY_FROM_THE_START, hourlyRate: 6, weeklySalary: null },
+          { userId: "staff", effectiveFrom: "2026-10-01", hourlyRate: 6.5, weeklySalary: null },
+        ]),
+      }),
+    );
+    const vip = department(week, "vip");
+    expect(vip.rows.map((r) => r.payRate).sort()).toEqual([6, 6.5]);
+    expect(vip.paid).toBe(12.5);
+  });
+
+  it("keeps billable and non-billable work on separate lines, so each checks", () => {
+    const [week] = buildWeeklyFinancials(
+      input({
+        entries: [
+          entry({ serviceCategory: "vip_client", clientId: "myra" }),
+          entry({ serviceCategory: "vip_client", clientId: "myra", billable: false }),
+        ],
+        billingRates: [
+          { clientId: "myra", userId: null, hourlyRate: 10, effectiveFrom: "2026-01-01" },
+        ],
+        employmentByUser: new Map([["staff", employment("staff")]]),
+      }),
+    );
+    const rows = department(week, "vip").rows;
+    expect(rows).toHaveLength(2);
+    expect(rows.map((r) => r.invoiced).sort()).toEqual([0, 10]);
+  });
+
+  it("rounds each IB wage line to the cent: 2.33 h × $6 + a $700 salary", () => {
+    const [week] = buildWeeklyFinancials(
+      input({
+        entries: [entry({ serviceCategory: "ironbrij", seconds: 8400 })],
+        employmentByUser: new Map([
+          ["staff", employment("staff")],
+          ["s", employment("s", { weeklySalary: 700, salaryFrom: "2026-01-01" })],
+        ]),
+      }),
+    );
+    expect(week.ib.hours).toBe(2.33);
+    expect(week.ib.wages).toBe(713.98);
   });
 });
 
