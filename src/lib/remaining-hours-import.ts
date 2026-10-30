@@ -105,3 +105,68 @@ export function matchClientNames(
 export function newSubscriptionHours(sheetRemaining: number, renderedHours: number): number {
   return Math.round((sheetRemaining + renderedHours) * 100) / 100;
 }
+
+/**
+ * - `ok`: can be applied.
+ * - `no-change`: IronTrack already shows the sheet's figure.
+ * - `unmatched`: no client chosen for the sheet's name yet.
+ * - `duplicate`: another line points at the same client, so which figure is
+ *   right is unclear. Neither can be applied until one is changed.
+ */
+export type PreviewStatus = "ok" | "no-change" | "unmatched" | "duplicate";
+
+export type PreviewRow = {
+  line: number;
+  sheetName: string;
+  sheetHours: number;
+  clientId: string | null;
+  /** IronTrack's remaining hours now; null when the client has no allowance (or no client is chosen). */
+  currentRemaining: number | null;
+  /** Sheet minus IronTrack, to the cent; null when there's nothing to compare with. */
+  difference: number | null;
+  /** What subscription_hours would become; null with no client. */
+  newSubscription: number | null;
+  status: PreviewStatus;
+};
+
+/**
+ * One preview row per pasted line. `chosen` is the client for each line:
+ * matchClientNames' answer, or what the person picked for a name it couldn't
+ * match. `figures` holds every client's subscription and rendered hours.
+ */
+export function buildPreviewRows(
+  rows: ParsedLine[],
+  chosen: Map<number, string | null>,
+  figures: Map<string, { subscriptionHours: number | null; renderedHours: number }>,
+): PreviewRow[] {
+  const linesPerClient = new Map<string, number>();
+  for (const r of rows) {
+    const id = chosen.get(r.line);
+    if (id) linesPerClient.set(id, (linesPerClient.get(id) ?? 0) + 1);
+  }
+  return rows.map((r) => {
+    const clientId = chosen.get(r.line) ?? null;
+    const f = clientId ? figures.get(clientId) : undefined;
+    const currentRemaining =
+      f && f.subscriptionHours !== null ? f.subscriptionHours - f.renderedHours : null;
+    const difference =
+      currentRemaining === null ? null : Math.round((r.hours - currentRemaining) * 100) / 100 || 0;
+    const status: PreviewStatus = !clientId
+      ? "unmatched"
+      : (linesPerClient.get(clientId) ?? 0) > 1
+        ? "duplicate"
+        : difference === 0
+          ? "no-change"
+          : "ok";
+    return {
+      line: r.line,
+      sheetName: r.name,
+      sheetHours: r.hours,
+      clientId,
+      currentRemaining,
+      difference,
+      newSubscription: clientId ? newSubscriptionHours(r.hours, f?.renderedHours ?? 0) : null,
+      status,
+    };
+  });
+}

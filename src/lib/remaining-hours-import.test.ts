@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildPreviewRows,
   matchClientNames,
   newSubscriptionHours,
   normaliseClientName,
@@ -104,5 +105,76 @@ describe("newSubscriptionHours", () => {
 
   it("handles a client already over", () => {
     expect(newSubscriptionHours(-23.62, 1248.86)).toBe(1225.24);
+  });
+});
+
+describe("buildPreviewRows", () => {
+  const figures = new Map([
+    ["c1", { subscriptionHours: 800, renderedHours: 776.25 }],
+    ["c2", { subscriptionHours: null, renderedHours: 30 }],
+    ["c3", { subscriptionHours: 40, renderedHours: 31.25 }],
+  ]);
+
+  it("works out each row's current, difference and new subscription", () => {
+    const [row] = buildPreviewRows(
+      [{ line: 1, name: "Arnab Nandi", hours: 20 }],
+      new Map([[1, "c1"]]),
+      figures,
+    );
+    expect(row).toEqual({
+      line: 1,
+      sheetName: "Arnab Nandi",
+      sheetHours: 20,
+      clientId: "c1",
+      currentRemaining: 23.75,
+      difference: -3.75,
+      newSubscription: 796.25,
+      status: "ok",
+    });
+  });
+
+  it("can apply to a client with no allowance yet", () => {
+    const [row] = buildPreviewRows(
+      [{ line: 1, name: "New", hours: 10 }],
+      new Map([[1, "c2"]]),
+      figures,
+    );
+    expect(row.currentRemaining).toBeNull();
+    expect(row.difference).toBeNull();
+    expect(row.newSubscription).toBe(40);
+    expect(row.status).toBe("ok");
+  });
+
+  it("marks a row that already matches as no change", () => {
+    const [row] = buildPreviewRows(
+      [{ line: 1, name: "Janelle Anderson", hours: 8.75 }],
+      new Map([[1, "c3"]]),
+      figures,
+    );
+    expect(row.status).toBe("no-change");
+  });
+
+  it("marks a row with no client as unmatched", () => {
+    const [row] = buildPreviewRows(
+      [{ line: 1, name: "Nobody", hours: 5 }],
+      new Map([[1, null]]),
+      figures,
+    );
+    expect(row).toMatchObject({ clientId: null, newSubscription: null, status: "unmatched" });
+  });
+
+  it("marks every row pointing at the same client as a duplicate", () => {
+    const rows = buildPreviewRows(
+      [
+        { line: 1, name: "Arnab Nandi", hours: 20 },
+        { line: 2, name: "A. Nandi", hours: 21 },
+      ],
+      new Map([
+        [1, "c1"],
+        [2, "c1"],
+      ]),
+      figures,
+    );
+    expect(rows.map((r) => r.status)).toEqual(["duplicate", "duplicate"]);
   });
 });

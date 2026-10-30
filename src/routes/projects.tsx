@@ -4,6 +4,7 @@ import {
   AlertTriangle,
   Archive,
   ArchiveRestore,
+  ClipboardPaste,
   Eye,
   EyeOff,
   Info,
@@ -16,6 +17,7 @@ import { toast } from "sonner";
 import { AppShell, ProjectDot } from "@/components/app-shell";
 import { ColorDotPicker } from "@/components/color-dot-picker";
 import { Combobox } from "@/components/combobox";
+import { ImportRemainingHoursDialog } from "@/components/import-remaining-hours-dialog";
 import { MultiSelectList } from "@/components/multi-select-list";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -1022,6 +1024,7 @@ function ClientsTab({
 }) {
   const [viewingId, setViewingId] = useState<string | null>(null);
   const [addOpen, setAddOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<{
@@ -1108,13 +1111,17 @@ function ClientsTab({
   return (
     <div className="grid gap-4">
       {canManage && (
-        <div className="flex justify-end">
+        <div className="flex flex-wrap justify-end gap-2">
+          <Button variant="outline" className="gap-2" onClick={() => setImportOpen(true)}>
+            <ClipboardPaste className="h-4 w-4" /> Import remaining hours
+          </Button>
           <Button className="gap-2" onClick={() => setAddOpen(true)}>
             <Plus className="h-4 w-4" /> Add client
           </Button>
         </div>
       )}
       <NewClientDialog open={addOpen} onOpenChange={setAddOpen} onSubmit={add} />
+      {canManage && <ImportRemainingHoursDialog open={importOpen} onOpenChange={setImportOpen} />}
 
       <div className="flex flex-wrap items-center gap-3">
         <div className="relative min-w-[220px] flex-1">

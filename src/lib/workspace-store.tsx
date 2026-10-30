@@ -180,6 +180,8 @@ type WorkspaceContextValue = {
   deleteClient: (id: string) => Promise<void>;
   /** Finished Casual VA – External placement weeks per client id (client_placement_hours()). Clients with none are absent. */
   clientPlacementHours: Map<string, number>;
+  /** Sets one client's subscription hours and nothing else (Import remaining hours). */
+  setClientSubscriptionHours: (id: string, hours: number) => Promise<void>;
   settings: WorkspaceSettings;
   entries: WorkspaceEntry[];
   runningEntry: WorkspaceEntry | null;
@@ -511,6 +513,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     updateClientProfile,
     deleteClient,
     clientPlacementHours,
+    setClientSubscriptionHours,
   } = useClientsData(enabled);
 
   const { tagsQ, tagUsageQ, tags, createTag, updateTag, deleteTag } = useTagsData(enabled, isAdmin);
@@ -641,6 +644,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       updateClientProfile,
       deleteClient,
       clientPlacementHours,
+      setClientSubscriptionHours,
       settings,
       updateSettings,
       entries,
@@ -766,6 +770,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     updateClientProfile,
     deleteClient,
     clientPlacementHours,
+    setClientSubscriptionHours,
     settings,
     updateSettings,
     entries,

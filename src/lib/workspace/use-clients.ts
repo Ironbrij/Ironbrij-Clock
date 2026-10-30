@@ -132,6 +132,25 @@ export function useClientsData(enabled: boolean) {
     [qc],
   );
 
+  /**
+   * Projects → Clients → Import remaining hours: sets one client's
+   * subscription hours and nothing else. Chains .select("id") because RLS
+   * turns a blocked update into "no rows changed" rather than an error.
+   */
+  const setClientSubscriptionHours = useCallback(
+    async (id: string, hours: number) => {
+      const { data, error } = await supabase
+        .from("clients")
+        .update({ subscription_hours: hours })
+        .eq("id", id)
+        .select("id");
+      throwIf(error);
+      if (!data || data.length === 0) throw new Error("Couldn't update that client's hours.");
+      qc.invalidateQueries({ queryKey: ["clients"] });
+    },
+    [qc],
+  );
+
   const deleteClient = useCallback(
     async (id: string) => {
       const { error } = await supabase.from("clients").delete().eq("id", id);
@@ -151,6 +170,7 @@ export function useClientsData(enabled: boolean) {
     setClientActive,
     updateClientProfile,
     deleteClient,
+    setClientSubscriptionHours,
     clientPlacementHours,
   };
 }
