@@ -12,6 +12,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { formatHours } from "@/lib/mock-data";
+import { PAY_FROM_THE_START, payChangeOn } from "@/lib/pay-rates";
 import { managementFee, vaMonthlyCost } from "@/lib/retainer";
 import {
   formatWeekRange,
@@ -174,6 +175,7 @@ function PersonDetail({ id, close }: { id: string; close: () => void }) {
     isAdmin,
     currentUser,
     employmentByUser,
+    payHistoryByUser,
     billingRates,
     clients,
     timesheets,
@@ -217,15 +219,20 @@ function PersonDetail({ id, close }: { id: string; close: () => void }) {
       ? summarizeWeeklyScheduleDays(employment.weeklyScheduleDays)
       : employment.weeklySchedule || "Not set"
     : null;
-  const pay = employment
-    ? employment.weeklySalary !== null
-      ? `${money(employment.weeklySalary)}/wk salary` +
-        (employment.salaryFrom ? ` from ${formatDate(employment.salaryFrom)}` : "") +
-        (employment.salaryTo ? ` to ${formatDate(employment.salaryTo)}` : "")
-      : employment.hourlyRate !== null
-        ? `${money(employment.hourlyRate)}/hr`
-        : null
+  // 2026-10-30: today's pay, from the dated history, and since when.
+  const payNow = canManage
+    ? payChangeOn(payHistoryByUser.get(member.id) ?? [], toDateKey(new Date()))
     : null;
+  const paySince =
+    payNow && payNow.effectiveFrom !== PAY_FROM_THE_START
+      ? ` since ${formatDate(payNow.effectiveFrom)}`
+      : "";
+  const pay =
+    payNow?.weeklySalary != null
+      ? `${money(payNow.weeklySalary)}/wk salary${paySince}`
+      : payNow?.hourlyRate != null
+        ? `${money(payNow.hourlyRate)}/hr${paySince}`
+        : null;
 
   return (
     <div className="space-y-4">

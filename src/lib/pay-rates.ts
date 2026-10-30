@@ -28,14 +28,20 @@ const DAYS_PER_WEEK = 7;
 const nextDay = (date: string) =>
   new Date(Date.parse(`${date}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
 
-/** The pay in effect on `date`: the latest change on or before it. No change yet means no pay. */
-export function payOn(history: PayRateRow[], date: string): PayOnDate {
-  let current: PayRateRow | undefined;
+/** The change in effect on `date`: the latest one on or before it, or null before any. */
+export function payChangeOn(history: PayRateRow[], date: string): PayRateRow | null {
+  let current: PayRateRow | null = null;
   for (const r of history) {
     if (r.effectiveFrom <= date && (!current || r.effectiveFrom > current.effectiveFrom)) {
       current = r;
     }
   }
+  return current;
+}
+
+/** The pay in effect on `date`. No change yet means no pay. */
+export function payOn(history: PayRateRow[], date: string): PayOnDate {
+  const current = payChangeOn(history, date);
   return current ? { hourlyRate: current.hourlyRate, weeklySalary: current.weeklySalary } : NO_PAY;
 }
 
@@ -114,4 +120,22 @@ export function groupPayHistory(rows: PayRateRow[]): Map<string, PayRateRow[]> {
     list.sort((a, b) => a.effectiveFrom.localeCompare(b.effectiveFrom));
   }
   return byUser;
+}
+
+/**
+ * Hourly pay for a set of entries, each at the rate in effect on its own
+ * day, so a raise part-way through a report range only counts from its date.
+ * Null when none of the entries has a rate (salaried, or no pay set).
+ */
+export function hourlyPayForEntries(
+  history: PayRateRow[],
+  entries: { date: string; seconds: number }[],
+): number | null {
+  let total: number | null = null;
+  for (const e of entries) {
+    const rate = payOn(history, e.date).hourlyRate;
+    if (rate === null) continue;
+    total = (total ?? 0) + (e.seconds / 3600) * rate;
+  }
+  return total;
 }

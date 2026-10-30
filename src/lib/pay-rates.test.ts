@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   PAY_FROM_THE_START,
   groupPayHistory,
+  hourlyPayForEntries,
+  payChangeOn,
   payHistoryFromEmployment,
   payOn,
   salaryForRange,
@@ -113,5 +115,36 @@ describe("groupPayHistory", () => {
       "2026-11-02",
     ]);
     expect(grouped.get("u2")).toHaveLength(1);
+  });
+});
+
+describe("hourlyPayForEntries", () => {
+  const history = [
+    row(PAY_FROM_THE_START, { hourlyRate: 6 }),
+    row("2026-11-02", { hourlyRate: 6.5 }),
+  ];
+
+  it("prices each entry at the rate in effect on its day", () => {
+    expect(
+      hourlyPayForEntries(history, [
+        { date: "2026-11-01", seconds: 7200 },
+        { date: "2026-11-02", seconds: 3600 },
+      ]),
+    ).toBe(18.5);
+  });
+
+  it("is null when no entry has a rate", () => {
+    expect(hourlyPayForEntries([], [{ date: "2026-11-01", seconds: 3600 }])).toBeNull();
+  });
+});
+
+describe("payChangeOn", () => {
+  it("is the change in effect on the day, or null before any", () => {
+    const history = [
+      row(PAY_FROM_THE_START, { hourlyRate: 6 }),
+      row("2026-11-02", { hourlyRate: 6.5 }),
+    ];
+    expect(payChangeOn(history, "2026-11-05")?.effectiveFrom).toBe("2026-11-02");
+    expect(payChangeOn([row("2026-11-02")], "2026-11-01")).toBeNull();
   });
 });
