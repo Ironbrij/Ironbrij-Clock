@@ -1419,6 +1419,22 @@ if (hasLocalSupabase) {
         RPC_TIMEOUT,
       );
 
+      // 20261030100000_placement_rates_to_cents.sql: accounts' sheet works in
+      // cent rates, so 40 h x $7.93 is $317.20, not $317.31.
+      it(
+        "stores placement rates to the cent",
+        async () => {
+          const { data, error } = await managerUser.client
+            .from("va_placements")
+            .update({ va_hourly_rate: 7.93275, client_hourly_rate: 11.6827 })
+            .eq("id", placementId)
+            .select("va_hourly_rate, client_hourly_rate");
+          expect(error).toBeNull();
+          expect(data).toEqual([{ va_hourly_rate: 7.93, client_hourly_rate: 11.68 }]);
+        },
+        RPC_TIMEOUT,
+      );
+
       it(
         "lets a manager enter, change and read a placement's hours for a week",
         async () => {
