@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { ProjectDot } from "@/components/app-shell";
+import { ProjectPicker } from "@/components/project-picker";
 import { DescriptionAutocomplete } from "@/components/description-autocomplete";
 import {
   AlertDialog,
@@ -337,38 +338,14 @@ export function EntryFormDialog({
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="grid gap-2">
               <Label htmlFor="entry-project">Project</Label>
-              <Select
+              <ProjectPicker
+                id="entry-project"
                 value={values.projectId}
-                onValueChange={(projectId) => setField("projectId", projectId)}
-              >
-                <SelectTrigger id="entry-project" {...errorProps("project")}>
-                  <SelectValue placeholder="Project" />
-                </SelectTrigger>
-                <SelectContent>
-                  {recentProjects.length > 0 && (
-                    <SelectGroup>
-                      <SelectLabel>Recent</SelectLabel>
-                      {recentProjects.map((p) => (
-                        <SelectItem key={p.id} value={p.id}>
-                          <span className="flex items-center gap-2">
-                            <ProjectDot color={p.color} />
-                            {p.name}
-                          </span>
-                        </SelectItem>
-                      ))}
-                    </SelectGroup>
-                  )}
-                  {recentProjects.length > 0 && otherProjects.length > 0 && <SelectSeparator />}
-                  {otherProjects.map((p) => (
-                    <SelectItem key={p.id} value={p.id}>
-                      <span className="flex items-center gap-2">
-                        <ProjectDot color={p.color} />
-                        {p.name}
-                      </span>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                onChange={(projectId) => setField("projectId", projectId)}
+                recent={recentProjects}
+                rest={otherProjects}
+                {...errorProps("project")}
+              />
               {fieldError("project")}
               {/* L39: this picker has no fallback item (a manual entry needs
                   a real project, unlike the timer's "No project" option) —
