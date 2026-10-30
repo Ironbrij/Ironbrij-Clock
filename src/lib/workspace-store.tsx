@@ -58,6 +58,11 @@ import {
   type CasualReportPreviousSend,
 } from "@/lib/workspace/use-casual-reports";
 import { useClientsData } from "@/lib/workspace/use-clients";
+import {
+  BUDGET_WARNING_THRESHOLD,
+  clientBudgetStatus,
+  type ClientBudgetFigures,
+} from "@/lib/client-budget";
 import { usePlacementsData } from "@/lib/workspace/use-placements";
 import { useEmploymentData } from "@/lib/workspace/use-employment";
 import { usePayRatesData, type PayRateInput } from "@/lib/workspace/use-pay-rates";
@@ -175,6 +180,12 @@ type WorkspaceContextValue = {
   setClientActive: (id: string, active: boolean) => Promise<void>;
   updateClientProfile: (id: string, profile: WorkspaceClientProfile) => Promise<void>;
   deleteClient: (id: string) => Promise<void>;
+  /** Finished Casual VA – External placement weeks per client id (client_placement_hours()). Clients with none are absent. */
+  clientPlacementHours: Map<string, number>;
+  /** False while client_placement_hours() is loading or after it failed: clientPlacementHours is then empty, not "no placements". */
+  clientPlacementHoursLoaded: boolean;
+  /** Sets one client's subscription hours and nothing else (Import remaining hours). */
+  setClientSubscriptionHours: (id: string, hours: number) => Promise<void>;
   settings: WorkspaceSettings;
   entries: WorkspaceEntry[];
   runningEntry: WorkspaceEntry | null;
@@ -516,6 +527,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     setClientActive,
     updateClientProfile,
     deleteClient,
+    clientPlacementHours,
+    clientPlacementHoursLoaded,
+    setClientSubscriptionHours,
   } = useClientsData(enabled);
 
   const { tagsQ, tagUsageQ, tags, createTag, updateTag, deleteTag } = useTagsData(enabled, isAdmin);
@@ -645,6 +659,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       setClientActive,
       updateClientProfile,
       deleteClient,
+      clientPlacementHours,
+      clientPlacementHoursLoaded,
+      setClientSubscriptionHours,
       settings,
       updateSettings,
       entries,
@@ -772,6 +789,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     setClientActive,
     updateClientProfile,
     deleteClient,
+    clientPlacementHours,
+    clientPlacementHoursLoaded,
+    setClientSubscriptionHours,
     settings,
     updateSettings,
     entries,
@@ -860,51 +880,51 @@ export function useWorkspaceClients() {
   }, [projects]);
 }
 
-export type ClientBudgetStatus = {
-  clientId: string;
-  subscriptionHours: number;
-  renderedHours: number;
-  remainingHours: number;
-  /** Every subscription hour has already been used (or exceeded). */
-  isOver: boolean;
-  /** Not over yet, but within BUDGET_WARNING_THRESHOLD of the cap — a heads-up before it actually runs out. */
-  isNearLimit: boolean;
-};
+export type ClientBudgetStatus = { clientId: string } & ClientBudgetFigures;
 
-const BUDGET_WARNING_THRESHOLD = 0.9;
+/**
+ * Every client's rendered hours, split into what was tracked on their
+ * projects (the per-project `hours` from project_hours(), joined by
+ * clientId) and the finished weeks of their Casual VA – External
+ * placements (client_placement_hours()). Covers every client, with or
+ * without a subscription.
+ */
+export function useClientRenderedHours() {
+  const { clients, projects, clientPlacementHours } = useWorkspace();
+  return useMemo(() => {
+    const map = new Map<string, { trackedHours: number; placementHours: number }>();
+    for (const c of clients) {
+      const trackedHours = projects
+        .filter((p) => p.clientId === c.id)
+        .reduce((sum, p) => sum + p.hours, 0);
+      map.set(c.id, { trackedHours, placementHours: clientPlacementHours.get(c.id) ?? 0 });
+    }
+    return map;
+  }, [clients, projects, clientPlacementHours]);
+}
 
 /**
  * Budget status for every client that has a subscription-hours cap set,
  * keyed by client id — clients with no cap (subscriptionHours === null)
  * are simply absent from the map, so `.get(id)` returning undefined means
- * "no budget to track," not "fully used." `renderedHours` sums the same
- * per-project `hours` (from project_hours()) that Projects > Clients and
- * the Client profile dialog already display, joined by clientId rather
- * than by name for correctness — clients.name happens to be unique too,
- * but id is the actual relationship every project already carries.
+ * "no budget to track," not "fully used." Rendered hours come from
+ * useClientRenderedHours: tracked time plus placement weeks.
  */
 export function useClientBudgets() {
-  const { clients, projects } = useWorkspace();
+  const { clients } = useWorkspace();
+  const rendered = useClientRenderedHours();
   return useMemo(() => {
     const map = new Map<string, ClientBudgetStatus>();
     for (const c of clients) {
       if (c.subscriptionHours == null) continue;
-      const renderedHours = projects
-        .filter((p) => p.clientId === c.id)
-        .reduce((sum, p) => sum + p.hours, 0);
-      const remainingHours = c.subscriptionHours - renderedHours;
+      const r = rendered.get(c.id) ?? { trackedHours: 0, placementHours: 0 };
       map.set(c.id, {
         clientId: c.id,
-        subscriptionHours: c.subscriptionHours,
-        renderedHours,
-        remainingHours,
-        isOver: remainingHours <= 0,
-        isNearLimit:
-          remainingHours > 0 && renderedHours >= c.subscriptionHours * BUDGET_WARNING_THRESHOLD,
+        ...clientBudgetStatus(c.subscriptionHours, r.trackedHours, r.placementHours),
       });
     }
     return map;
-  }, [clients, projects]);
+  }, [clients, rendered]);
 }
 
 export type ProjectBudgetStatus = {

@@ -1846,5 +1846,172 @@ if (hasLocalSupabase) {
         RPC_TIMEOUT,
       );
     });
+
+    // 20261030130000_client_placement_hours.sql: the finished weeks of every
+    // Casual VA – External placement, per client, which come off the client's
+    // remaining hours.
+    describe("client_placement_hours", () => {
+      let plainMember: Awaited<ReturnType<typeof fixtureUser>>;
+      let placedVaId: string;
+      const clientIds: string[] = [];
+      /** This week's Monday in the workspace timezone, which is how the function judges "finished". */
+      let monday: string;
+
+      const addDays = (date: string, days: number) =>
+        new Date(Date.parse(`${date}T00:00:00Z`) + days * 86_400_000).toISOString().slice(0, 10);
+
+      async function makeClient(label: string) {
+        const { data, error } = await admin
+          .from("clients")
+          .insert({ name: `Placement hours ${label} ${suffix}` })
+          .select("id")
+          .single();
+        if (error || !data) throw new Error(`client insert failed: ${error?.message}`);
+        clientIds.push(data.id);
+        return data.id;
+      }
+
+      async function place(
+        clientId: string,
+        fields: {
+          started_on: string;
+          ended_on?: string;
+          contracted_weekly_hours: number | null;
+          employment_type?: string;
+        },
+      ) {
+        const { data, error } = await admin
+          .from("va_placements")
+          .insert({
+            placed_va_id: placedVaId,
+            client_id: clientId,
+            employment_type: "casual_external",
+            ...fields,
+          })
+          .select("id")
+          .single();
+        if (error || !data) throw new Error(`va_placements insert failed: ${error?.message}`);
+        return data.id;
+      }
+
+      async function hoursFor(clientId: string) {
+        const { data, error } = await plainMember.client.rpc("client_placement_hours");
+        expect(error).toBeNull();
+        return data?.find((r) => r.client_id === clientId)?.hours;
+      }
+
+      beforeAll(async () => {
+        plainMember = await fixtureUser("placement-hours-member", "member");
+        const { data: settings } = await admin
+          .from("workspace_settings")
+          .select("timezone")
+          .limit(1)
+          .single();
+        const today = new Intl.DateTimeFormat("en-CA", {
+          timeZone: settings?.timezone ?? "Australia/Sydney",
+          year: "numeric",
+          month: "2-digit",
+          day: "2-digit",
+        }).format(new Date());
+        const daysSinceMonday = (new Date(`${today}T00:00:00Z`).getUTCDay() + 6) % 7;
+        monday = addDays(today, -daysSinceMonday);
+        const { data: va, error } = await admin
+          .from("placed_vas")
+          .insert({ full_name: `Hours VA ${suffix}` })
+          .select("id")
+          .single();
+        if (error || !va) throw new Error(`placed_vas insert failed: ${error?.message}`);
+        placedVaId = va.id;
+      }, RPC_TIMEOUT);
+
+      afterAll(async () => {
+        // Deleting a client deletes its placements and their weeks.
+        for (const id of clientIds) await admin.from("clients").delete().eq("id", id);
+        await admin.from("placed_vas").delete().eq("id", placedVaId);
+      }, RPC_TIMEOUT);
+
+      it(
+        "counts a live placement's finished weeks at its weekly hours, but not this week",
+        async () => {
+          const clientId = await makeClient("live");
+          await place(clientId, { started_on: addDays(monday, -14), contracted_weekly_hours: 10 });
+          expect(await hoursFor(clientId)).toBe(20);
+        },
+        RPC_TIMEOUT,
+      );
+
+      it(
+        "uses the hours entered for a week instead, and an entered 0 counts as 0",
+        async () => {
+          const clientId = await makeClient("entered");
+          const placementId = await place(clientId, {
+            started_on: addDays(monday, -14),
+            contracted_weekly_hours: 10,
+          });
+          const { error } = await admin
+            .from("placement_week_hours")
+            .insert({ placement_id: placementId, week_start: addDays(monday, -7), hours: 0 });
+          expect(error).toBeNull();
+          expect(await hoursFor(clientId)).toBe(10);
+        },
+        RPC_TIMEOUT,
+      );
+
+      it(
+        "pro-rates a mid-week start and stops counting after the placement ends",
+        async () => {
+          const clientId = await makeClient("ended");
+          // A Wednesday start counts 5 of the week's 7 days; then one full week.
+          await place(clientId, {
+            started_on: addDays(monday, -19),
+            ended_on: addDays(monday, -8),
+            contracted_weekly_hours: 7,
+          });
+          expect(await hoursFor(clientId)).toBe(12);
+        },
+        RPC_TIMEOUT,
+      );
+
+      it(
+        "ignores placements in every other category",
+        async () => {
+          const clientId = await makeClient("full-time");
+          await place(clientId, {
+            started_on: addDays(monday, -14),
+            contracted_weekly_hours: 10,
+            employment_type: "full_time",
+          });
+          expect(await hoursFor(clientId)).toBeUndefined();
+        },
+        RPC_TIMEOUT,
+      );
+
+      it(
+        "counts 0, not null, for a placement with no weekly hours or one that hasn't started",
+        async () => {
+          const clientId = await makeClient("no-hours");
+          await place(clientId, {
+            started_on: addDays(monday, -14),
+            contracted_weekly_hours: null,
+          });
+          await place(clientId, { started_on: addDays(monday, 7), contracted_weekly_hours: 10 });
+          expect(await hoursFor(clientId)).toBe(0);
+        },
+        RPC_TIMEOUT,
+      );
+
+      it(
+        "gives a pending account nothing",
+        async () => {
+          const clientId = await makeClient("pending");
+          await place(clientId, { started_on: addDays(monday, -14), contracted_weekly_hours: 10 });
+          const pending = await fixtureUser("placement-hours-pending", "member", { pending: true });
+          const { data, error } = await pending.client.rpc("client_placement_hours");
+          expect(error).toBeNull();
+          expect(data).toEqual([]);
+        },
+        RPC_TIMEOUT,
+      );
+    });
   });
 }

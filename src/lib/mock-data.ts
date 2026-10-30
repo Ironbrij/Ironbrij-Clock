@@ -66,9 +66,13 @@ export const timeOffHistory: TimeOffRequest[] = [
 ];
 
 export function formatHours(hours: number) {
-  const h = Math.floor(hours);
-  const m = Math.round((hours - h) * 60);
-  return `${h}h ${m.toString().padStart(2, "0")}m`;
+  // Rounded to whole minutes first, so 10.995 is "11h 00m" rather than
+  // "10h 60m", and a negative (a client over their allowance) is the same
+  // time with a minus sign rather than floored to the hour below.
+  const totalMinutes = Math.round(Math.abs(hours) * 60);
+  const sign = hours < 0 && totalMinutes > 0 ? "-" : "";
+  const m = totalMinutes % 60;
+  return `${sign}${Math.floor(totalMinutes / 60)}h ${m.toString().padStart(2, "0")}m`;
 }
 
 export function formatMinutes(minutes: number) {

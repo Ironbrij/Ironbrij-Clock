@@ -298,7 +298,7 @@ export function EntryFormDialog({
       const budget = savedProject?.clientId ? clientBudgets.get(savedProject.clientId) : undefined;
       if (budget?.isOver) {
         toast.warning(`${savedProject!.client} has used all their subscription hours`, {
-          description: `${formatHours(budget.renderedHours)} logged against a ${formatHours(budget.subscriptionHours)} allowance.`,
+          description: `${formatHours(budget.renderedHours)} used of a ${formatHours(budget.subscriptionHours)} allowance.`,
         });
       }
       onOpenChange(false);
